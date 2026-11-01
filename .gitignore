@@ -1,0 +1,10 @@
+bin/
+obj/
+publish/
+node_modules/
+.vs/
+*.user
+test-results/
+playwright-report/
+dist/
+Games-site.zip

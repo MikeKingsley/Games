@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Games</title>
+    <base href="/" />
+    <link rel="preload" id="webassembly" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%90%B5%3C/text%3E%3C/svg%3E" />
+    <link href="manifest.webmanifest" rel="manifest" />
+    <meta name="theme-color" content="#bfe9ff" />
+    <link rel="apple-touch-icon" sizes="512x512" href="icon-512.png" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link href="Games.Client.styles.css" rel="stylesheet" />
+    <script type="importmap"></script>
+</head>
+
+<body>
+    <div id="app"><div class="splash">🐵</div></div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+    <script src="js/kiosk.js"></script>
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
+    <script>if ("serviceWorker" in navigator) navigator.serviceWorker.register("service-worker.js", { updateViaCache: "none" });</script>
+</body>
+
+</html>

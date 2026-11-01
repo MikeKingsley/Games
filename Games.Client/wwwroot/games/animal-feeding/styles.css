@@ -1,0 +1,118 @@
+.af-root {
+    --animal-size: min(26vh, 22vw);
+    --food-size: min(18vh, 20vw);
+    position: absolute; inset: 0; overflow: hidden; touch-action: none;
+    background: linear-gradient(#9fe0ff 0%, #d9f6ff 55%, #8fd16a 55%, #6fbf4a 100%);
+    font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+.af-animals {
+    position: absolute; left: 0; right: 0; top: 6vh; height: 50vh;
+    display: flex; align-items: flex-end; justify-content: center; gap: 4vw;
+}
+
+.af-animal {
+    position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+    width: calc(var(--animal-size) * 1.2); height: 100%;
+    animation: af-idle 3.2s ease-in-out infinite;
+}
+.af-animal:nth-child(2) { animation-delay: -1s; }
+.af-animal:nth-child(3) { animation-delay: -2s; }
+.af-emoji { font-size: var(--animal-size); line-height: 1; filter: drop-shadow(0 8px 0 rgba(0, 0, 0, .12)); transform-origin: 50% 90%; transition: scale .2s ease-out; }
+/* The animal under the dragged food grows (the `scale` property composes with the transform animations). */
+.af-animal.hover .af-emoji { scale: 1.3; }
+
+/* The unicorn is a rare visitor: it glows and twinkles. */
+.af-animal.rare .af-emoji { filter: drop-shadow(0 0 22px #ff8be0) drop-shadow(0 0 8px #fff); }
+.af-animal.rare::after {
+    content: '✨'; position: absolute; top: 6%; right: 2%; font-size: calc(var(--animal-size) * .35);
+    pointer-events: none; animation: af-twinkle 1.1s ease-in-out infinite;
+}
+@keyframes af-twinkle { 50% { transform: scale(1.35) rotate(20deg); opacity: .6; } }
+.af-animal.eat .af-emoji { animation: af-chomp .5s ease-in-out; }
+.af-animal.shake .af-emoji { animation: af-shake .5s ease-in-out; }
+.af-animal.tap .af-emoji { animation: af-tap .5s ease-out; }
+.af-animal.hint .af-emoji { animation: af-hop .7s ease-in-out infinite; }
+.af-animal.munching .af-emoji { animation: af-munch .22s ease-in-out infinite; }
+
+.af-tray {
+    position: absolute; left: 0; right: 0; bottom: 3vh; height: calc(var(--food-size) * 1.5);
+    --n: 3;
+    --food-size: min(18vh, calc((92vw / var(--n) - 2vw) / 1.3));
+    display: flex; align-items: center; justify-content: center; gap: 2vw;
+}
+.af-slot {
+    position: relative; width: calc(var(--food-size) * 1.3); height: calc(var(--food-size) * 1.3);
+    border-radius: 50%; background: rgba(255, 255, 255, .45); box-shadow: inset 0 4px 0 rgba(0, 0, 0, .1);
+}
+.af-food {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: var(--food-size); line-height: 1; cursor: grab; touch-action: none; z-index: 5;
+    transition: transform .35s cubic-bezier(.3, 1.4, .5, 1), opacity .3s;
+}
+.af-food.dragging { transition: none; z-index: 20; cursor: grabbing; filter: drop-shadow(0 14px 6px rgba(0, 0, 0, .25)); }
+/* Bites cut circular chunks out of the food. Each class adds one more cut; masks are intersected. */
+.af-food.bites-1 { -webkit-mask-image: radial-gradient(circle at 88% 22%, transparent 0 22%, #000 23%); mask-image: radial-gradient(circle at 88% 22%, transparent 0 22%, #000 23%); }
+.af-food.bites-2 {
+    -webkit-mask-image: radial-gradient(circle at 88% 22%, transparent 0 22%, #000 23%), radial-gradient(circle at 12% 40%, transparent 0 24%, #000 25%);
+    mask-image: radial-gradient(circle at 88% 22%, transparent 0 22%, #000 23%), radial-gradient(circle at 12% 40%, transparent 0 24%, #000 25%);
+    -webkit-mask-composite: source-in; mask-composite: intersect;
+}
+.af-food.bites-3 {
+    -webkit-mask-image: radial-gradient(circle at 88% 22%, transparent 0 22%, #000 23%), radial-gradient(circle at 12% 40%, transparent 0 24%, #000 25%), radial-gradient(circle at 60% 92%, transparent 0 26%, #000 27%);
+    mask-image: radial-gradient(circle at 88% 22%, transparent 0 22%, #000 23%), radial-gradient(circle at 12% 40%, transparent 0 24%, #000 25%), radial-gradient(circle at 60% 92%, transparent 0 26%, #000 27%);
+    -webkit-mask-composite: source-in, source-in; mask-composite: intersect, intersect;
+}
+.af-food.leftover { opacity: 0; transition: opacity .6s; pointer-events: none; }
+.af-food.eaten { opacity: 0; pointer-events: none; transition: transform .35s ease-in, opacity .35s ease-in; }
+.af-food.hint { animation: af-wiggle .6s ease-in-out infinite; }
+
+.af-stars {
+    position: absolute; top: 12px; right: 20px; font-size: 3rem; font-weight: 700; color: #7a5200;
+    pointer-events: none; text-shadow: 0 2px 0 #fff8;
+}
+
+.af-level {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%); font-size: 2rem; font-weight: 700;
+    color: #5a3b00; pointer-events: none; text-shadow: 0 2px 0 #fff8;
+}
+
+.af-timer {
+    position: absolute; top: 64px; left: 50%; transform: translateX(-50%); width: min(60vw, 520px); height: 44px;
+    border-radius: 22px; background: rgba(255, 255, 255, .6); overflow: hidden; pointer-events: none;
+}
+.af-timer[hidden] { display: none; }
+.af-timer-bar { position: absolute; inset: 0 auto 0 0; width: 100%; background: #5ec26a; }
+.af-timer.low .af-timer-bar { background: #ff6b4a; }
+.af-timer.up .af-timer-bar { background: #999; }
+.af-timer-text { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 1.8rem; font-weight: 800; color: #3b2a00; }
+.af-timer.low .af-timer-text { animation: af-pulse .5s ease-in-out infinite; }
+@keyframes af-pulse { 50% { transform: scale(1.25); } }
+
+.af-confetti {
+    position: absolute; top: -10vh; font-size: 3rem; pointer-events: none; z-index: 30;
+    animation: af-fall 1.6s ease-in forwards;
+}
+
+.af-reward {
+    position: absolute; inset: 0; z-index: 40; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, .6); pointer-events: none; animation: af-pop .5s cubic-bezier(.3, 1.6, .5, 1);
+}
+.af-reward .af-big-star { font-size: min(40vh, 40vw); line-height: 1; animation: af-spin 1.6s ease-in-out infinite; }
+.af-reward .af-sticker { font-size: min(16vh, 16vw); }
+
+@keyframes af-idle { 50% { transform: translateY(-1.2vh) rotate(1.5deg); } }
+@keyframes af-chomp { 25% { transform: scale(1.25, .8); } 50% { transform: scale(.9, 1.2); } 75% { transform: scale(1.15, .9); } }
+@keyframes af-shake { 20% { transform: translateX(-14px) rotate(-6deg); } 40% { transform: translateX(14px) rotate(6deg); } 60% { transform: translateX(-10px) rotate(-4deg); } 80% { transform: translateX(10px) rotate(4deg); } }
+@keyframes af-tap { 40% { transform: scale(1.2) rotate(-8deg); } 70% { transform: scale(.95) rotate(6deg); } }
+@keyframes af-munch { 50% { transform: scale(1.1, .9); } }
+@keyframes af-hop { 50% { transform: translateY(-3vh); } }
+@keyframes af-wiggle { 25% { transform: rotate(-12deg) scale(1.1); } 75% { transform: rotate(12deg) scale(1.1); } }
+@keyframes af-fall { to { transform: translateY(120vh) rotate(540deg); } }
+@keyframes af-pop { from { transform: scale(.3); opacity: 0; } }
+@keyframes af-spin { 50% { transform: rotate(12deg) scale(1.1); } }
+
+@media (prefers-reduced-motion: reduce) {
+    .af-timer.low .af-timer-text, .af-animal.rare::after, .af-animal, .af-animal.munching .af-emoji, .af-food.hint, .af-reward .af-big-star, .af-animal.hint .af-emoji { animation: none; }
+    .af-confetti { animation-duration: .01ms; }
+}

@@ -1,0 +1,29 @@
+@page "/play/{Id}"
+@inject GameRegistry Registry
+
+<PageTitle>@(_game?.Title ?? "Games")</PageTitle>
+
+<div class="play-area">
+    @if (_game is not null)
+    {
+        <GameHost Game="_game" />
+    }
+    else if (_loaded)
+    {
+        <div class="splash">🤷</div>
+    }
+    <ParentCorner />
+</div>
+
+@code {
+    private GameInfo? _game;
+    private bool _loaded;
+
+    [Parameter] public string Id { get; set; } = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _game = await Registry.FindAsync(Id);
+        _loaded = true;
+    }
+}

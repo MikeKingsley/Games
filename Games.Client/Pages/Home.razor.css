@@ -1,0 +1,9 @@
+.home { height: 100%; display: flex; flex-wrap: wrap; gap: 2rem; align-items: center; justify-content: center; padding: 2rem; }
+.tile {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 260px; height: 260px; border-radius: 40px; background: #fff7d6; color: #5a3b00;
+    text-decoration: none; box-shadow: 0 8px 0 #e0b84a; -webkit-user-drag: none;
+}
+.tile:active { transform: translateY(6px); box-shadow: 0 2px 0 #e0b84a; }
+.tile-icon { font-size: 9rem; line-height: 1; }
+.tile-title { font-size: 1.6rem; font-weight: 700; margin-top: .5rem; }

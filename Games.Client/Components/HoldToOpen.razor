@@ -1,0 +1,66 @@
+@implements IDisposable
+
+<button class="corner-button"
+        aria-label="Hold for grown-ups"
+        @onpointerdown="StartHold" @onpointerup="CancelHold" @onpointerleave="CancelUnlessTouch" @onpointercancel="CancelUnlessTouch"
+        @oncontextmenu:preventDefault>
+    <span class="corner-ring" style="@(_holding ? "--hold-ms:" + HoldMs + "ms" : null)" data-holding="@_holding"></span>
+    ⚙️
+</button>
+
+@if (_hint)
+{
+    <div class="hold-hint">Hold for 2 seconds…</div>
+}
+
+@code {
+    /// <summary>How long the gear must be held before <see cref="OnHeld"/> fires.</summary>
+    public const int HoldMs = 2000;
+
+    private CancellationTokenSource? _hold;
+    private bool _holding, _hint;
+
+    /// <summary>Raised once the gear has been held for <see cref="HoldMs"/>; toddlers tapping it do nothing.</summary>
+    [Parameter] public EventCallback OnHeld { get; set; }
+
+    /// <summary>Phones fire pointercancel/pointerleave partway through a long press; only lifting the finger counts as letting go.</summary>
+    private void CancelUnlessTouch(PointerEventArgs e)
+    {
+        if (e.PointerType != "touch") CancelHold();
+    }
+
+    private async Task StartHold()
+    {
+        CancelHold();
+        var hold = _hold = new CancellationTokenSource();
+        _holding = true;
+        try
+        {
+            await Task.Delay(HoldMs, hold.Token);
+        }
+        catch (TaskCanceledException) { return; }
+        _holding = false;
+        _hint = false;
+        await OnHeld.InvokeAsync();
+    }
+
+    /// <summary>A grown-up who only taps sees why nothing happened.</summary>
+    private async Task ShowHint()
+    {
+        _hint = true;
+        await Task.Delay(1800);
+        _hint = false;
+        StateHasChanged();
+    }
+
+    private void CancelHold()
+    {
+        var wasHolding = _holding;
+        _hold?.Cancel();
+        _hold = null;
+        _holding = false;
+        if (wasHolding) _ = ShowHint();
+    }
+
+    public void Dispose() => _hold?.Cancel();
+}

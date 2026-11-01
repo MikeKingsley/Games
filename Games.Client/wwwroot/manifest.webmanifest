@@ -1,0 +1,16 @@
+{
+  "name": "Games",
+  "short_name": "Games",
+  "id": "./",
+  "start_url": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#bfe9ff",
+  "theme_color": "#bfe9ff",
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any maskable" },
+    { "src": "icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any maskable" }
+  ]
+}

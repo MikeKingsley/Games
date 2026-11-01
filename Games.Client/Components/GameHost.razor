@@ -1,0 +1,62 @@
+@implements IAsyncDisposable
+@inject IJSRuntime Js
+@inject SettingsService Settings
+@inject NavigationManager Navigation
+
+<div @ref="_container" class="game-container"></div>
+
+@code {
+    private ElementReference _container;
+    private IJSObjectReference? _host;
+    private IJSObjectReference? _handle;
+    private DotNetObjectReference<GameHost>? _self;
+    private GameInfo? _mounted;
+
+    [Parameter, EditorRequired] public GameInfo Game { get; set; } = default!;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_mounted == Game) return;
+        _mounted = Game;
+        await UnmountAsync();
+
+        _host ??= await Js.InvokeAsync<IJSObjectReference>("import", "./js/host.js");
+        _self ??= DotNetObjectReference.Create(this);
+        Settings.Changed -= OnSettingsChanged;
+        Settings.Changed += OnSettingsChanged;
+        _handle = await _host.InvokeAsync<IJSObjectReference>(
+            "mountGame", Game.Id, Game.Module, _container, await Settings.GetAsync(), _self);
+    }
+
+    private async void OnSettingsChanged()
+    {
+        if (_host is null || _handle is null) return;
+        await _host.InvokeVoidAsync("updateGame", _handle, await Settings.GetAsync());
+    }
+
+    [JSInvokable] public void Exit() => Navigation.NavigateTo("");
+
+    [JSInvokable] public void Rewarded(int stars) { /* the game stores its own progress; hook for shell-level rewards */ }
+
+    private async Task UnmountAsync()
+    {
+        if (_host is not null && _handle is not null)
+        {
+            await _host.InvokeVoidAsync("unmountGame", _handle);
+            await _handle.DisposeAsync();
+        }
+        _handle = null;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Settings.Changed -= OnSettingsChanged;
+        try
+        {
+            await UnmountAsync();
+            if (_host is not null) await _host.DisposeAsync();
+        }
+        catch (JSDisconnectedException) { }
+        _self?.Dispose();
+    }
+}

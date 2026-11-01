@@ -1,0 +1,68 @@
+@page "/options"
+@inject SettingsService Settings
+@inject GameRegistry Registry
+@inject ProgressService Progress
+@inject NavigationManager Navigation
+
+<PageTitle>Options</PageTitle>
+
+<div class="options">
+    <h1>Options</h1>
+
+    <section>
+        <h2>Sound</h2>
+        <button class="option-button" @onclick="ToggleSound">@(_settings.Sound ? "🔊 Sound on" : "🔇 Sound off")</button>
+        <button class="option-button" @onclick="ToggleSpeech">@(_settings.Speech ? "🗣️ Speech on" : "🤐 Speech off")</button>
+    </section>
+
+    <section>
+        <h2>Levels</h2>
+        @foreach (var game in _games)
+        {
+            <div class="game-row">
+                <span class="game-name">@game.Icon @game.Title</span>
+                <span class="game-level">Level @_levels.GetValueOrDefault(game.Id, 1)</span>
+                <button class="option-button" @onclick="() => ResetAsync(game.Id)">
+                    @(_confirming == game.Id ? "⚠️ Tap again to reset" : "🔄 Reset levels")
+                </button>
+            </div>
+        }
+    </section>
+
+    <button class="option-button back" @onclick="Back">🏠 Back to games</button>
+</div>
+
+@code {
+    private GameSettings _settings = new();
+    private IReadOnlyList<GameInfo> _games = [];
+    private readonly Dictionary<string, int> _levels = [];
+    private string? _confirming;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _settings = await Settings.GetAsync();
+        _games = await Registry.GetAllAsync();
+        foreach (var game in _games) _levels[game.Id] = await Progress.GetLevelAsync(game.Id);
+    }
+
+    private Task ToggleSound() => Update(s => s with { Sound = !s.Sound });
+
+    private Task ToggleSpeech() => Update(s => s with { Speech = !s.Speech });
+
+    private async Task Update(Func<GameSettings, GameSettings> change)
+    {
+        await Settings.UpdateAsync(change);
+        _settings = await Settings.GetAsync();
+    }
+
+    /// <summary>Resetting forgets a game's progress, so the first tap only asks for confirmation.</summary>
+    private async Task ResetAsync(string gameId)
+    {
+        if (_confirming != gameId) { _confirming = gameId; return; }
+        _confirming = null;
+        await Progress.ResetAsync(gameId);
+        _levels[gameId] = await Progress.GetLevelAsync(gameId);
+    }
+
+    private void Back() => Navigation.NavigateTo("");
+}

@@ -1,0 +1,32 @@
+@page "/"
+@inject GameRegistry Registry
+@inject NavigationManager Navigation
+
+<PageTitle>Games</PageTitle>
+
+<HoldToOpen OnHeld="OpenOptions" />
+
+<div class="home">
+    @if (_games is null)
+    {
+        <div class="splash">🐵</div>
+    }
+    else
+    {
+        @foreach (var game in _games)
+        {
+            <a class="tile" href="play/@game.Id" aria-label="@game.Title">
+                <span class="tile-icon">@game.Icon</span>
+                <span class="tile-title">@game.Title</span>
+            </a>
+        }
+    }
+</div>
+
+@code {
+    private IReadOnlyList<GameInfo>? _games;
+
+    private void OpenOptions() => Navigation.NavigateTo("options");
+
+    protected override async Task OnInitializedAsync() => _games = await Registry.GetAllAsync();
+}

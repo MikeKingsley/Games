@@ -1,0 +1,65 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test
+        run: |
+          dotnet test Games.slnx
+          npm test
+
+      # GitHub Pages serves a project site from /<repo>/, so the app's base path (page and service worker) must match.
+      # Patch the sources before publishing: the service worker checks each cached file's hash, so files must not change afterwards.
+      - name: Set base path
+        run: |
+          sed -i "s#<base href=\"/\" />#<base href=\"/${{ github.event.repository.name }}/\" />#" Games.Client/wwwroot/index.html
+          sed -i "s#const base = \"/\";#const base = \"/${{ github.event.repository.name }}/\";#" Games.Client/wwwroot/service-worker.published.js
+          grep -n "base href" Games.Client/wwwroot/index.html
+          grep -n "const base" Games.Client/wwwroot/service-worker.published.js
+
+      - name: Publish
+        run: dotnet publish Games.Client -c Release -o publish
+
+      - name: Single-page-app fallback for Pages
+        run: |
+          cp publish/wwwroot/index.html publish/wwwroot/404.html
+          touch publish/wwwroot/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish/wwwroot
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

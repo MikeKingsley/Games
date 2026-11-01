@@ -1,0 +1,42 @@
+@inject SettingsService Settings
+@inject NavigationManager Navigation
+
+<HoldToOpen OnHeld="Open" />
+
+@if (_open)
+{
+    <div class="parent-panel" role="dialog" aria-label="Grown-ups">
+        <button class="panel-button" @onclick="ToggleSound">@(_settings.Sound ? "🔊 Sound on" : "🔇 Sound off")</button>
+        <button class="panel-button" @onclick="ToggleSpeech">@(_settings.Speech ? "🗣️ Speech on" : "🤐 Speech off")</button>
+        <button class="panel-button" @onclick="GoOptions">⚙️ Options</button>
+        <button class="panel-button" @onclick="GoHome">🏠 Exit to menu</button>
+        <button class="panel-button" @onclick="Close">✖ Close</button>
+    </div>
+}
+
+@code {
+    private bool _open;
+    private GameSettings _settings = new();
+
+    private async Task Open()
+    {
+        _settings = await Settings.GetAsync();
+        _open = true;
+    }
+
+    private Task ToggleSound() => Update(s => s with { Sound = !s.Sound });
+
+    private Task ToggleSpeech() => Update(s => s with { Speech = !s.Speech });
+
+    private async Task Update(Func<GameSettings, GameSettings> change)
+    {
+        await Settings.UpdateAsync(change);
+        _settings = await Settings.GetAsync();
+    }
+
+    private void GoOptions() => Navigation.NavigateTo("options");
+
+    private void GoHome() => Navigation.NavigateTo("");
+
+    private void Close() => _open = false;
+}

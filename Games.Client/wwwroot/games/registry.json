@@ -1,0 +1,3 @@
+[
+  { "id": "animal-feeding", "title": "Feed the Animals", "icon": "🐵", "module": "games/animal-feeding/index.js" }
+]
