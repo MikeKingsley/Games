@@ -1,6 +1,15 @@
 .parent-panel {
-    position: absolute; z-index: 60; inset: 0; margin: auto; width: min(420px, 90%); height: fit-content;
+    position: absolute; z-index: 60; inset: 0; margin: auto; width: min(420px, 90%); height: fit-content; max-height: calc(100dvh - 16px); overflow-y: auto;
     display: flex; flex-direction: column; gap: 1rem; padding: 1.5rem; border-radius: 28px;
     background: #fff; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .45);
 }
 .panel-button { min-height: 72px; font-size: 1.5rem; border-radius: 20px; border: 3px solid #ccc; background: #fafafa; }
+
+/* Phones: tighter panel; short landscape screens lay the buttons out in two columns. */
+@media (max-width: 480px), (max-height: 520px) {
+    .parent-panel { gap: .5rem; padding: 1rem; border-radius: 20px; }
+    .panel-button { min-height: 64px; font-size: 1.2rem; }
+}
+@media (max-height: 520px) and (min-width: 481px) {
+    .parent-panel { width: min(640px, 94%); display: grid; grid-template-columns: 1fr 1fr; }
+}

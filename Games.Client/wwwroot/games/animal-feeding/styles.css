@@ -82,7 +82,10 @@
 }
 .af-stars:empty { display: none; }
 .af-stars.shake { animation: af-shake .5s ease-in-out; }
-.af-stars.can-buy { background: rgba(255, 255, 255, .25); box-shadow: 0 0 0 3px rgba(255, 215, 0, .8); }
+.af-stars.can-buy {
+    background: rgba(255, 255, 255, .25); box-shadow: 0 0 0 3px rgba(255, 215, 0, .8);
+    display: flex; align-items: center; justify-content: center; min-height: auto; margin: 1rem 0 0 0; font-size: 2rem;
+}
 /* Hardcore Mode title: heavy italic type with a flame gradient */
 .af-hardcore {
     font: italic 900 clamp(1.4rem, 5vh, 2.4rem) Impact, "Arial Black", "Segoe UI Black", fantasy; letter-spacing: .12em; text-transform: uppercase;
@@ -126,7 +129,7 @@
     position: absolute; inset: 0; z-index: 40; display: flex; flex-direction: column; align-items: center; justify-content: center;
     background: rgba(255, 255, 255, .6); pointer-events: none; animation: af-pop .5s cubic-bezier(.3, 1.6, .5, 1);
 }
-.af-reward .af-big-star { font-size: min(40vh, calc(80vw / var(--n, 1))); line-height: 1; animation: af-spin 1.6s ease-in-out infinite; }
+.af-reward .af-big-star { font-size: min(40vh, calc(90vw / (var(--n, 1) * 1.5))); white-space: nowrap; line-height: 1; animation: af-spin 1.6s ease-in-out infinite; }
 .af-reward .af-sticker { font-size: min(16vh, 16vw); }
 
 /* ---- worlds: a background layer per world (sky + ground gradient, emoji scenery), cross-faded when the world changes ---- */
@@ -231,3 +234,36 @@
 }
 .af-shop-button:disabled { opacity: .4; }
 .af-shop-button[data-shop="ok"] { background: #5cbf5c; color: #fff; font-size: 1.6rem; }
+
+/* ---- phones ----
+   Short landscape: one top row (gear left, level + timer centred, stars right). Narrow portrait: the gear and stars share
+   row one, the level and timer sit on rows two and three. The update banner lives in the bottom-right corner on phones. */
+@media (max-width: 480px), (max-height: 520px) {
+    .af-score { top: max(6px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); flex-direction: column; align-items: flex-end; gap: 0; }
+    .af-stars, .af-stars.can-buy { font-size: 1.5rem; padding: 0 .3rem; margin: 1rem 0 0 0; }
+    .af-hardcore { font-size: 1rem; }
+    .af-lost-star { top: 6px; right: 12px; font-size: 1.8rem; }
+    .af-level { top: 6px; font-size: 1.4rem; }
+    .af-timer { top: 38px; height: 28px; width: min(30vw, 520px); border-radius: 14px; }
+    .af-tray { bottom: calc(3vh + 48px); } /* clears the update banner in the bottom-right corner */
+    .af-timer-text { font-size: 1.2rem; }
+    .af-world-name { left: max(12px, env(safe-area-inset-left)); bottom: max(6px, env(safe-area-inset-bottom)); padding: 4px 10px; font-size: 1rem; }
+    .af-shop-card { max-height: 94dvh; overflow-y: auto; gap: .5rem; padding: 1rem; border-radius: 20px; }
+    .af-shop-title { font-size: 1.5rem; }
+    .af-shop-line { font-size: 1.8rem; }
+    .af-shop-note { font-size: 1rem; }
+    .af-shop-button { min-height: 56px; font-size: 1.1rem; }
+    .af-shop-button[data-shop="ok"] { font-size: 1.3rem; }
+}
+@media (max-width: 480px) {
+    .af-stars, .af-stars.can-buy { font-size: 1.6rem; }
+    .af-level { top: 80px; font-size: 1.5rem; }
+    .af-timer { top: 114px; width: min(56vw, 520px); }
+}
+/* Phones in Development: the developer buttons take the whole bottom edge, so they shrink to one row and the world name steps aside. */
+@media (max-width: 480px), (max-height: 520px) {
+    .af-debug { gap: 3px; }
+    .af-debug-button { min-width: 0; min-height: 40px; padding: 0 4px; font-size: .75rem; white-space: nowrap; border-radius: 10px; }
+    .af-footer { right: max(8px, env(safe-area-inset-right)); bottom: max(4px, env(safe-area-inset-bottom)); }
+    .af-root:has(.af-footer) .af-world-name { display: none; }
+}
