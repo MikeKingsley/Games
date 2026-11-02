@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Games.Client (port 5210)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build-client",
+            "program": "dotnet",
+            "args": [
+                "run",
+                "--no-build",
+                "--project", "${workspaceFolder}/Games.Client/Games.Client.csproj",
+                "--no-launch-profile",
+                "--urls", "http://localhost:5210"
+            ],
+            "cwd": "${workspaceFolder}/Games.Client",
+            "stopAtEntry": false,
+            "console": "integratedTerminal",
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            },
+            "serverReadyAction": {
+                "action": "openExternally",
+                "pattern": "Now listening on",
+                "uriFormat": "http://localhost:5210"
+            }
+        }
+    ]
+}
