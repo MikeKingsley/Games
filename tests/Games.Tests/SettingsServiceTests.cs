@@ -10,6 +10,7 @@ public class SettingsServiceTests
         var settings = await new SettingsService(new MemoryStore()).GetAsync();
         Assert.True(settings.Sound);
         Assert.True(settings.Speech);
+        Assert.False(settings.Fullscreen);
     }
 
     [Fact]
@@ -20,7 +21,7 @@ public class SettingsServiceTests
 
         await service.UpdateAsync(s => s with { Speech = false });
 
-        Assert.Equal("""{"sound":true,"speech":false}""", store.Data[SettingsService.StorageKey]);
+        Assert.Equal("""{"sound":true,"speech":false,"fullscreen":false}""", store.Data[SettingsService.StorageKey]);
     }
 
     [Fact]
@@ -28,6 +29,18 @@ public class SettingsServiceTests
     {
         var store = new MemoryStore();
         store.Data[SettingsService.StorageKey] = """{"sound":false,"speech":true}""";
+
+        var settings = await new SettingsService(store).GetAsync();
+
+        Assert.False(settings.Sound);
+        Assert.True(settings.Speech);
+    }
+
+    [Fact]
+    public async Task Settings_saved_with_the_old_showFoods_field_still_load()
+    {
+        var store = new MemoryStore();
+        store.Data[SettingsService.StorageKey] = """{"sound":false,"speech":true,"showFoods":false}""";
 
         var settings = await new SettingsService(store).GetAsync();
 

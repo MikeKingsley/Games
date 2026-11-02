@@ -48,4 +48,43 @@ public class ProgressServiceTests
         Assert.Equal(4, await service.GetLevelAsync("other"));
         Assert.True(store.Data.ContainsKey(SettingsService.StorageKey));
     }
+
+    [Theory]
+    [InlineData("""{"rounds":3,"stars":1,"hardcore":true}""", true)]
+    [InlineData("""{"rounds":3,"hardcore":false}""", false)]
+    [InlineData("""{"rounds":3}""", false)]
+    [InlineData("""{"hardcore":"yes"}""", false)]
+    [InlineData("not json", false)]
+    public async Task Hardcore_is_read_from_saved_progress(string raw, bool expected)
+    {
+        var store = new MemoryStore();
+        store.Data["games.progress.animal-feeding"] = raw;
+
+        Assert.Equal(expected, await new ProgressService(store).IsHardcoreAsync("animal-feeding"));
+    }
+
+    [Fact]
+    public async Task No_saved_progress_is_not_hardcore_and_reset_turns_it_off()
+    {
+        var store = new MemoryStore();
+        var progress = new ProgressService(store);
+        Assert.False(await progress.IsHardcoreAsync("animal-feeding"));
+
+        store.Data["games.progress.animal-feeding"] = """{"rounds":3,"hardcore":true}""";
+        await progress.ResetAsync("animal-feeding");
+
+        Assert.False(await progress.IsHardcoreAsync("animal-feeding"));
+    }
+
+    [Fact]
+    public void RequestHardcore_tells_listeners_which_game()
+    {
+        var progress = new ProgressService(new MemoryStore());
+        string? seen = null;
+        progress.HardcoreRequested += id => seen = id;
+
+        progress.RequestHardcore("animal-feeding");
+
+        Assert.Equal("animal-feeding", seen);
+    }
 }

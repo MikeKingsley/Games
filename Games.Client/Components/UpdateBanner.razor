@@ -1,0 +1,24 @@
+@implements IDisposable
+@inject UpdateService Updates
+
+<div class="update-region" aria-live="polite">
+    @if (Updates.Visible)
+    {
+        <div class="update-banner" data-testid="update-banner">
+            <span class="update-text">New version ready</span>
+            <button class="update-apply" aria-label="Update now" @onclick="Updates.ApplyAsync">🔄 Update</button>
+        </div>
+    }
+</div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        Updates.Changed += OnChanged;
+        await Updates.StartAsync();
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Updates.Changed -= OnChanged;
+}

@@ -3,6 +3,7 @@
     --food-size: min(18vh, 20vw);
     position: absolute; inset: 0; overflow: hidden; touch-action: none;
     background: linear-gradient(#9fe0ff 0%, #d9f6ff 55%, #8fd16a 55%, #6fbf4a 100%);
+    --ink: #5a3b00; --ink-shadow: #fff8;
     font-family: "Segoe UI", system-ui, sans-serif;
 }
 
@@ -16,11 +17,16 @@
     width: calc(var(--animal-size) * 1.2); height: 100%;
     animation: af-idle 3.2s ease-in-out infinite;
 }
+.af-animals.crowded { --animal-size: min(26vh, calc((94vw / var(--na, 3) - 3vw) / 1.2)); gap: 2vw; }
+/* Bouncing (Hardcore Mode past level 100): the cards leave the row and are positioned by script inside the area. */
+.af-animals.bouncing .af-animal { position: absolute; height: auto; animation: none; }
 .af-animal:nth-child(2) { animation-delay: -1s; }
 .af-animal:nth-child(3) { animation-delay: -2s; }
 .af-emoji { font-size: var(--animal-size); line-height: 1; filter: drop-shadow(0 8px 0 rgba(0, 0, 0, .12)); transform-origin: 50% 90%; transition: scale .2s ease-out; }
 /* The animal under the dragged food grows (the `scale` property composes with the transform animations). */
+.af-animal.fed .af-emoji { scale: .5; } /* an animal that has eaten shrinks to half size */
 .af-animal.hover .af-emoji { scale: 1.3; }
+.af-animal.fed.hover .af-emoji { scale: .65; }
 
 /* The unicorn is a rare visitor: it glows and twinkles. */
 .af-animal.rare .af-emoji { filter: drop-shadow(0 0 22px #ff8be0) drop-shadow(0 0 8px #fff); }
@@ -36,7 +42,7 @@
 .af-animal.munching .af-emoji { animation: af-munch .22s ease-in-out infinite; }
 
 .af-tray {
-    position: absolute; left: 0; right: 0; bottom: 3vh; height: calc(var(--food-size) * 1.5);
+    position: absolute; left: 0; right: 0; bottom: calc(3vh + 40px); height: calc(var(--food-size) * 1.5);
     --n: 3;
     --food-size: min(18vh, calc((92vw / var(--n) - 2vw) / 1.3));
     display: flex; align-items: center; justify-content: center; gap: 2vw;
@@ -67,14 +73,36 @@
 .af-food.eaten { opacity: 0; pointer-events: none; transition: transform .35s ease-in, opacity .35s ease-in; }
 .af-food.hint { animation: af-wiggle .6s ease-in-out infinite; }
 
-.af-stars {
-    position: absolute; top: 12px; right: 20px; font-size: 3rem; font-weight: 700; color: #7a5200;
-    pointer-events: none; text-shadow: 0 2px 0 #fff8;
+.af-score {
+    position: absolute; top: 12px; right: 20px; display: flex; align-items: center; gap: 1rem; pointer-events: none;
 }
+.af-stars {
+    pointer-events: auto; cursor: pointer; padding: 0 .4rem; border: 0; border-radius: 16px; background: transparent; font: inherit;
+    font-size: 3rem; font-weight: 700; color: var(--ink); text-shadow: 0 2px 0 var(--ink-shadow); touch-action: manipulation; white-space: pre;
+}
+.af-stars:empty { display: none; }
+.af-stars.shake { animation: af-shake .5s ease-in-out; }
+.af-stars.can-buy { background: rgba(255, 255, 255, .25); box-shadow: 0 0 0 3px rgba(255, 215, 0, .8); }
+/* Hardcore Mode title: heavy italic type with a flame gradient */
+.af-hardcore {
+    font: italic 900 clamp(1.4rem, 5vh, 2.4rem) Impact, "Arial Black", "Segoe UI Black", fantasy; letter-spacing: .12em; text-transform: uppercase;
+    background: linear-gradient(180deg, #fff3a0 0%, #ffb300 40%, #e8260c 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
+    -webkit-text-stroke: 1px #5a1200; filter: drop-shadow(0 2px 0 rgba(90, 18, 0, .55)) drop-shadow(0 0 8px rgba(255, 120, 0, .65));
+    animation: af-flicker 1.6s ease-in-out infinite;
+}
+@keyframes af-flicker { 50% { filter: drop-shadow(0 2px 0 rgba(90, 18, 0, .55)) drop-shadow(0 0 14px rgba(255, 160, 0, .9)); } }
+
+.af-stars.lost { animation: af-star-hit .6s ease-in-out; }
+.af-lost-star {
+    position: absolute; top: 12px; right: 20px; font-size: 3rem; pointer-events: none; z-index: 35;
+    animation: af-star-drop 1.4s ease-in forwards;
+}
+@keyframes af-star-hit { 25% { transform: scale(1.3) rotate(-8deg); color: #c0392b; } 60% { transform: scale(.9) rotate(6deg); } }
+@keyframes af-star-drop { to { transform: translateY(70vh) rotate(260deg) scale(.6); opacity: 0; } }
 
 .af-level {
     position: absolute; top: 14px; left: 50%; transform: translateX(-50%); font-size: 2rem; font-weight: 700;
-    color: #5a3b00; pointer-events: none; text-shadow: 0 2px 0 #fff8;
+    color: var(--ink); pointer-events: none; text-shadow: 0 2px 0 var(--ink-shadow);
 }
 
 .af-timer {
@@ -98,8 +126,48 @@
     position: absolute; inset: 0; z-index: 40; display: flex; flex-direction: column; align-items: center; justify-content: center;
     background: rgba(255, 255, 255, .6); pointer-events: none; animation: af-pop .5s cubic-bezier(.3, 1.6, .5, 1);
 }
-.af-reward .af-big-star { font-size: min(40vh, 40vw); line-height: 1; animation: af-spin 1.6s ease-in-out infinite; }
+.af-reward .af-big-star { font-size: min(40vh, calc(80vw / var(--n, 1))); line-height: 1; animation: af-spin 1.6s ease-in-out infinite; }
 .af-reward .af-sticker { font-size: min(16vh, 16vw); }
+
+/* ---- worlds: a background layer per world (sky + ground gradient, emoji scenery), cross-faded when the world changes ---- */
+.af-world {
+    position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+    background: linear-gradient(var(--sky-top) 0%, var(--sky-bottom) 55%, var(--ground-top) 55%, var(--ground-bottom) 100%);
+    transition: opacity 1.5s ease-in-out;
+}
+.af-world.entering { opacity: 0; }
+.af-scene { position: absolute; line-height: 1; opacity: .9; transform: translate(-50%, 0); }
+.af-animals, .af-tray, .af-score, .af-level, .af-timer { z-index: 1; }
+
+.af-world[data-world="farm"] { --sky-top: #9fe0ff; --sky-bottom: #d9f6ff; --ground-top: #8fd16a; --ground-bottom: #6fbf4a; }
+.af-world[data-world="woodland"] { --sky-top: #b9e6b0; --sky-bottom: #e6f5c9; --ground-top: #7fae56; --ground-bottom: #5d8b3c; }
+.af-world[data-world="savanna"] { --sky-top: #ffb86b; --sky-bottom: #ffe7a8; --ground-top: #e3c070; --ground-bottom: #c9993f; }
+.af-world[data-world="ocean"] { --sky-top: #5cc8f5; --sky-bottom: #3a9fe0; --ground-top: #2f7fc9; --ground-bottom: #1d5aa6; }
+.af-world[data-world="dinosaur"] { --sky-top: #f5a96b; --sky-bottom: #ffd9a0; --ground-top: #9a8a4a; --ground-bottom: #6f6232; }
+.af-world[data-world="enchanted"] { --sky-top: #b894ef; --sky-bottom: #f2d4ff; --ground-top: #6ed0a0; --ground-bottom: #3ea57a; }
+.af-world[data-world="crystal"] { --sky-top: #3d3b7a; --sky-bottom: #6b5fb5; --ground-top: #4a7fa8; --ground-bottom: #2f5a82; }
+.af-world[data-world="cloud"] { --sky-top: #8fd3ff; --sky-bottom: #ffffff; --ground-top: #ffffff; --ground-bottom: #d6ecff; }
+.af-world[data-world="volcano"] { --sky-top: #5a1d1d; --sky-bottom: #e8663a; --ground-top: #4a3a3a; --ground-bottom: #2b2020; }
+.af-world[data-world="castle"] { --sky-top: #f7b8d6; --sky-bottom: #ffe5ef; --ground-top: #9fd98a; --ground-bottom: #6fb85c; }
+.af-world[data-world="space"] { --sky-top: #0b0b2e; --sky-bottom: #2a1a5e; --ground-top: #6c6f85; --ground-bottom: #43455a; }
+.af-world[data-world="rainbow"] { --sky-top: #ffd6f2; --sky-bottom: #d6f0ff; --ground-top: #c9f5c0; --ground-bottom: #ffe9a8; }
+
+/* Hardcore Mode: every world at night. A dark sky with twinkling stars and a moon; the scenery is dimmed. */
+.af-world.night[data-world] { --sky-top: #040716; --sky-bottom: #1a2760; --ground-top: #1c3336; --ground-bottom: #0f1f2e; }
+.af-world.night::before {
+    content: ""; position: absolute; inset: 0 0 45% 0; opacity: .9; animation: af-twinkle 3.2s ease-in-out infinite;
+    background:
+        radial-gradient(circle, #fff 0 1.5px, transparent 2px) 0 0 / 90px 70px,
+        radial-gradient(circle, #cfe3ff 0 1px, transparent 1.5px) 33px 27px / 60px 80px,
+        radial-gradient(circle, #fff7c2 0 1px, transparent 1.5px) 12px 50px / 110px 90px;
+}
+@keyframes af-twinkle { 50% { opacity: .55; } }
+.af-world.night .af-scene { filter: brightness(.5) saturate(.8); opacity: .8; }
+.af-moon { position: absolute; left: 14%; top: 5%; font-size: 11vh; line-height: 1; filter: drop-shadow(0 0 18px rgba(255, 244, 190, .8)); }
+.af-root[data-hardcore="true"] { --ink: #fff; --ink-shadow: #0006; }
+
+/* Dark worlds need light text for the level, stars and timer. */
+.af-root[data-world="ocean"], .af-root[data-world="crystal"], .af-root[data-world="volcano"], .af-root[data-world="space"] { --ink: #fff; --ink-shadow: #0006; }
 
 @keyframes af-idle { 50% { transform: translateY(-1.2vh) rotate(1.5deg); } }
 @keyframes af-chomp { 25% { transform: scale(1.25, .8); } 50% { transform: scale(.9, 1.2); } 75% { transform: scale(1.15, .9); } }
@@ -113,6 +181,53 @@
 @keyframes af-spin { 50% { transform: rotate(12deg) scale(1.1); } }
 
 @media (prefers-reduced-motion: reduce) {
-    .af-timer.low .af-timer-text, .af-animal.rare::after, .af-animal, .af-animal.munching .af-emoji, .af-food.hint, .af-reward .af-big-star, .af-animal.hint .af-emoji { animation: none; }
+    .af-stars.lost, .af-lost-star, .af-hardcore, .af-world.night::before, .af-timer.low .af-timer-text, .af-animal.rare::after, .af-animal, .af-animal.munching .af-emoji, .af-food.hint, .af-reward .af-big-star, .af-animal.hint .af-emoji, .af-shop-card { animation: none; }
     .af-confetti { animation-duration: .01ms; }
+    .af-world { transition: none; }
 }
+
+/* Bottom corners: the world's name on the left, developer tools (Development environment only) on the right. */
+.af-footer { position: absolute; right: 12px; bottom: 6px; z-index: 50; }
+.af-world-name {
+    position: absolute; left: 12px; bottom: 6px; z-index: 50;
+    padding: 6px 14px; border-radius: 16px; background: rgba(255, 255, 255, .75); color: #333;
+    font-weight: 700; font-size: clamp(1rem, 3vh, 1.6rem); text-transform: capitalize; white-space: nowrap; pointer-events: none;
+}
+
+/* Developer tools: level stepper, only mounted in the Development environment. */
+.af-debug { display: flex; gap: 8px; }
+.af-root.hide-fed .af-fed-count { display: none; }
+.af-debug-button.on { background: #ffd54a; border-style: solid; }
+.af-palette {
+    position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 4px; white-space: nowrap;
+    padding: 2px 10px; border-radius: 12px; background: rgba(255, 255, 255, .85); color: #222; font-size: clamp(1.1rem, 4vh, 2rem); pointer-events: none;
+}
+.af-palette-food { display: inline-block; margin: 0 .1em; transition: opacity .3s, filter .3s; }
+.af-palette-food.blocked { opacity: .25; filter: grayscale(1); }
+.af-debug-button {
+    min-width: 72px; min-height: 44px; padding: 0 10px; border: 2px dashed #444; border-radius: 14px;
+    background: rgba(255, 255, 255, .85); color: #222; font: 700 1.1rem "Segoe UI", system-ui, sans-serif; cursor: pointer;
+}
+
+/* Debug: pieces of food each animal has eaten this round, above the animal. */
+.af-fed-count {
+    margin-bottom: 4px; padding: 2px 10px; border-radius: 12px; background: rgba(255, 255, 255, .85); color: #222;
+    font: 700 clamp(1rem, 3.4vh, 1.5rem) "Segoe UI", system-ui, sans-serif; white-space: nowrap; pointer-events: none;
+}
+
+/* Increase-time dialog: covers the game while the countdown stands still. */
+.af-shop { position: absolute; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .55); }
+.af-shop-card {
+    display: flex; flex-direction: column; align-items: stretch; gap: .8rem; width: min(92vw, 30rem); padding: 1.4rem 1.6rem;
+    border-radius: 28px; background: #fffaf0; color: #3b2a00; text-align: center; box-shadow: 0 10px 40px rgba(0, 0, 0, .45);
+    animation: af-pop .3s cubic-bezier(.3, 1.6, .5, 1);
+}
+.af-shop-title { font-size: 2rem; font-weight: 800; }
+.af-shop-line { font-size: 2.4rem; font-weight: 700; white-space: pre; }
+.af-shop-note { font-size: 1.1rem; opacity: .75; }
+.af-shop-button {
+    min-height: 64px; padding: 0 1rem; border: 0; border-radius: 20px; background: #ffe3a3; color: #3b2a00;
+    font: 700 1.3rem "Segoe UI", system-ui, sans-serif; touch-action: manipulation;
+}
+.af-shop-button:disabled { opacity: .4; }
+.af-shop-button[data-shop="ok"] { background: #5cbf5c; color: #fff; font-size: 1.6rem; }

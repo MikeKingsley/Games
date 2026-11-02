@@ -1,7 +1,11 @@
+@using Microsoft.AspNetCore.Components.WebAssembly.Hosting
 @implements IAsyncDisposable
 @inject IJSRuntime Js
 @inject SettingsService Settings
 @inject NavigationManager Navigation
+@inject IWebAssemblyHostEnvironment HostEnvironment
+@inject PauseState Pause
+@inject ProgressService Progress
 
 <div @ref="_container" class="game-container"></div>
 
@@ -24,14 +28,30 @@
         _self ??= DotNetObjectReference.Create(this);
         Settings.Changed -= OnSettingsChanged;
         Settings.Changed += OnSettingsChanged;
+        Pause.Changed -= OnPauseChanged;
+        Pause.Changed += OnPauseChanged;
+        Progress.HardcoreRequested -= OnHardcoreRequested;
+        Progress.HardcoreRequested += OnHardcoreRequested;
         _handle = await _host.InvokeAsync<IJSObjectReference>(
-            "mountGame", Game.Id, Game.Module, _container, await Settings.GetAsync(), _self);
+            "mountGame", Game.Id, Game.Module, _container, await Settings.GetAsync(), _self, HostEnvironment.IsDevelopment());
     }
 
     private async void OnSettingsChanged()
     {
         if (_host is null || _handle is null) return;
         await _host.InvokeVoidAsync("updateGame", _handle, await Settings.GetAsync());
+    }
+
+    private async void OnPauseChanged()
+    {
+        if (_host is null || _handle is null) return;
+        await _host.InvokeVoidAsync("pauseGame", _handle, Pause.Paused);
+    }
+
+    private async void OnHardcoreRequested(string gameId)
+    {
+        if (_host is null || _handle is null || gameId != Game.Id) return;
+        await _host.InvokeVoidAsync("hardcoreGame", _handle);
     }
 
     [JSInvokable] public void Exit() => Navigation.NavigateTo("");
@@ -51,6 +71,8 @@
     public async ValueTask DisposeAsync()
     {
         Settings.Changed -= OnSettingsChanged;
+        Pause.Changed -= OnPauseChanged;
+        Progress.HardcoreRequested -= OnHardcoreRequested;
         try
         {
             await UnmountAsync();

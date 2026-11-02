@@ -1,0 +1,6 @@
+<button class="corner-button" aria-label="Grown-ups" @onclick="OnClick">⚙️</button>
+
+@code {
+    /// <summary>Raised when the gear is tapped.</summary>
+    [Parameter] public EventCallback OnClick { get; set; }
+}

@@ -26,7 +26,7 @@
     </div>
     <script src="js/kiosk.js"></script>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
-    <script>if ("serviceWorker" in navigator) navigator.serviceWorker.register("service-worker.js", { updateViaCache: "none" });</script>
+    <script type="module">import { install } from "./js/update.js"; install();</script>
 </body>
 
 </html>

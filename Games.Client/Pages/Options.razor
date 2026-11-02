@@ -1,5 +1,6 @@
 @page "/options"
 @inject SettingsService Settings
+@inject FullscreenService Fullscreen
 @inject GameRegistry Registry
 @inject ProgressService Progress
 @inject NavigationManager Navigation
@@ -16,12 +17,17 @@
     </section>
 
     <section>
+        <h2>Screen</h2>
+        <button class="option-button" @onclick="ToggleFullscreen">@(_settings.Fullscreen ? "⛶ Fullscreen on" : "⛶ Fullscreen off")</button>
+    </section>
+
+    <section>
         <h2>Levels</h2>
         @foreach (var game in _games)
         {
             <div class="game-row">
                 <span class="game-name">@game.Icon @game.Title</span>
-                <span class="game-level">Level @_levels.GetValueOrDefault(game.Id, 1)</span>
+                <span class="game-level">Level @_levels.GetValueOrDefault(game.Id, 1)@(_hardcore.Contains(game.Id) ? " 🔥" : "")</span>
                 <button class="option-button" @onclick="() => ResetAsync(game.Id)">
                     @(_confirming == game.Id ? "⚠️ Tap again to reset" : "🔄 Reset levels")
                 </button>
@@ -36,16 +42,27 @@
     private GameSettings _settings = new();
     private IReadOnlyList<GameInfo> _games = [];
     private readonly Dictionary<string, int> _levels = [];
+    private readonly HashSet<string> _hardcore = [];
     private string? _confirming;
 
     protected override async Task OnInitializedAsync()
     {
         _settings = await Settings.GetAsync();
         _games = await Registry.GetAllAsync();
-        foreach (var game in _games) _levels[game.Id] = await Progress.GetLevelAsync(game.Id);
+        foreach (var game in _games)
+        {
+            _levels[game.Id] = await Progress.GetLevelAsync(game.Id);
+            if (await Progress.IsHardcoreAsync(game.Id)) _hardcore.Add(game.Id);
+        }
     }
 
     private Task ToggleSound() => Update(s => s with { Sound = !s.Sound });
+
+    private async Task ToggleFullscreen()
+    {
+        await Fullscreen.SetAsync(!_settings.Fullscreen);
+        _settings = await Settings.GetAsync();
+    }
 
     private Task ToggleSpeech() => Update(s => s with { Speech = !s.Speech });
 
@@ -62,6 +79,7 @@
         _confirming = null;
         await Progress.ResetAsync(gameId);
         _levels[gameId] = await Progress.GetLevelAsync(gameId);
+        _hardcore.Remove(gameId);
     }
 
     private void Back() => Navigation.NavigateTo("");
