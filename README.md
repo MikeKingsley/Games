@@ -1,6 +1,9 @@
 # Games
 
-Kids' games written in JavaScript, hosted in a static Blazor WebAssembly shell (.NET 10). Built for toddlers (2-4) on touch tablets: big targets, no reading, no fail states. First game: **Feed the Animals** (drag each food to the animal that eats it).
+Games written in JavaScript, hosted in a static Blazor WebAssembly shell (.NET 10). The shell is built for toddlers (2-4) on touch tablets: big targets, no reading, no fail states. Games:
+
+- **Feed the Animals** (toddlers): drag each food to the animal that eats it.
+- **Delivery Driver** (older kids and adults): run a haulage company in Devon and Cornwall from 1919. It has its own rules, text UI and save slots (see [Delivery Driver](#delivery-driver)).
 
 Installable as an offline PWA. No accounts or backend; settings and progress live in `localStorage`.
 
@@ -29,7 +32,8 @@ npm run test:e2e           # Playwright drag test; starts the app on :5211, uses
 | `Games.Client/wwwroot/games/<id>/` | One folder per game (JS ES module + CSS) |
 | `Games.Client/wwwroot/js/host.js` | Loads a game module and passes it its options |
 | `tests/Games.Tests/` | xUnit tests for the shell |
-| `tests/js/`, `tests/e2e/` | Node logic tests, Playwright test |
+| `Games.Client/wwwroot/games/delivery-driver/` | Delivery Driver (see its section below for the folder layout) |
+| `tests/js/`, `tests/e2e/` | Node logic tests, Playwright tests |
 | `_docs/plans/`, `_docs/code-docs/` | Build plan and class docs |
 
 ## Adding a game
@@ -46,7 +50,7 @@ npm run test:e2e           # Playwright drag test; starts the app on :5211, uses
    `options` = `{ soundEnabled, speechEnabled, showFoods, debug (true in the Development environment), onExit(), onReward(stars), loadProgress(), saveProgress(obj) }`.
    `setOptions({ soundEnabled, speechEnabled, showFoods, paused })` (`paused` is true while the grown-ups panel is open) is called when a parent changes settings mid-game.
 2. Keep game rules in a DOM-free `logic.js` so they can be tested in Node; inject your own stylesheet from `mount` and remove it in `unmount`.
-3. Add an entry to `registry.json`: `{ "id", "title", "icon" (emoji), "module": "games/<id>/index.js" }`.
+3. Add an entry to `registry.json`: `{ "id", "title", "icon" (emoji), "module": "games/<id>/index.js" }`. A game with its own save system can switch off shell features with `"features": { "hardcore": false, "levels": false }` (both default `true`): `hardcore: false` hides the Hardcore Mode button in the grown-ups panel, `levels: false` hides the game's "Level N / Reset levels" row on the Options page.
 4. Add tests under `tests/js/`.
 
 ## Feed the Animals: worlds
@@ -64,7 +68,7 @@ The background and the animals change with the level (defined in `WORLDS` in `an
 
 ## Parent corner
 
-A small gear in the top-left of the home screen and of every game. Tap it. On the home screen it opens the Options page; in a game it opens a panel with sound, speech, fullscreen, Hardcore Mode, Options and exit. The Options page (`/options`) has the sound/speech/fullscreen switches and, per game, its current level with a two-tap "Reset levels".
+A small gear in the top-left of the home screen and of every game. Tap it. On the home screen it opens the Options page; in a game it opens a panel with sound, speech, fullscreen, Hardcore Mode (unless the game switches it off in `registry.json`), Options and exit. The Options page (`/options`) has the sound/speech/fullscreen switches and, per game, its current level with a two-tap "Reset levels".
 
 ## Deploy
 
@@ -114,3 +118,55 @@ In both modes, tap the star (or flame) count to open an **Increase time** dialog
 ### Fullscreen
 
 Off by default. **Fullscreen** (Options page, or the in-game grown-ups panel) makes the app go fullscreen on the first tap of each page load (browsers need a tap), and switching it on goes fullscreen straight away; switching it off leaves fullscreen. The installed app opens in `standalone` mode (the manifest no longer asks for `fullscreen`). The setting is `fullscreen` in `games.settings`, read by `wwwroot/js/kiosk.js`.
+
+## Delivery Driver
+
+A semi top-down, faux-3D haulage game (Canvas 2D, no dependencies). You start on 1 January 1919 at an Exeter depot with a Tamar T-Ton van and £400, and grow a company across Devon and Cornwall: bigger vehicles, articulated lorries with trailers, hired drivers and more depots. All makes are fictional.
+
+### Controls
+
+| Keys | Touch | What |
+|---|---|---|
+| W / ↑ | GO pedal | Accelerate. Hold S at a standstill to select reverse (W at a standstill goes forward again) |
+| S / ↓ | BRAKE pedal | Brake |
+| A D / ← → | slider or wheel | Steer |
+| Space | | Handbrake |
+| F / Enter | 📦 | Depot office, garage (fuel and repairs), ferry, tow; in the practice yard its menu |
+| C | 🔗 | Couple / uncouple a trailer (tractor units) |
+| Q / E, H | 📯 | Indicators, horn |
+| M, J | 🗺️ | Map, current job |
+| V, Z / X | 🎥 | Camera (behind / north up), zoom |
+| G, Shift / Ctrl | | Manual gearbox on/off, gear up / down |
+| Esc | ☰ | Game menu: save, save slots, settings, controls, skip the tutorial |
+
+A gamepad works too (left stick, triggers, A for the handbrake). Phones show the touch controls (`pointer: coarse`); landscape is best.
+
+### How it plays
+
+- **Contracts** come from the depot office's board, one per owned depot, new each game day: multi-drop parcels, farm collections, point-to-point haulage, special cargo (china clay, granite, milk, fish, timber, petrol, livestock, frozen food, machinery) that needs the right vehicle or trailer tag, and trailer jobs (collect a client's trailer, or a drop-and-swap) for tractor units. Reverse the **rear** of the vehicle (or trailer) onto a bay marker within 1.5 m and 15°, stop, and loading runs on a timer; kerbside drops need you stopped by the ring. Late deliveries lose 10% per game hour (down to 40%), early undamaged ones earn a 15% bonus, cargo damage is deducted.
+- **Time:** 1 real minute = 15 game minutes, only while driving (menus pause the clock). Days bring new offers, Mondays bring wages, loan interest and depot upkeep, and new years bring new vehicles and road changes (Exeter bypass 1938, Tamar Bridge 1961 replacing the Saltash ferry, the M5 to Exeter in 1977, A30/A38 dualling...).
+- **Money:** fuel, wear and damage (repairs at depots and town garages), loans from the bank, a used market and part-exchange. Below £0 on a Monday the bank forces a bailout loan, then sells your cheapest vehicle; with no vehicles and no credit the company goes bust (kept as a read-only record).
+- **Reputation** from on-time, undamaged jobs moves you from Local Carrier to National Haulage, unlocking haulage and special work, longer routes and depot purchases.
+- **Fleet:** buy vehicles and trailers at the dealer, hire drivers (skill and wage) and give them jobs or let them auto-take work; they run off-screen on route time and show as dots on the map. Buy depots in other towns (Regional Haulier and up).
+- **Articulated lorries** pivot on the fifth wheel and reverse like the real thing (unstable; they can jack-knife past 85°). Reverse the fifth wheel under the kingpin (0.4 m, 10°) and press C. The depot office has a **reversing practice yard** (any year, any vehicle).
+- **World:** a stylised Devon and Cornwall compressed about 1:13 (Exeter to Penzance is about 10 real minutes at 50 mph): real towns, A-roads and ferries from `world/seed/sw-england.json`, with town streets, buildings, farms, fields, woods and moors generated from the seed. Day and night follow the season; the weather is seeded per day (rain lowers grip, fog is common on the moors).
+
+### Saves and settings
+
+Three save slots in `localStorage` (`games.dd.slot1` to `slot3`, versioned and migrated), with an index in the shell's progress store (`games.progress.delivery-driver`). Autosave after every completed delivery, every 3 real minutes and on exit; export and import from the slot menu. Device settings (quality, camera, gearbox, touch steering, units) are in `games.dd.settings`.
+
+### Code
+
+| Folder | What |
+|---|---|
+| `index.js`, `config.js`, `styles.css` | Mount/unmount and wiring; tuning constants (`WORLD_SCALE`, `TIME_SCALE`, quality presets); overlays |
+| `engine/` | Fixed 60 Hz loop, input (keyboard, touch, gamepad), camera, seeded RNG |
+| `sim/` | Vehicle (bicycle model + gearbox), trailer kinematics, coupling, OBB collision |
+| `world/` | Region seed + projection, road graph, generator, chunks, A* routes, road history |
+| `traffic/` | Era traffic: lane following, junction claims, signals |
+| `game/` | Session, career, calendar, contracts, economy, catalogue, dealer, fleet, reputation, environment, save, tutorial |
+| `render/`, `ui/`, `audio/` | Canvas drawing, DOM menus and HUD, WebAudio synth |
+
+Logic in `sim/`, `world/`, `traffic/` and most of `game/` is DOM-free and tested in Node (`tests/js/delivery-driver.*.test.mjs`); `tests/e2e/delivery-driver.spec.mjs` drives the real game.
+
+**Debug hook** (Development environment only): `window.__dd` exposes `state` (the session), `teleport(x, y, heading)`, `setControls({throttle, brake, steer, handbrake, reverse} | null)`, `completeDrop()`, `advanceClock(hours)`, `setWeather({kind, intensity})`, `newGame(opts)` (an unsaved game, skipping the slot menu), `spawnAtDepot()`, `stats()` and `resetPerf()`.

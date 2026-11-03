@@ -3,6 +3,7 @@
 ## Games (Games.Client)
 ### application
 - [GameInfo](Games/application/GameInfo.md) — registry entry record
+- [GameFeatures](Games/application/GameFeatures.md) — per-game opt-outs for shell features (Hardcore, levels)
 - [GameRegistry](Games/application/GameRegistry.md) — loads games/registry.json
 - [GameSettings](Games/application/GameSettings.md) — sound/speech/show-foods switches
 - [PauseState](Games/application/PauseState.md) — "menu open, hold the game still" flag
