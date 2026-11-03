@@ -23,7 +23,7 @@
 
     <section>
         <h2>Levels</h2>
-        @foreach (var game in _games)
+        @foreach (var game in _games.Where(g => g.HasLevels))
         {
             <div class="game-row">
                 <span class="game-name">@game.Icon @game.Title</span>

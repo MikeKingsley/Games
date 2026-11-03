@@ -1,3 +1,4 @@
 [
-  { "id": "animal-feeding", "title": "Feed the Animals", "icon": "🐵", "module": "games/animal-feeding/index.js" }
+  { "id": "animal-feeding", "title": "Feed the Animals", "icon": "🐵", "module": "games/animal-feeding/index.js" },
+  { "id": "delivery-driver", "title": "Delivery Driver", "icon": "🚚", "module": "games/delivery-driver/index.js", "features": { "hardcore": false, "levels": false } }
 ]

@@ -3,6 +3,7 @@
 @inject PauseState Pause
 @inject ProgressService Progress
 @inject FullscreenService Fullscreen
+@inject GameRegistry Registry
 @implements IDisposable
 
 <CornerButton OnClick="Open" />
@@ -13,7 +14,9 @@
         <button class="panel-button" @onclick="ToggleSound">@(_settings.Sound ? "🔊 Sound on" : "🔇 Sound off")</button>
         <button class="panel-button" @onclick="ToggleSpeech">@(_settings.Speech ? "🗣️ Speech on" : "🤐 Speech off")</button>
         <button class="panel-button" @onclick="ToggleFullscreen">@(_settings.Fullscreen ? "⛶ Fullscreen on" : "⛶ Fullscreen off")</button>
-        @if (_hardcore)
+        @* games with their own rules (e.g. Delivery Driver) opt out of the shell's Hardcore Mode in registry.json *@
+        @if (!_hasHardcore) { }
+        else if (_hardcore)
         {
             <button class="panel-button" disabled>🔥 Hardcore Mode on (reset levels to end it)</button>
         }
@@ -30,13 +33,14 @@
 @code {
     [Parameter, EditorRequired] public string GameId { get; set; } = "";
 
-    private bool _open, _hardcore, _confirmingHardcore;
+    private bool _open, _hardcore, _confirmingHardcore, _hasHardcore = true;
     private GameSettings _settings = new();
 
     private async Task Open()
     {
         _settings = await Settings.GetAsync();
         _hardcore = await Progress.IsHardcoreAsync(GameId);
+        _hasHardcore = (await Registry.FindAsync(GameId))?.HasHardcore ?? true;
         _confirmingHardcore = false;
         _open = true;
         Pause.Set(true); // the game's countdown stands still while the menu is open

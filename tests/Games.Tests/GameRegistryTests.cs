@@ -14,6 +14,33 @@ public class GameRegistryTests
     }
 
     [Fact]
+    public void Features_default_to_on_when_missing()
+    {
+        var game = Assert.Single(GameRegistry.Parse("""[{ "id": "a", "title": "A", "icon": "🐵", "module": "m.js" }]"""));
+
+        Assert.True(game.HasHardcore);
+        Assert.True(game.HasLevels);
+    }
+
+    [Fact]
+    public void Features_missing_from_the_features_object_default_to_on()
+    {
+        var game = Assert.Single(GameRegistry.Parse("""[{ "id": "a", "title": "A", "icon": "🐵", "module": "m.js", "features": { "levels": false } }]"""));
+
+        Assert.True(game.HasHardcore);
+        Assert.False(game.HasLevels);
+    }
+
+    [Fact]
+    public void Features_can_be_switched_off()
+    {
+        var game = Assert.Single(GameRegistry.Parse("""[{ "id": "a", "title": "A", "icon": "🐵", "module": "m.js", "features": { "hardcore": false, "levels": false } }]"""));
+
+        Assert.False(game.HasHardcore);
+        Assert.False(game.HasLevels);
+    }
+
+    [Fact]
     public void Shipped_registry_lists_the_animal_feeding_game_and_every_module_file_exists()
     {
         var root = AppContext.BaseDirectory;
