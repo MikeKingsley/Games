@@ -1,0 +1,161 @@
+/* Delivery Driver overlays. Everything is scoped under .dd-root; mount() injects this file and unmount() removes it. */
+.dd-root {
+    position: absolute; inset: 0; overflow: hidden; touch-action: none;
+    background: #4c6b3a; color: #f4f1e8;
+    font-family: "Segoe UI", system-ui, sans-serif; font-size: 15px;
+    -webkit-user-select: none; user-select: none;
+    --dd-panel: rgba(20, 24, 28, .82); --dd-accent: #f2b33d; --dd-good: #6fd26f; --dd-bad: #ff6b5b;
+}
+.dd-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* ---- HUD -------------------------------------------------------------------------------------------- */
+.dd-hud-top {
+    position: absolute; top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right));
+    left: 96px; /* clear of the shell's gear button (top left) */
+    display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; pointer-events: none;
+}
+.dd-chip { background: var(--dd-panel); border-radius: 10px; padding: 6px 10px; white-space: nowrap; pointer-events: auto; }
+.dd-chip b { color: var(--dd-accent); font-weight: 600; }
+.dd-money.neg b { color: var(--dd-bad); }
+.dd-job {
+    position: absolute; top: calc(max(8px, env(safe-area-inset-top)) + 44px); right: max(8px, env(safe-area-inset-right));
+    max-width: min(360px, 60vw); background: var(--dd-panel); border-radius: 10px; padding: 8px 12px; pointer-events: none;
+}
+.dd-job:empty { display: none; }
+.dd-job .dd-step { color: var(--dd-accent); }
+.dd-job .dd-hint { opacity: .8; font-size: .9em; }
+.dd-toast {
+    position: absolute; left: 50%; top: 22%; transform: translateX(-50%); background: var(--dd-panel); border-radius: 12px;
+    padding: 10px 18px; font-size: 1.15em; pointer-events: none; transition: opacity .4s; text-align: center;
+}
+.dd-toast.hide { opacity: 0; }
+.dd-gauges {
+    position: absolute; left: max(8px, env(safe-area-inset-left)); bottom: max(8px, env(safe-area-inset-bottom));
+    display: flex; align-items: flex-end; gap: 8px; pointer-events: none;
+}
+.dd-speedo { background: var(--dd-panel); border-radius: 12px; padding: 6px 12px; text-align: center; min-width: 84px; }
+.dd-speedo .dd-mph { font-size: 2em; font-weight: 700; line-height: 1; }
+.dd-speedo .dd-unit { font-size: .75em; opacity: .75; }
+.dd-gear { font-size: 1.1em; color: var(--dd-accent); }
+.dd-bars { background: var(--dd-panel); border-radius: 12px; padding: 6px 10px; font-size: .8em; min-width: 110px; }
+.dd-bar { height: 6px; background: #fff2; border-radius: 3px; margin: 2px 0 5px; overflow: hidden; }
+.dd-bar > i { display: block; height: 100%; background: var(--dd-good); }
+.dd-bar.low > i { background: var(--dd-bad); }
+.dd-ind { position: absolute; top: 50%; font-size: 2em; color: var(--dd-good); opacity: 0; pointer-events: none; }
+.dd-ind.left { left: 12px; } .dd-ind.right { right: 12px; }
+.dd-ind.on { opacity: 1; }
+.dd-minimap {
+    position: absolute; right: max(8px, env(safe-area-inset-right)); bottom: max(8px, env(safe-area-inset-bottom));
+    width: 180px; height: 180px; border-radius: 50%; border: 3px solid #0008; background: #2a3a22; pointer-events: auto; cursor: pointer;
+}
+.dd-hud-buttons { position: absolute; top: 50%; right: 8px; transform: translateY(-50%); display: none; flex-direction: column; gap: 8px; }
+.dd-rotate {
+    position: absolute; inset: auto 0 40% 0; margin: auto; width: max-content; background: var(--dd-panel);
+    padding: 8px 14px; border-radius: 12px; display: none; pointer-events: none;
+}
+.dd-root.portrait .dd-rotate { display: block; }
+
+/* ---- Touch controls (pointer: coarse) ---------------------------------------------------------------- */
+.dd-touch { position: absolute; inset: 0; pointer-events: none; display: none; }
+.dd-root.touch .dd-touch { display: block; }
+.dd-root.touch .dd-gauges { bottom: calc(max(8px, env(safe-area-inset-bottom)) + 120px); }
+.dd-root.touch .dd-minimap { width: 130px; height: 130px; bottom: auto; top: calc(max(8px, env(safe-area-inset-top)) + 96px); }
+.dd-steer {
+    position: absolute; left: max(12px, env(safe-area-inset-left)); bottom: max(12px, env(safe-area-inset-bottom));
+    width: min(300px, 42vw); height: 96px; border-radius: 48px; background: #0006; pointer-events: auto; touch-action: none;
+}
+.dd-steer.wheel { width: 150px; height: 150px; border-radius: 50%; }
+.dd-steer-knob {
+    position: absolute; top: 8px; left: calc(50% - 40px); width: 80px; height: 80px; border-radius: 50%;
+    background: #f4f1e8cc; box-shadow: 0 2px 6px #0008; display: grid; place-items: center; color: #222; font-size: 1.6em;
+}
+.dd-steer.wheel .dd-steer-knob { top: 35px; left: 35px; }
+.dd-pedals {
+    position: absolute; right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom));
+    display: flex; gap: 10px; align-items: flex-end; pointer-events: auto;
+}
+.dd-pedal {
+    width: 76px; height: 110px; border-radius: 14px; border: 0; background: #f4f1e8cc; color: #222; font-weight: 700;
+    font-size: 1em; touch-action: none; box-shadow: 0 3px 0 #0008;
+}
+.dd-pedal.gas { height: 130px; background: #a6e3a1dd; }
+.dd-pedal.brake { background: #ffb4a8dd; }
+.dd-pedal.down { transform: translateY(3px); box-shadow: none; filter: brightness(.85); }
+.dd-touch-buttons {
+    position: absolute; right: max(12px, env(safe-area-inset-right)); bottom: calc(max(12px, env(safe-area-inset-bottom)) + 140px);
+    display: flex; flex-direction: column; gap: 8px; pointer-events: auto;
+}
+.dd-tbtn {
+    min-width: 56px; height: 44px; border-radius: 12px; border: 0; background: #0009; color: #fff; font-size: .95em; touch-action: manipulation;
+}
+.dd-tbtn.on { background: var(--dd-accent); color: #222; }
+
+/* ---- Menus ----------------------------------------------------------------------------------------- */
+.dd-menu {
+    position: absolute; inset: 0; background: #0009; display: grid; place-items: center; z-index: 20; pointer-events: auto;
+}
+.dd-menu[hidden], .dd-root [hidden] { display: none !important; }
+.dd-panel {
+    background: #1d2329; border-radius: 16px; padding: 16px 18px; width: min(720px, 94vw); max-height: 88vh; overflow: auto;
+    box-shadow: 0 10px 40px #000a; touch-action: pan-y;
+}
+.dd-panel h2 { margin: 0 0 8px; font-size: 1.35em; color: var(--dd-accent); }
+.dd-panel h3 { margin: 14px 0 6px; font-size: 1.05em; }
+.dd-panel p { margin: 6px 0; }
+.dd-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.dd-btn {
+    border: 0; border-radius: 10px; padding: 8px 14px; background: #3a4450; color: #fff; font: inherit; cursor: pointer; min-height: 40px;
+}
+.dd-btn:hover { background: #4a5664; }
+.dd-btn.primary { background: var(--dd-accent); color: #222; }
+.dd-btn.danger { background: #a33; }
+.dd-btn.on { outline: 2px solid var(--dd-accent); }
+.dd-btn:disabled { opacity: .45; cursor: default; }
+.dd-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dd-row {
+    display: flex; align-items: center; gap: 10px; background: #262e36; border-radius: 10px; padding: 8px 10px; flex-wrap: wrap;
+}
+.dd-row .dd-grow { flex: 1; min-width: 180px; }
+.dd-row small, .dd-muted { opacity: .7; }
+.dd-row .dd-price { color: var(--dd-accent); font-weight: 600; }
+.dd-input { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid #556; background: #111; color: #fff; }
+.dd-fullmap { width: 100%; height: min(64vh, 560px); border-radius: 12px; background: #2b4a6a; touch-action: none; display: block; }
+.dd-ledger td { padding: 2px 8px; } .dd-ledger td.neg { color: var(--dd-bad); } .dd-ledger td.pos { color: var(--dd-good); }
+
+.dd-menu-btn {
+    position: absolute; top: max(8px, env(safe-area-inset-top)); left: 92px; z-index: 5;
+    width: 52px; height: 52px; border-radius: 14px; border: 0; background: var(--dd-panel); color: #fff; font-size: 1.4em;
+    touch-action: manipulation; cursor: pointer;
+}
+.dd-hud-top { left: 156px; }
+.dd-tutorial { background: #2f5d8a; border-radius: 8px; padding: 6px 8px; margin: -2px -4px 6px; }
+.dd-job:has(.dd-tutorial) { max-width: min(420px, 70vw); }
+
+/* The shell gives every button a 96 px minimum (toddler-sized); the game sizes its own. */
+.dd-root button { min-width: 0; min-height: 0; }
+.dd-root .dd-btn { min-height: 40px; }
+.dd-root .dd-tbtn { min-width: 56px; min-height: 44px; }
+.dd-root .dd-menu-btn { min-width: 52px; min-height: 52px; }
+@media (max-width: 480px), (max-height: 520px) {
+    .dd-menu-btn { left: 80px; width: 48px; height: 48px; }
+    .dd-root .dd-menu-btn { min-width: 48px; min-height: 48px; }
+    .dd-hud-top { left: 136px; }
+}
+
+/* Short landscape screens (phones on their side): the touch buttons sit in a 3 x 2 grid between steering and pedals. */
+@media (max-height: 520px) {
+    .dd-root.touch .dd-touch-buttons {
+        display: grid; grid-template-columns: repeat(3, 56px); gap: 6px;
+        bottom: max(12px, env(safe-area-inset-bottom)); right: calc(max(12px, env(safe-area-inset-right)) + 176px);
+    }
+    .dd-root.touch .dd-gauges { bottom: calc(max(8px, env(safe-area-inset-bottom)) + 104px); }
+    .dd-job { font-size: .9em; }
+}
+
+/* Narrow portrait screens: smaller chips, the job card below them and the minimap on the left. */
+@media (max-width: 480px) {
+    .dd-chip { font-size: .82em; padding: 5px 8px; }
+    .dd-weather { display: none; }
+    .dd-job { top: calc(max(8px, env(safe-area-inset-top)) + 70px); max-width: min(300px, 64vw); font-size: .88em; }
+    .dd-root.touch .dd-minimap { left: max(8px, env(safe-area-inset-left)); right: auto; top: calc(max(8px, env(safe-area-inset-top)) + 84px); width: 120px; height: 120px; }
+}

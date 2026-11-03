@@ -8,3 +8,5 @@ test-results/
 playwright-report/
 dist/
 Games-site.zip
+
+.playwright-mcp/
