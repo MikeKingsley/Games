@@ -36,7 +36,7 @@ const PERF_SAMPLES = 300;
 
 export function createSession({ options = {}, sound, regionId = 'sw-england', world = null } = {}) {
     const session = {
-        settings: { quality: 'medium', camera: 'chase', manualGears: false, touchLayout: 'slider' },
+        settings: { quality: 'medium', renderer: 'auto', camera: 'chase', manualGears: false, touchLayout: 'slider' },
         player: null,
         controls: null,
         world: null,

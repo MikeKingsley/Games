@@ -278,3 +278,48 @@ test.describe('phone portrait', () => {
         }
     });
 });
+
+// ---- renderer selection (plan 0007) ------------------------------------------------------------------------------
+const forceRenderer = (page, renderer) => page.addInitScript(r => localStorage.setItem('games.dd.settings', JSON.stringify({ renderer: r })), renderer);
+
+test.describe('renderers', () => {
+    test('renderer=canvas2d keeps the Canvas renderer', async ({ page }) => {
+        const errors = watchErrors(page);
+        await forceRenderer(page, 'canvas2d');
+        await page.goto('/play/delivery-driver');
+        await startGame(page);
+        expect(await page.evaluate(() => window.__dd.renderer.kind)).toBe('canvas2d');
+        expect(errors).toEqual([]);
+    });
+
+    test('renderer=webgl draws a non-blank frame with no GL errors', async ({ page }) => {
+        const errors = watchErrors(page);
+        await forceRenderer(page, 'webgl');
+        await page.goto('/play/delivery-driver');
+        await startGame(page);
+        await page.waitForTimeout(500);
+        const r = await page.evaluate(() => ({ kind: window.__dd.renderer.kind, errors: window.__dd.renderer.stats.glErrors, px: window.__dd.renderer.probe() }));
+        expect(r.kind).toBe('webgl');
+        expect(r.errors).toBe(0);
+        expect(new Set(r.px.map(p => p.join(','))).size).toBeGreaterThan(1); // sea colour and ground are both visible
+        expect(errors).toEqual([]);
+    });
+
+    test('setRenderer switches kind at run time and a lost WebGL context falls back to Canvas 2D', async ({ page }) => {
+        await forceRenderer(page, 'webgl');
+        await page.goto('/play/delivery-driver');
+        await startGame(page);
+        expect(await page.evaluate(() => window.__dd.renderer.kind)).toBe('webgl');
+        await page.evaluate(() => window.__dd.setRenderer('canvas2d'));
+        expect(await page.evaluate(() => window.__dd.renderer.kind)).toBe('canvas2d');
+        await page.evaluate(() => window.__dd.setRenderer('webgl'));
+        expect(await page.evaluate(() => window.__dd.renderer.kind)).toBe('webgl');
+        await page.evaluate(() => window.__dd.renderer.loseContext());
+        await expect.poll(() => page.evaluate(() => window.__dd.renderer.kind), { timeout: 8000 }).toBe('canvas2d');
+        const x0 = await page.evaluate(() => window.__dd.state.player.x);
+        await page.keyboard.down('KeyW');
+        await page.waitForTimeout(800);
+        await page.keyboard.up('KeyW');
+        expect(await page.evaluate(() => window.__dd.state.player.x)).not.toBe(x0);
+    });
+});

@@ -35,6 +35,9 @@ export const worldToMiles = metres => metres / WORLD_SCALE / METRES_PER_MILE;
 export const CHUNK_SIZE = 160;
 
 /** Quality presets. The device picks one in settings; low is for mid-range phones. */
+/** Whether renderer 'auto' picks WebGL when available (flipped on in plan 0007 phase 10). */
+export const AUTO_PREFERS_WEBGL = false;
+
 export const QUALITY = {
     low: { traffic: 8, drawChunks: 2, spriteCache: 24, maxDpr: 1, trees: 0.4, shadows: false },
     medium: { traffic: 16, drawChunks: 3, spriteCache: 48, maxDpr: 1.5, trees: 0.75, shadows: true },

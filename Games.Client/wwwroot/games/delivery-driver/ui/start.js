@@ -4,7 +4,7 @@ import { formatMoney } from '../game/economy.js';
 import { escape } from './hud.js';
 import { tabs } from './menus.js';
 
-export const DEFAULT_SETTINGS = { quality: 'medium', camera: 'chase', manualGears: false, touchLayout: 'slider', units: 'imperial' };
+export const DEFAULT_SETTINGS = { quality: 'medium', renderer: 'auto', camera: 'chase', manualGears: false, touchLayout: 'slider', units: 'imperial' };
 const SETTINGS_KEY = 'games.dd.settings';
 
 export function loadSettings(storage = globalThis.localStorage) {
@@ -117,6 +117,7 @@ export function registerStartScreens(menus, ctx) {
             const row = (label, field, options) => `<h3>${label}</h3>${tabs(options.map(([id, l]) => ({ id: `${field}:${id}`, label: l })), `${field}:${s[field]}`, 'set')}`;
             return `<h2>Settings</h2><p class="dd-muted">Saved on this device.</p>`
                 + row('Quality', 'quality', [['low', 'Low (phones)'], ['medium', 'Medium'], ['high', 'High']])
+                + row('Graphics', 'renderer', [['auto', 'Auto'], ['webgl', '3D (WebGL)'], ['canvas2d', 'Compatibility (Canvas)']])
                 + row('Camera', 'camera', [['chase', 'Behind the truck'], ['north', 'North up']])
                 + row('Gearbox', 'manualGears', [['false', 'Automatic'], ['true', 'Manual (Shift/Ctrl)']])
                 + row('Touch steering', 'touchLayout', [['slider', 'Slider'], ['wheel', 'Wheel']])

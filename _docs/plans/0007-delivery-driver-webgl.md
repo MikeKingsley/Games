@@ -76,10 +76,11 @@ Default to **Opus 5.5 at max effort** for this plan: most phases are cross-cutti
 
 Never use Fable (user instruction). Run every Opus 5.5 phase at **max** effort; if Opus 5.5 gets stuck on the same defect, keep it at max effort rather than switching models.
 
-- 🔄 Inspect `git status` and `git diff --stat` on `main` and check nothing sensitive or unwanted is staged (`.playwright-mcp/` is untracked tooling output: do not commit it, add it to `.gitignore` if not already ignored).
-- [ ] Create a new branch off the current `main` HEAD named `feature/delivery-driver` and commit the current uncommitted Delivery Driver work on it using the `commit` skill (group by intent: game module + tests, shell integration changes such as registry/Options/ParentCorner/GameInfo, docs and plan 0006). Do NOT push unless the user asks.
-- [ ] Create this plan's working branch `feature/delivery-driver-webgl` off `feature/delivery-driver` and switch to it. Commit this plan file (`_docs/plans/0007-delivery-driver-webgl.md`) as its first commit there.
-- [ ] Run the baseline tests on the new branch and record the results in the Phase Summary: `npm test`, `dotnet test Games.slnx`, `npm run test:e2e -- delivery-driver` (so later regressions are distinguishable from pre-existing failures).
+- ✅ Inspect `git status` and `git diff --stat` on `main` and check nothing sensitive or unwanted is staged (`.playwright-mcp/` is untracked tooling output: do not commit it, add it to `.gitignore` if not already ignored).
+  - Added `.playwright-mcp/` to `.gitignore`; left the unrelated `.vscode/launch.json` (0.0.0.0 bind) change uncommitted.
+- ✅ Create a new branch off the current `main` HEAD named `feature/delivery-driver` and commit the current uncommitted Delivery Driver work on it using the `commit` skill (group by intent: game module + tests, shell integration changes such as registry/Options/ParentCorner/GameInfo, docs and plan 0006). Do NOT push unless the user asks.
+- ✅ Create this plan's working branch `feature/delivery-driver-webgl` off `feature/delivery-driver` and switch to it. Commit this plan file (`_docs/plans/0007-delivery-driver-webgl.md`) as its first commit there.
+- ✅ Run the baseline tests on the new branch and record the results in the Phase Summary: `npm test`, `dotnet test Games.slnx`, `npm run test:e2e -- delivery-driver` (so later regressions are distinguishable from pre-existing failures).
 
 ### Verification Plan
 - `git branch --show-current` prints `feature/delivery-driver-webgl`; `git log --oneline -5` shows the plan commit above the Delivery Driver commit(s) on `feature/delivery-driver`.
@@ -87,18 +88,22 @@ Never use Fable (user instruction). Run every Opus 5.5 phase at **max** effort; 
 - Baseline test commands above are green (or any failures recorded as pre-existing).
 
 ### Phase Summary
-_(write when phase completes)_
+Status: Complete
+
+Done 2026-11-03. Branches: `main` -> `feature/delivery-driver` (3 commits: game module + tests; shell integration; docs + plan 0006) -> `feature/delivery-driver-webgl` (plan 0007 commit). Nothing pushed. `.playwright-mcp/` added to `.gitignore`. The unrelated `.vscode/launch.json` change (bind to 0.0.0.0) was deliberately left uncommitted.
+
+Baseline on `feature/delivery-driver-webgl` (all green, no pre-existing failures): `npm test` 132/132 pass; `dotnet test Games.slnx` 30/30 pass; `npm run test:e2e -- delivery-driver` 11/11 pass (39 s). No C# changes in this phase, so no doc-code refresh needed.
 
 ## Phase 1: Renderer abstraction and WebGL2 core
-Status: Not started
+Status: Complete
 
-- [ ] Add `render/index.js` with `createRenderer({ canvas, view, kind })` wrapping the existing Canvas renderer (move nothing yet; wrap `render/renderer.js` so it keeps its current signature and returns the new interface including `dispose()` and `resize()`).
-- [ ] Change `index.js` to create the canvas via the factory, keyed by renderer kind, and to recreate the canvas element when the kind changes (a canvas cannot switch context types).
-- [ ] Add the `renderer` session setting (`auto` | `webgl` | `canvas2d`, default `auto`) in `game/session.js` and a selector in the in-game settings UI (`ui/menus.js` / wherever quality is set); persist it with the other settings.
-- [ ] Add `render/gl/context.js`: create a WebGL2 context (`antialias` per quality, `alpha: false`, `powerPreference: 'high-performance'`), probe capabilities (max texture size, depth texture, float render targets, instancing), expose `webgl2Available()`; handle `webglcontextlost` / `webglcontextrestored` (prevent default; on restore rebuild GPU resources; if it cannot be restored, fall back to Canvas 2D and toast "Switched to compatibility graphics").
-- [ ] Add `render/gl/mat4.js` (pure column-major 4x4 math: identity, multiply, perspective, lookAt, ortho, invert, transform point; allocation-free variants writing into an `out` array) and `render/gl/program.js` (compile/link with readable errors, uniform/attribute location cache) and `render/gl/shaders.js` with a trivial flat-colour shader.
-- [ ] Add `render/gl/gl-renderer.js` skeleton: `draw()` clears to the sea colour, draws a test ground quad with the flat shader using a fixed perspective camera, resizes with `view`/DPR (respecting `QUALITY[..].maxDpr`), and counts GL errors into `stats.glErrors`.
-- [ ] Extend the debug hook (`window.__dd`) with `renderer: { kind, stats }` and `setRenderer(kind)`.
+- ✅ Add `render/index.js` with `createRenderer({ canvas, view, kind })` wrapping the existing Canvas renderer (move nothing yet; wrap `render/renderer.js` so it keeps its current signature and returns the new interface including `dispose()` and `resize()`).
+- ✅ Change `index.js` to create the canvas via the factory, keyed by renderer kind, and to recreate the canvas element when the kind changes (a canvas cannot switch context types).
+- ✅ Add the `renderer` session setting (`auto` | `webgl` | `canvas2d`, default `auto`) in `game/session.js` and a selector in the in-game settings UI (`ui/menus.js` / wherever quality is set); persist it with the other settings.
+- ✅ Add `render/gl/context.js`: create a WebGL2 context (`antialias` per quality, `alpha: false`, `powerPreference: 'high-performance'`), probe capabilities (max texture size, depth texture, float render targets, instancing), expose `webgl2Available()`; handle `webglcontextlost` / `webglcontextrestored` (prevent default; on restore rebuild GPU resources; if it cannot be restored, fall back to Canvas 2D and toast "Switched to compatibility graphics").
+- ✅ Add `render/gl/mat4.js` (pure column-major 4x4 math: identity, multiply, perspective, lookAt, ortho, invert, transform point; allocation-free variants writing into an `out` array) and `render/gl/program.js` (compile/link with readable errors, uniform/attribute location cache) and `render/gl/shaders.js` with a trivial flat-colour shader.
+- ✅ Add `render/gl/gl-renderer.js` skeleton: `draw()` clears to the sea colour, draws a test ground quad with the flat shader using a fixed perspective camera, resizes with `view`/DPR (respecting `QUALITY[..].maxDpr`), and counts GL errors into `stats.glErrors`.
+- ✅ Extend the debug hook (`window.__dd`) with `renderer: { kind, stats }` and `setRenderer(kind)`.
 
 ### Verification Plan
 - `npm test` stays green; new `tests/js/delivery-driver.mat4.test.mjs` covers identity, multiply associativity, `perspective` + `lookAt` projecting a known point to the expected NDC, and `invert(M) * M = I` within 1e-9.
@@ -107,7 +112,17 @@ Status: Not started
 - New e2e case: force `WEBGL_lose_context.loseContext()` and assert the game stays running (`__dd.renderer.kind` becomes `canvas2d`).
 
 ### Phase Summary
-_(write when phase completes)_
+Done 2026-11-03 on `feature/delivery-driver-webgl`.
+
+- `render/index.js` is the factory: `createRenderer({canvas, view, kind, callbacks})` returns `{kind, stats, resize, draw, dispose}` or `null` when WebGL can't start (a canvas can't switch context type, so `index.js` retries with a fresh canvas). `resolveKind(setting)` maps `auto|webgl|canvas2d`; `AUTO_PREFERS_WEBGL = false` in `config.js` keeps `auto` on Canvas until phase 10 flips it. `render/renderer.js` is unchanged (wrapped).
+- `index.js` `buildRenderer(kind)` creates the canvas element and renderer; `applySettings` rebuilds when the resolved kind changes. Settings gained `renderer` (default `auto`) in `DEFAULT_SETTINGS`, `session.settings`, and a "Graphics" row in the settings menu. Context loss -> `onLost`, then `onFailed` after 1.5 s with no restore -> rebuild as Canvas 2D + toast "Switched to compatibility graphics"; a restore within the grace period rebuilds GL resources.
+- New pure/GL files in `render/gl/`: `mat4.js` (column-major, `out`-param, Float64), `program.js`, `shaders.js` (FLAT only), `context.js` (`webgl2Available`, `createContext`, `probeCapabilities`, `watchContext`), `gl-renderer.js` (skeleton: sea clear + 80 m test quad that follows the player through a fixed perspective camera; `stats.glErrors` sampled every 30 frames; `readPixel`, `loseContext` helpers). World y is negated in the view (`lookAt` eye at `-y`) so north is up; later phases should keep that convention in `camera3d`.
+- Debug hook: `__dd.renderer` (`kind`, `stats`, `probe()` = redraw + sample 5 pixels, `loseContext()`) and `__dd.setRenderer(kind)`.
+- `playwright.config.mjs` now launches Edge with `--use-angle=swiftshader --enable-unsafe-swiftshader --ignore-gpu-blocklist` so WebGL2 works headless. `launchOptions` cannot be set inside a `describe`.
+- Gotcha: many `delivery-driver` files use CRLF line endings; multi-line string replaces from scripts must normalise `
+` first.
+
+Verification: `npm test` 141/141 (new `delivery-driver.mat4.test.mjs`, 9 tests); `npm run test:e2e -- delivery-driver` 14/14 (3 new: canvas2d forced, webgl non-blank with `glErrors === 0`, `setRenderer` switching + lost context falls back to Canvas 2D and the truck still drives). Full `npm run test:e2e`: 94 pass, 2 failures in `animal-feeding` / `phone-fit` that differ run to run and also appear (animal-feeding) without the swiftshader flags, i.e. pre-existing timing flakes unrelated to this work. No C# changes, so no doc-code refresh needed.
 
 ## Phase 2: Terrain heightfield (pure logic)
 Status: Not started

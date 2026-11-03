@@ -1,11 +1,11 @@
 // Delivery Driver: a faux-3D haulage career game set in Devon and Cornwall. See README "Delivery Driver".
-// This file wires the pure logic (sim/, world/, game/, traffic/) to the canvas renderer, DOM overlays and audio.
+// This file wires the pure logic (sim/, world/, game/, traffic/) to the renderer (WebGL2 or Canvas 2D), DOM overlays and audio.
 import { createLoop } from './engine/loop.js';
 import { createInput } from './engine/input.js';
 import { createCamera } from './engine/camera.js';
 import { createTouchControls } from './ui/touch-controls.js';
 import { createSession } from './game/session.js';
-import { createRenderer } from './render/renderer.js';
+import { createRenderer, resolveKind } from './render/index.js';
 import { createHud } from './ui/hud.js';
 import { createMenus } from './ui/menus.js';
 import { createSound } from './audio/sound.js';
@@ -30,11 +30,9 @@ export function mount(container, options = {}) {
 
     const root = document.createElement('div');
     root.className = 'dd-root';
-    const canvas = document.createElement('canvas');
-    canvas.className = 'dd-canvas';
-    root.appendChild(canvas);
     container.appendChild(root);
-    const ctx = canvas.getContext('2d');
+    let canvas = null;
+    let renderer = null;
 
     // DPR-aware sizing: the backing store follows the element's CSS size times devicePixelRatio (capped by quality)
     const view = { width: 1, height: 1, dpr: 1 };
@@ -57,12 +55,26 @@ export function mount(container, options = {}) {
     camera.mode = session.settings.camera === 'north' ? 'north' : 'chase';
     const input = createInput(window, signal);
     const touch = createTouchControls(root, input, signal);
-    const renderer = createRenderer(ctx, view);
+    /** (Re)creates the canvas and renderer: a canvas can't change context type, so each switch gets a fresh element. */
+    function buildRenderer(kind) {
+        renderer?.dispose();
+        canvas?.remove();
+        const callbacks = { onFailed: () => { buildRenderer('canvas2d'); hud?.toast('Switched to compatibility graphics'); } };
+        for (const k of kind === 'webgl' ? ['webgl', 'canvas2d'] : ['canvas2d']) {
+            canvas = document.createElement('canvas');
+            canvas.className = 'dd-canvas';
+            root.insertBefore(canvas, root.firstChild);
+            renderer = createRenderer({ canvas, view, kind: k, callbacks });
+            if (renderer) break;
+            canvas.remove(); // WebGL could not start
+        }
+        resize();
+    }
     let menus = null;
     const hud = createHud(root, { onMinimap: () => menus.open('map') });
     menus = createMenus(root, session, signal);
 
-    session.attach({ input, camera, menus, hud, renderer, root });
+    session.attach({ input, camera, menus, hud, root });
     touch.setLayout(session.settings.touchLayout);
     wireUi();
 
@@ -89,6 +101,8 @@ export function mount(container, options = {}) {
         session.settings = next;
         saveSettings(next);
         session.applyQuality(next.quality);
+        const kind = resolveKind(next.renderer);
+        if (kind !== renderer.kind) buildRenderer(kind);
         resize();
         camera.mode = next.camera === 'north' ? 'north' : 'chase';
         touch.setLayout(next.touchLayout);
@@ -123,7 +137,7 @@ export function mount(container, options = {}) {
     menuButton.textContent = '☰';
     menuButton.addEventListener('click', () => { if (slot || session.career) menus.open('game'); }, { signal });
     root.appendChild(menuButton);
-    resize();
+    buildRenderer(resolveKind(session.settings.renderer));
     resizeObserver.observe(root);
 
     // the AudioContext may only start after a user gesture
@@ -223,7 +237,24 @@ export function mount(container, options = {}) {
     }
     session.onMenuChange = setPaused;
 
-    if (options.debug) window.__dd = session.debugHook();
+    if (options.debug) {
+        window.__dd = session.debugHook();
+        Object.defineProperty(window.__dd, 'renderer', {
+            get: () => ({
+                kind: renderer.kind,
+                stats: renderer.stats,
+                /** Draws a frame and samples a few pixels (WebGL only; the drawing buffer is cleared after compositing). */
+                probe() {
+                    if (!renderer.readPixel) return null;
+                    renderer.draw(session, camera, 1);
+                    const w = canvas.width, h = canvas.height;
+                    return [[0.5, 0.1], [0.5, 0.5], [0.5, 0.9], [0.1, 0.5], [0.9, 0.5]].map(([fx, fy]) => renderer.readPixel(Math.floor(w * fx), Math.floor(h * fy)));
+                },
+                loseContext: () => renderer.loseContext?.(),
+            }),
+        });
+        window.__dd.setRenderer = kind => applySettings({ ...session.settings, renderer: kind });
+    }
 
     return {
         setOptions(next) {
