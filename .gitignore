@@ -10,3 +10,6 @@ dist/
 Games-site.zip
 
 .playwright-mcp/
+
+# Road bake raw downloads
+.cache/

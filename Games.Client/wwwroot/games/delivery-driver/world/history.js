@@ -8,21 +8,29 @@ import { waterAt } from './region.js';
 import { pointAt } from './geom.js';
 import { GAME_MINUTES_PER_SECOND } from '../game/calendar.js';
 
-/** Every dated change in the region, oldest first: {year, kind: 'opened'|'closed'|'upgraded', name, road, cls}. */
+/**
+ * Every dated change in the region, oldest first: {year, kind: 'opened'|'closed'|'upgraded', name, road, cls}.
+ * With the baked road data the events are the curated ones (scripts/bake-roads/history.json), carried in the baked
+ * manifest as `region.events`; `road` is the curated tag also stored on the affected edges (`edge.tag`). A world
+ * built from the seed's hand-written roads (tests, old data) falls back to the dates on `region.roads`.
+ */
 export function roadEvents(world) {
     if (world._roadEvents) return world._roadEvents;
     const seen = new Set();
     const out = [];
-    for (const r of world.region.roads) {
-        const add = (year, kind, cls) => {
-            const key = `${r.id}:${year}:${kind}`;
-            if (seen.has(key) || year <= 1919) return;
-            seen.add(key);
-            out.push({ year, kind, name: r.name, road: r.id, cls });
-        };
-        if (r.opened > 0) add(r.opened, 'opened', r.cls);
-        if (r.closed < Infinity) add(r.closed, 'closed', r.cls);
-        for (const u of r.upgrades) add(u.year, 'upgraded', u.class);
+    const push = e => {
+        const key = `${e.road}:${e.year}:${e.kind}`;
+        if (seen.has(key) || e.year <= 1919) return;
+        seen.add(key);
+        out.push({ year: e.year, kind: e.kind, name: e.name, road: e.road, cls: e.cls });
+    };
+    if (Array.isArray(world.region.events)) for (const e of world.region.events) push(e);
+    else {
+        for (const r of world.region.roads) {
+            if (r.opened > 0) push({ year: r.opened, kind: 'opened', name: r.name, road: r.id, cls: r.cls });
+            if (r.closed < Infinity) push({ year: r.closed, kind: 'closed', name: r.name, road: r.id, cls: r.cls });
+            for (const u of r.upgrades) push({ year: u.year, kind: 'upgraded', name: r.name, road: r.id, cls: u.class });
+        }
     }
     out.sort((a, b) => a.year - b.year || a.name.localeCompare(b.name));
     world._roadEvents = out;
