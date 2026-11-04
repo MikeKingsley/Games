@@ -6,6 +6,7 @@ import { OFFICE_TABS, officeHtml, officeAct, serviceHtml, financeHtml } from './
 import { worldToMiles } from '../config.js';
 import { escape } from './hud.js';
 import { drawMap } from '../render/minimap.js';
+import { mapTransform } from '../render/gl/minimap-gl.js';
 
 export function createMenus(root, session, signal) {
     const overlay = document.createElement('div');
@@ -173,7 +174,20 @@ function registerCoreScreens(menus, session) {
             const up = e => { pointers.delete(e.pointerId); pinch = 0; };
             canvas.addEventListener('pointerup', up);
             canvas.addEventListener('pointercancel', up);
-            canvas.addEventListener('wheel', e => { e.preventDefault(); view.range = clampRange(view.range * (e.deltaY > 0 ? 1.2 : 1 / 1.2)); draw(); }, { passive: false });
+            // zoom about the point under the cursor, so it stays put on the map
+            const zoomAt = (sx, sy, factor) => {
+                const w = canvas.clientWidth, h = canvas.clientHeight;
+                const before = mapTransform({ w, h, cx: view.x, cy: view.y, range: view.range }).unproject(sx, sy);
+                view.range = clampRange(view.range * factor);
+                const after = mapTransform({ w, h, cx: view.x, cy: view.y, range: view.range }).unproject(sx, sy);
+                view.x += before[0] - after[0]; view.y += before[1] - after[1];
+            };
+            canvas.addEventListener('wheel', e => {
+                e.preventDefault();
+                const box = canvas.getBoundingClientRect();
+                zoomAt(e.clientX - box.left, e.clientY - box.top, e.deltaY > 0 ? 1.2 : 1 / 1.2);
+                draw();
+            }, { passive: false });
             requestAnimationFrame(draw);
         },
         act(action, data, m) {

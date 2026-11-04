@@ -6,13 +6,16 @@ import { createCamera } from './engine/camera.js';
 import { createTouchControls } from './ui/touch-controls.js';
 import { createSession } from './game/session.js';
 import { createRenderer, resolveKind } from './render/index.js';
+import { createAutoQuality } from './render/auto-quality.js';
+import { disposeSharedGlMap, sharedGlMap } from './render/gl/minimap-gl.js';
 import { createHud } from './ui/hud.js';
+import { createDebugPanel } from './ui/debug.js';
 import { createMenus } from './ui/menus.js';
 import { createSound } from './audio/sound.js';
 import { QUALITY, AUTOSAVE_SECONDS } from './config.js';
 import { createSaveStore } from './game/save.js';
 import { registerStartScreens, loadSettings, saveSettings } from './ui/start.js';
-import { createTutorial, attachTutorial, skipTutorial } from './game/tutorial.js';
+import { createTutorial, attachTutorial, skipTutorial, attachHillTips } from './game/tutorial.js';
 import { formatMoney } from './game/economy.js';
 import { escape } from './ui/hud.js';
 
@@ -53,6 +56,7 @@ export function mount(container, options = {}) {
     session.settings = loadSettings();
     const camera = createCamera();
     camera.mode = session.settings.camera === 'north' ? 'north' : 'chase';
+    camera.tilt = session.settings.cameraTilt ?? 35;
     const input = createInput(window, signal);
     const touch = createTouchControls(root, input, signal);
     /** (Re)creates the canvas and renderer: a canvas can't change context type, so each switch gets a fresh element. */
@@ -64,10 +68,13 @@ export function mount(container, options = {}) {
             canvas = document.createElement('canvas');
             canvas.className = 'dd-canvas';
             root.insertBefore(canvas, root.firstChild);
-            renderer = createRenderer({ canvas, view, kind: k, callbacks });
+            renderer = createRenderer({ canvas, view, kind: k, callbacks, quality: session.settings.quality });
             if (renderer) break;
-            canvas.remove(); // WebGL could not start
+            canvas.remove(); // WebGL could not start (no context or a shader failed)
+            hud?.toast('Switched to compatibility graphics');
         }
+        if (renderer.kind !== 'webgl') camera.gl = null; // only the WebGL renderer can unproject screen points
+        session.mapKind = renderer.kind; // the minimap and the full map follow the renderer
         resize();
     }
     let menus = null;
@@ -77,6 +84,7 @@ export function mount(container, options = {}) {
     session.attach({ input, camera, menus, hud, root });
     touch.setLayout(session.settings.touchLayout);
     wireUi();
+    attachHillTips(session); // once per company (career.tips), for every career this session runs
 
     // ---- saves, the start menu, the tutorial and settings --------------------------------------------------------
     const store = createSaveStore(localStorage, { load: () => options.loadProgress?.() ?? {}, save: v => options.saveProgress?.(v) });
@@ -102,9 +110,13 @@ export function mount(container, options = {}) {
         saveSettings(next);
         session.applyQuality(next.quality);
         const kind = resolveKind(next.renderer);
-        if (kind !== renderer.kind) buildRenderer(kind);
+        // MSAA is fixed when a context is created, so a quality change that flips it rebuilds the WebGL renderer
+        const aaChanged = kind === 'webgl' && renderer.kind === 'webgl' && renderer.stats.antialias !== !!QUALITY[session.settings.quality]?.antialias;
+        if (kind !== renderer.kind || aaChanged) buildRenderer(kind);
+        autoQuality.reset();
         resize();
         camera.mode = next.camera === 'north' ? 'north' : 'chase';
+        camera.tilt = next.cameraTilt ?? 35;
         touch.setLayout(next.touchLayout);
         session.player.gearbox.manual = !!next.manualGears;
     }
@@ -121,6 +133,10 @@ export function mount(container, options = {}) {
     });
     session.ready.then(() => { if (session.world && !slot) menus.open('slots', {}); });
     session.on('debugStart', () => { menus.close(); slot = null; });
+    // the camera keys and buttons persist with the other settings
+    const saveCamera = () => { session.settings = { ...session.settings, camera: camera.mode, cameraTilt: camera.tilt }; saveSettings(session.settings); };
+    session.on('cameraTilt', saveCamera);
+    session.on('cameraMode', saveCamera);
     session.on('complete', () => saveNow()); // autosave after every delivery
     const autosave = setInterval(() => { if (!session.paused) saveNow(); }, AUTOSAVE_SECONDS * 1000);
     session.on('weekly', e => {
@@ -145,6 +161,20 @@ export function mount(container, options = {}) {
     window.addEventListener('pointerdown', unlock, { signal });
     window.addEventListener('keydown', unlock, { signal });
 
+    // on Auto graphics a slow device steps the quality down (never up), once per drop, with a toast
+    const autoQuality = createAutoQuality();
+    let lastFrame = 0;
+    function watchFrameRate() {
+        const now = performance.now();
+        const dt = now - lastFrame;
+        lastFrame = now;
+        if (session.settings.renderer !== 'auto' || session.paused || !session.world) { autoQuality.reset(); return; }
+        const lower = autoQuality.sample(dt, session.settings.quality);
+        if (lower) {
+            applySettings({ ...session.settings, quality: lower });
+            hud.toast(`Graphics lowered to ${lower} to keep the game smooth`);
+        }
+    }
     let stepMs = 0;
     let wasMoving = false;
     const loop = createLoop({
@@ -155,6 +185,7 @@ export function mount(container, options = {}) {
         },
         render: alpha => {
             const t0 = performance.now();
+            watchFrameRate();
             session.updateCamera(camera, view);
             renderer.draw(session, camera, alpha);
             hud.update(session, camera);
@@ -222,6 +253,7 @@ export function mount(container, options = {}) {
         session.on('newYear', year => hud.toast(`Happy New Year! It's ${year}.`, 3500));
         session.on('impact', impact => { if (impact > 2) sound.bump(impact); });
         session.on('toast', text => hud.toast(escape(text)));
+        session.on('tip', text => hud.toast(`💡 ${escape(text)}`, 7000));
         session.on('coupled', () => sound.coupling());
         session.on('uncoupled', () => sound.coupling());
         session.on('jackknife', () => { sound.bump(6); hud.toast('Jack-knifed! Drive forward to straighten up.', 3000); });
@@ -238,6 +270,7 @@ export function mount(container, options = {}) {
     session.onMenuChange = setPaused;
 
     if (options.debug) {
+        createDebugPanel(root, session, signal);
         window.__dd = session.debugHook();
         Object.defineProperty(window.__dd, 'renderer', {
             get: () => ({
@@ -250,9 +283,19 @@ export function mount(container, options = {}) {
                     const w = canvas.width, h = canvas.height;
                     return [[0.5, 0.1], [0.5, 0.5], [0.5, 0.9], [0.1, 0.5], [0.9, 0.5]].map(([fx, fy]) => renderer.readPixel(Math.floor(w * fx), Math.floor(h * fy)));
                 },
+                /** Draws a frame and samples pixels at screen fractions [[fx, fy], ...] (fy from the top). */
+                probeAt(points) {
+                    if (!renderer.readPixel) return null;
+                    renderer.draw(session, camera, 1);
+                    const w = canvas.width, h = canvas.height;
+                    return points.map(([fx, fy]) => renderer.readPixel(Math.floor(w * fx), Math.floor(h * (1 - fy))));
+                },
                 loseContext: () => renderer.loseContext?.(),
             }),
         });
+        window.__dd.camera = camera;
+        window.__dd.map = () => ({ kind: session.mapKind, gl: session.mapKind === 'webgl' ? sharedGlMap()?.stats ?? null : null });
+        window.__dd.setSettings = patch => applySettings({ ...session.settings, ...patch });
         window.__dd.setRenderer = kind => applySettings({ ...session.settings, renderer: kind });
     }
 
@@ -276,6 +319,8 @@ export function mount(container, options = {}) {
             timers.forEach(clearTimeout);
             timers.clear();
             sound.dispose();
+            renderer.dispose();
+            disposeSharedGlMap();
             if (window.__dd) delete window.__dd;
             root.remove();
             stylesheet.remove();

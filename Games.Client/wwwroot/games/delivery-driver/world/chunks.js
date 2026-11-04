@@ -1,7 +1,9 @@
 // Chunk cache: chunks are generated on demand, kept in least-recently-used order and evicted past a cap.
-// Loaded chunks register their colliders (buildings, trees, rocks) in the world's static collision hash.
+// Loaded chunks register their colliders (buildings, trees, rocks) in the world's static collision hash, and carry
+// their terrain (object heights and a lazily built height grid, see world/terrain.js attachTerrain).
 import { CHUNK_SIZE } from '../config.js';
 import { generateChunk } from './generator.js';
+import { attachTerrain } from './terrain.js';
 
 const key = (i, j) => (i + 32768) * 65536 + (j + 32768);
 
@@ -19,7 +21,7 @@ export function createChunks(world, { cap = 160, onEvict = null } = {}) {
                 cache.set(k, c); // most recently used goes to the end
                 return c;
             }
-            c = generateChunk(world, i, j);
+            c = attachTerrain(world, generateChunk(world, i, j));
             chunks.generated++;
             cache.set(k, c);
             for (const col of c.colliders) world.colliders.insert(col);

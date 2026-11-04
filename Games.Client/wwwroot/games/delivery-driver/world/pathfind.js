@@ -1,7 +1,11 @@
 // A* over the road graph by travel time, for a given year (roads not yet opened or already closed are skipped;
-// ferries add their wait). Returns the route as a polyline for the route line, plus its length and time.
+// ferries add their wait). Hills count: each edge's graded profile (edge.z, world/terrain.js) slows a vehicle up
+// its climbs (by its power to weight) and down steep descents, so the hilly way round costs more time, and the
+// route reports the fuel multiplier its hills add (sim/slope.js gradeFuelFactor). Returns the route as a polyline
+// for the route line, plus its length, time and hill summary.
 import { cruiseSpeed, edgeClass, edgeOpen, nearestEdge } from './roadgraph.js';
 import { TIME_SCALE } from '../config.js';
+import { gradeFuelFactor, hillSpeed, TYPICAL_CLIMB } from '../sim/slope.js';
 
 class Heap {
     constructor() { this.items = []; }
@@ -38,31 +42,90 @@ class Heap {
     }
 }
 
-/** Real seconds to drive an edge in a year with a vehicle top speed (m/s), including any ferry wait. */
-export function edgeTime(edge, year, vmax = 30) {
-    const v = Math.min(vmax, cruiseSpeed(edgeClass(edge, year), year));
-    return edge.len / v + (edge.ferry ? (edge.ferry.wait * 60) / TIME_SCALE : 0);
-}
+// ---- Hills -------------------------------------------------------------------------------------------------------
+
+/** Steepness buckets (upper bounds of |grade|) the profile is summarised into. */
+const BUCKETS = [0.01, 0.02, 0.03, 0.045, 0.06, 0.08, 0.1, Infinity];
+const hillCache = new WeakMap();
 
 /**
- * Route between two points (snapped to the nearest open road). opts = {year, vmax (m/s), maxSnap (m)}.
- * Returns {pts, length, time, steps: [{edge, forward}], ferries: [edge]} or null when unreachable.
+ * An edge's hills from its graded profile (cached): per steepness bucket, the length and summed grade x length of
+ * the stretches that climb going a -> b (`up`, `upG`) and that descend (`down`, `downG`); the fuel multiplier
+ * integrated each way (`fuelFwd`, `fuelBack`, in metres); and the metres climbed each way. `flat` when ungraded.
  */
-export function findRoute(graph, from, to, { year = 1919, vmax = 30, maxSnap = 400 } = {}) {
+export function edgeHills(edge) {
+    let h = hillCache.get(edge);
+    if (h) return h;
+    const n = BUCKETS.length;
+    h = { flat: !edge.z || edge.z.length < 2, up: new Float64Array(n), upG: new Float64Array(n), down: new Float64Array(n), downG: new Float64Array(n), fuelFwd: edge.len, fuelBack: edge.len, climbFwd: 0, climbBack: 0 };
+    if (!h.flat) {
+        const z = edge.z, step = edge.zStep;
+        h.fuelFwd = h.fuelBack = 0;
+        for (let i = 0; i + 1 < z.length; i++) {
+            const g = (z[i + 1] - z[i]) / step;
+            let k = 0;
+            while (Math.abs(g) >= BUCKETS[k]) k++;
+            if (g >= 0) { h.up[k] += step; h.upG[k] += g * step; h.climbFwd += g * step; } else { h.down[k] += step; h.downG[k] -= g * step; h.climbBack -= g * step; }
+            h.fuelFwd += step * gradeFuelFactor(g);
+            h.fuelBack += step * gradeFuelFactor(-g);
+        }
+    }
+    hillCache.set(edge, h);
+    return h;
+}
+
+/** Seconds to drive a whole edge one way at a cruising speed, slowed by its hills for a vehicle's climb model. */
+function hillSeconds(edge, forward, cruise, model) {
+    const h = edgeHills(edge);
+    if (h.flat) return edge.len / cruise;
+    const climbL = forward ? h.up : h.down, climbG = forward ? h.upG : h.downG;
+    const descL = forward ? h.down : h.up, descG = forward ? h.downG : h.upG;
+    let t = 0;
+    for (let k = 0; k < BUCKETS.length; k++) {
+        if (climbL[k] > 0) t += climbL[k] / hillSpeed(model, climbG[k] / climbL[k], cruise);
+        if (descL[k] > 0) t += descL[k] / hillSpeed(model, -descG[k] / descL[k], cruise);
+    }
+    return t;
+}
+
+const ferryWait = edge => (edge.ferry ? (edge.ferry.wait * 60) / TIME_SCALE : 0);
+
+/**
+ * Real seconds to drive an edge in a year with a vehicle top speed (m/s), including any ferry wait. `forward` is
+ * a -> b; `model` (sim/slope.js climbModel) is the vehicle's power to weight for the hills (a typical lorry if not given).
+ */
+export function edgeTime(edge, year, vmax = 30, forward = true, model = TYPICAL_CLIMB) {
+    const v = Math.min(vmax, cruiseSpeed(edgeClass(edge, year), year));
+    return hillSeconds(edge, forward, v, model) + ferryWait(edge);
+}
+
+// ---- Routes ------------------------------------------------------------------------------------------------------
+
+/**
+ * Route between two points (snapped to the nearest open road). opts = {year, vmax (m/s), maxSnap (m), climb (the
+ * vehicle's sim/slope.js climbModel; a typical lorry if not given)}. Returns {pts, length, time (s, hills
+ * included), flatTime (s, as if level), hill (time / flatTime, >= 1), fuel (the hills' fuel multiplier over the
+ * route, sim/slope.js gradeFuelFactor averaged by distance), climb (m), steps: [{edge, forward}], ferries: [edge]}
+ * or null when unreachable. Partly driven edges count their share of the edge's hills.
+ */
+export function findRoute(graph, from, to, { year = 1919, vmax = 30, maxSnap = 400, climb = TYPICAL_CLIMB } = {}) {
     const s = nearestEdge(graph, from.x, from.y, maxSnap, year);
     const t = nearestEdge(graph, to.x, to.y, maxSnap, year);
     if (!s || !t) return null;
     const speed = e => Math.min(vmax, cruiseSpeed(edgeClass(e, year), year));
+    /** Seconds for `metres` of an edge driven one way (its share of the edge's hill time). */
+    const part = (e, metres, forward) => (e.len > 0 ? (hillSeconds(e, forward, speed(e), climb) * metres) / e.len : 0);
 
     // the same edge: drive straight along it
     if (s.edge === t.edge) {
         const forward = t.along >= s.along;
         const pts = slice(s.edge.pts, Math.min(s.along, t.along), Math.max(s.along, t.along));
         const ordered = forward ? pts : reverse(pts);
-        return finish([from.x, from.y, ...ordered, to.x, to.y], [{ edge: s.edge, forward }], Math.abs(t.along - s.along) / speed(s.edge), []);
+        const metres = Math.abs(t.along - s.along);
+        return finish([from.x, from.y, ...ordered, to.x, to.y], [{ edge: s.edge, forward, metres }], part(s.edge, metres, forward), [], speed);
     }
 
-    const goal = new Map([[t.edge.a, t.along / speed(t.edge)], [t.edge.b, (t.edge.len - t.along) / speed(t.edge)]]);
+    const goal = new Map([[t.edge.a, part(t.edge, t.along, true)], [t.edge.b, part(t.edge, t.edge.len - t.along, false)]]);
     let fastest = 0;
     for (const e of graph.edges) if (edgeOpen(e, year)) fastest = Math.max(fastest, speed(e));
     const h = id => Math.hypot(graph.nodes[id].x - to.x, graph.nodes[id].y - to.y) / fastest;
@@ -71,8 +134,8 @@ export function findRoute(graph, from, to, { year = 1919, vmax = 30, maxSnap = 4
     const prev = new Map();
     const heap = new Heap();
     const seed = (node, c) => { if (c < (cost.get(node) ?? Infinity)) { cost.set(node, c); prev.set(node, null); heap.push(node, c + h(node)); } };
-    seed(s.edge.a, s.along / speed(s.edge));
-    seed(s.edge.b, (s.edge.len - s.along) / speed(s.edge));
+    seed(s.edge.a, part(s.edge, s.along, false));
+    seed(s.edge.b, part(s.edge, s.edge.len - s.along, true));
     let best = null, bestCost = Infinity;
     const done = new Set();
     while (heap.size) {
@@ -86,7 +149,7 @@ export function findRoute(graph, from, to, { year = 1919, vmax = 30, maxSnap = 4
             const e = graph.edges[eid];
             if (!edgeOpen(e, year)) continue;
             const m = e.a === n ? e.b : e.a;
-            const nc = c + edgeTime(e, year, vmax);
+            const nc = c + edgeTime(e, year, vmax, e.a === n, climb);
             if (nc < (cost.get(m) ?? Infinity)) {
                 cost.set(m, nc);
                 prev.set(m, { node: n, edge: e });
@@ -112,11 +175,14 @@ export function findRoute(graph, from, to, { year = 1919, vmax = 30, maxSnap = 4
     if (best === t.edge.a) pts.push(...slice(t.edge.pts, 0, t.along));
     else pts.push(...reverse(slice(t.edge.pts, t.along, t.edge.len)));
     pts.push(to.x, to.y);
-    const all = [{ edge: s.edge, forward: firstNode === s.edge.b }, ...steps, { edge: t.edge, forward: best === t.edge.a }];
-    return finish(pts, all, bestCost, steps.filter(st => st.edge.ferry).map(st => st.edge));
+    const startPart = { edge: s.edge, forward: firstNode === s.edge.b, metres: firstNode === s.edge.a ? s.along : s.edge.len - s.along };
+    const endPart = { edge: t.edge, forward: best === t.edge.a, metres: best === t.edge.a ? t.along : t.edge.len - t.along };
+    const all = [startPart, ...steps.map(st => ({ ...st, metres: st.edge.len })), endPart];
+    return finish(pts, all, bestCost, steps.filter(st => st.edge.ferry).map(st => st.edge), speed);
 }
 
-function finish(pts, steps, time, ferries) {
+/** The route's polyline, length and hill summary. `steps` carry the metres driven on each edge. */
+function finish(pts, steps, time, ferries, speed) {
     const clean = [pts[0], pts[1]];
     let length = 0;
     for (let i = 2; i < pts.length; i += 2) {
@@ -125,7 +191,20 @@ function finish(pts, steps, time, ferries) {
         length += d;
         clean.push(pts[i], pts[i + 1]);
     }
-    return { pts: clean, length, time, steps, ferries };
+    let flatTime = 0, fuelMetres = 0, driven = 0, climb = 0;
+    for (const st of steps) {
+        const e = st.edge, share = e.len > 0 ? st.metres / e.len : 0;
+        const hills = edgeHills(e);
+        flatTime += st.metres / speed(e) + (share >= 1 ? ferryWait(e) : 0);
+        fuelMetres += (st.forward ? hills.fuelFwd : hills.fuelBack) * share;
+        climb += (st.forward ? hills.climbFwd : hills.climbBack) * share;
+        driven += st.metres;
+    }
+    const plain = steps.map(({ edge, forward }) => ({ edge, forward }));
+    return {
+        pts: clean, length, time, flatTime, hill: flatTime > 0 ? Math.max(1, time / flatTime) : 1,
+        fuel: driven > 0 ? fuelMetres / driven : 1, climb, steps: plain, ferries,
+    };
 }
 
 /** The part of a polyline between two distances along it. */

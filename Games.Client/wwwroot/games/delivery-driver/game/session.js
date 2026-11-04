@@ -1,31 +1,33 @@
 // The running game: owns the player vehicle, the world, the clock and the career state, and steps them each tick.
 // DOM-free apart from what it is handed in attach(), so the step logic can be driven from tests.
-import { createVehicle, stepVehicle, vehicleObb, collideVehicle, bodyCentre } from '../sim/vehicle.js';
+import { createVehicle, stepVehicle, vehicleObb, collideVehicle, bodyCentre, wheelbaseCentre, totalMass } from '../sim/vehicle.js';
+import { slopeAt, groundZ, terrainHeight } from '../world/terrain.js';
+import { climbModel } from '../sim/slope.js';
 import { shift } from '../sim/gearbox.js';
 import { vehicleById, trailerById } from './catalogue.js';
 import { createWorld } from '../world/world.js';
 import { loadRegion, waterAt } from '../world/region.js';
-import { nearestEdge, edgeWidth } from '../world/roadgraph.js';
+import { nearestEdge, edgeWidth, edgeOpen, edgeClass, lanePoint, laneOffset } from '../world/roadgraph.js';
 import { findRoute } from '../world/pathfind.js';
-import { QUALITY } from '../config.js';
+import { QUALITY, COUPLE } from '../config.js';
 import { createCareer, refreshOffers, acceptOffer, abandonJob, completeJob, activeFleetVehicle, cannotTake } from './career.js';
 import { currentStop, updateJob, finishStop, cargoOnBoard, impactDamage, jobStage } from './contracts.js';
-import { advance, advanceHours, dateOf } from './calendar.js';
+import { advance, advanceHours, dateOf, formatDuration, formatTime, minutesAt } from './calendar.js';
 import { bayCheck, doorCheck, bayHint, parkingSpots, trailerSpots } from './depots.js';
 import { buyVehicle, buyTrailer, sellVehicle, sellTrailer, showroom } from './dealer.js';
 import { updateDrivers, aiPosition, hirePool, hireDriver, fireDriver, assignVehicle, startAiJob, relocate, buyDepot } from './fleet.js';
 import { takeLoan, repayLoan } from './economy.js';
-import { createTraffic, agentDrawSpec } from '../traffic/traffic.js';
+import { createTraffic, agentDrawSpec, TRAFFIC_TYPES } from '../traffic/traffic.js';
 import { obb, sat } from '../sim/collision.js';
-import { stepTrailer, trailerObb, createTrailer, attach, underRun } from '../sim/trailer.js';
-import { couple, uncouple, nearestTrailer, couplingCheck, couplingHint } from '../sim/coupling.js';
+import { stepTrailer, trailerObb, createTrailer, attach, underRun, stepLooseTrailer } from '../sim/trailer.js';
+import { couple, uncouple, nearestTrailer, couplingCheck, couplingHint, unbrakedTrailerNear } from '../sim/coupling.js';
 import { drawVehicle } from '../render/draw-vehicles.js';
 import { lerpPose } from '../render/renderer.js';
 import { drawGuideLines } from '../render/draw-vehicles.js';
 import { rearPoint } from './depots.js';
 import { hashSeed } from '../engine/rng.js';
 import { slipNear, crossingMinutes, eventsBetween, describeEvent } from '../world/history.js';
-import { post, fuelBurn, WEAR_PER_MILE, impactToDamage, performanceFactor, weeklyTick, refuelCost, repairCost, formatMoney } from './economy.js';
+import { post, fuelBurn, WEAR_PER_MILE, CLIMB_GRADE, climbWear, brakeWear, impactToDamage, performanceFactor, weeklyTick, refuelCost, repairCost, formatMoney } from './economy.js';
 import { worldToMiles } from '../config.js';
 import { tierOf } from './reputation.js';
 import { daylight, weatherFor, gripFor, visibilityFor } from './environment.js';
@@ -36,7 +38,7 @@ const PERF_SAMPLES = 300;
 
 export function createSession({ options = {}, sound, regionId = 'sw-england', world = null } = {}) {
     const session = {
-        settings: { quality: 'medium', renderer: 'auto', camera: 'chase', manualGears: false, touchLayout: 'slider' },
+        settings: { quality: 'medium', renderer: 'auto', camera: 'chase', cameraTilt: 35, manualGears: false, touchLayout: 'slider' },
         player: null,
         controls: null,
         world: null,
@@ -114,16 +116,63 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
     }
 
     function teleport(x, y, heading = session.player.heading) {
-        Object.assign(session.player, { x, y, heading, speed: 0, steer: 0, prevX: x, prevY: y, prevHeading: heading });
+        Object.assign(session.player, { x, y, heading, speed: 0, steer: 0, prevX: x, prevY: y, prevHeading: heading, brakeHeat: 0 });
+        if (session.world) settle(session.player);
         session.world?.chunks.around(x, y, 260);
     }
+
+    const footprint = { x: 0, y: 0 };
+    /**
+     * The ground under a vehicle (world/terrain.js slopeAt over its wheelbase and track): {grade, pitch, roll, nx,
+     * ny, nz, z} plus rearZ, the height under the rear axle (the pose point).
+     */
+    function groundUnder(v) {
+        const c = wheelbaseCentre(v, footprint);
+        const s = slopeAt(session.world, c.x, c.y, v.heading, v.spec.wheelbase, Math.max(1, v.spec.width - 0.3));
+        s.rearZ = s.z - (s.grade * v.spec.wheelbase) / 2;
+        return s;
+    }
+
+    /** Puts a vehicle on the ground where it stands (height, pitch and roll at once, no suspension lag). */
+    function settle(v) {
+        const s = groundUnder(v);
+        v.z = v.prevZ = s.rearZ;
+        v.pitch = s.pitch;
+        v.roll = s.roll;
+        return s;
+    }
+
+    /** The ground under a trailer between its axle and kingpin (grade along its heading); rearZ is under the axle. */
+    function trailerGround(t) {
+        const L1 = t.spec.axle;
+        const s = slopeAt(session.world, t.x + (Math.cos(t.heading) * L1) / 2, t.y + (Math.sin(t.heading) * L1) / 2, t.heading, L1, Math.max(1, t.spec.width - 0.3));
+        s.rearZ = s.z - (s.grade * L1) / 2;
+        return s;
+    }
+
+    /** A trailer's height, pitch and roll for drawing, from where it stands. */
+    function settleTrailer(t, s = trailerGround(t)) {
+        t.prevZ = t.z;
+        t.z = s.rearZ;
+        t.pitch = s.pitch;
+        t.roll = s.roll;
+        return s;
+    }
+
+    /** The driven surface as a height function (coupling heights). */
+    const ground = (x, y) => groundZ(session.world, x, y);
 
     session.attach = ({ input, camera }) => {
         session.input = input;
         input.onAction(name => {
-            if (name === 'camera') camera.toggleMode();
+            if (name === 'camera') { camera.toggleMode(); session.emit('cameraMode', camera.mode); }
+            else if (name === 'cameraFlip') camera.toggleFlip();
             else if (name === 'zoomIn') camera.zoomIn();
             else if (name === 'zoomOut') camera.zoomOut();
+            else if (name === 'tiltUp' || name === 'tiltDown' || name === 'tiltCycle') {
+                if (name === 'tiltUp') camera.tiltUp(); else if (name === 'tiltDown') camera.tiltDown(); else camera.cycleTilt();
+                session.emit('cameraTilt', camera.tilt);
+            }
             else if (name === 'couple') session.toggleCoupling();
             else if (name === 'gearMode') session.player.gearbox.manual = !session.player.gearbox.manual;
             else if (name === 'gearUp' && session.player.gearbox.manual) shift(session.player.gearbox, session.player.spec, +1);
@@ -139,10 +188,18 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         session.controls = session.input.update(dt, p.speed);
         const rec = p.rec;
         session.inPractice = !!session.practiceReturn;
-        const moved = stepVehicle(p, session.controls, dt, { rolling: session.offRoad ? 3.5 : 1, drive: rec.fuel > 0, grip: session.grip ?? 1 });
-        if (p.trailer) stepRig(p, moved.yawRate, dt);
-        runningCosts(p, rec, dt);
+        // the ground under the wheels (and under a trailer, on its own heading): gravity, the gearbox and drawing
+        const under = (session.slope = groundUnder(p));
+        const trailerUnder = p.trailer ? settleTrailer(p.trailer) : null;
+        const moved = stepVehicle(p, session.controls, dt, {
+            rolling: session.offRoad ? 3.5 : 1, drive: rec.fuel > 0, grip: session.grip ?? 1,
+            grade: under.grade, trailerGrade: trailerUnder?.grade, pitch: under.pitch, roll: under.roll, groundZ: under.rearZ,
+        });
+        session.moved = moved;
+        if (p.trailer) stepRig(p, moved, dt);
+        runningCosts(p, rec, dt, moved);
         collide(p);
+        stepLooseTrailers(p, dt);
         if (session.inPractice) stepPractice(dt);
         else { stepTraffic(dt); tickClock(dt); stepJob(dt); }
         // indicators cancel themselves once a turn is done and the wheel straightens
@@ -194,10 +251,13 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         if (t) { t.x = t.prevX; t.y = t.prevY; t.heading = t.prevHeading; }
     }
 
-    /** Trailer follows the fifth wheel; folding past the limit is a jack-knife; the trailer body hits things too. */
-    function stepRig(p, yawRate, dt) {
+    /**
+     * Trailer follows the fifth wheel (pushed out when the tractor brakes for an unbraked trailer); folding past the
+     * limit is a jack-knife; the trailer body hits things too.
+     */
+    function stepRig(p, moved, dt) {
         const t = p.trailer;
-        const fold = stepTrailer(p, t, dt, p.speed, yawRate);
+        const fold = stepTrailer(p, t, dt, p.speed, moved.yawRate, moved.push);
         if (fold) {
             const speed = Math.abs(p.speed);
             undoStep(p);
@@ -225,16 +285,25 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         }
     }
 
-    /** Fuel, mileage and wear for the distance just driven; wear and damage sap the engine's power. */
-    function runningCosts(p, rec, dt) {
+    /**
+     * Fuel, mileage and wear for the distance just driven (more fuel climbing, less descending); sustained full-throttle
+     * steep climbs strain the engine and braking wears the brakes (more when they're hot). Wear and damage sap the
+     * engine's power.
+     */
+    function runningCosts(p, rec, dt, moved) {
         const ds = Math.abs(p.speed * dt);
+        const travelGrade = (moved.grade ?? 0) * (p.speed < 0 ? -1 : 1);
+        const throttle = session.controls.throttle;
+        p.climbTime = throttle > 0.9 && travelGrade > CLIMB_GRADE && ds > 0 ? (p.climbTime ?? 0) + dt : 0;
+        let wear = climbWear(p.climbTime, travelGrade, dt) + brakeWear(moved.brakeWork, totalMass(p), p.brakeHeat);
         if (ds > 0) {
             const load = (p.cargoMass + (p.trailer?.cargoMass ?? 0)) / Math.max(1, p.spec.payload || p.spec.trailerMax || 1);
-            rec.fuel = Math.max(0, rec.fuel - fuelBurn(p.spec, ds, load, session.controls.throttle));
+            rec.fuel = Math.max(0, rec.fuel - fuelBurn(p.spec, ds, load, throttle, travelGrade));
             const miles = worldToMiles(ds);
             rec.mileage += miles;
-            rec.wear = Math.min(100, rec.wear + miles * WEAR_PER_MILE);
+            wear += miles * WEAR_PER_MILE;
         }
+        rec.wear = Math.min(100, rec.wear + wear);
         p.fuel = rec.fuel;
         p.damage = rec.damage;
         p.power = performanceFactor(rec.wear, rec.damage);
@@ -263,11 +332,72 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         return cost;
     };
 
+    /** Recovers the vehicle to the nearest depot from anywhere (the tow charge applies); false when it cannot. */
+    session.recoverToDepot = () => {
+        if (session.inPractice || !nearestOwnedDepot(session.player.x, session.player.y)) return false;
+        session.callTow();
+        return true;
+    };
+
+    /** Passes game time while parked (job deadlines keep running; contract boards refresh each hour). */
+    session.waitHours = hours => {
+        const cal = session.career.calendar;
+        handleClock(advanceHours(cal, hours));
+        updateFleet(true);
+        session.emit('toast', `Waited ${formatDuration(hours * 60)}. It is now ${formatTime(cal.minutes)}.`);
+    };
+    /** Hours from now until the next 06:00. */
+    session.hoursUntilMorning = () => {
+        const m = session.career.calendar.minutes % 1440;
+        return (m < 360 ? 360 - m : 1800 - m) / 60;
+    };
+
     // ---- trailers ----------------------------------------------------------------------------------------------
 
     /** Sim trailers in the world, by id: the company's (rec) and any client trailers on a job. */
     session.trailerObjs = new Map();
     session.looseTrailers = () => [...session.trailerObjs.values()].filter(t => !t.coupled);
+
+    /**
+     * Loose trailers left with their parking brake off roll down grades steeper than ~3% until something stops them
+     * (a building, another trailer, the player's vehicle, deep water). Holding the handbrake while stopped beside one
+     * sets its brake. Trailers with the brake on are never stepped.
+     */
+    function stepLooseTrailers(p, dt) {
+        if (session.controls.handbrake && Math.abs(p.speed) < 0.5) {
+            const c = bodyCentre(p);
+            const t = unbrakedTrailerNear(session.trailerObjs.values(), c.x, c.y, 12);
+            if (t && Math.abs(t.speed) < 1.5) {
+                t.parkBrake = true;
+                t.speed = 0;
+                session.emit('toast', 'Trailer parking brake on');
+            }
+        }
+        for (const t of session.trailerObjs.values()) {
+            if (t.coupled || t.parkBrake) continue;
+            const s = trailerGround(t);
+            const moved = stepLooseTrailer(t, s.grade, dt);
+            if (moved === 0) continue;
+            settleTrailer(t);
+            const hit = trailerBlocked(t, p);
+            if (!hit) continue;
+            const impact = Math.abs(t.speed);
+            t.x = t.prevX; t.y = t.prevY; t.z = t.prevZ;
+            t.speed = 0;
+            if (hit === 'player' && impact > 1.5) { session.lastImpact = impact; session.onImpact?.(impact, { kind: 'trailer', ref: t }); }
+        }
+    }
+
+    /** What a rolling loose trailer has run into, if anything: 'player', 'trailer', 'water' or a collider. */
+    function trailerBlocked(t, p) {
+        const box = trailerObb(t);
+        for (const col of session.world.colliders.query(box)) if (col.kind !== 'cone' && sat(box, col.box)) return col;
+        if (sat(box, vehicleObb(p))) return 'player';
+        for (const o of session.trailerObjs.values()) if (o !== t && sat(box, trailerObb(o))) return 'trailer';
+        const end = Math.sign(t.speed) > 0 ? t.spec.axle + t.spec.kingpin : -t.spec.rearOverhang;
+        if (waterAt(session.world.region, t.x + Math.cos(t.heading) * end, t.y + Math.sin(t.heading) * end) >= 30) return 'water';
+        return null;
+    }
 
     /** A free trailer spot in a depot yard. */
     function trailerSpotAt(depot, spec) {
@@ -280,11 +410,14 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
     }
 
     /** Puts a trailer into the world (a company trailer from its record, or a client's). */
+    /** Puts a trailer into the world on its legs (on the ground where it stands; its parking brake on unless `extra` says). */
     function spawnTrailer(id, spec, pose, extra = {}) {
         const t = createTrailer(spec, pose);
         t.id = id;
         t.legsDown = true;
         Object.assign(t, extra);
+        settleTrailer(t);
+        t.prevZ = t.z;
         session.trailerObjs.set(id, t);
         return t;
     }
@@ -294,9 +427,9 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         for (const rec of session.career.trailers ?? []) {
             const spec = trailerById(rec.model);
             const depot = session.world.depots.find(d => d.id === rec.depot) ?? session.world.depots.find(d => d.home);
-            const t = spawnTrailer(rec.id, spec, rec.pose ?? trailerSpotAt(depot, spec), { rec, cargoMass: rec.cargoMass ?? 0 });
+            const t = spawnTrailer(rec.id, spec, rec.pose ?? trailerSpotAt(depot, spec), { rec, cargoMass: rec.cargoMass ?? 0, parkBrake: rec.parkBrake ?? true });
             if (rec.coupledTo === session.career.activeVehicle && session.player.spec.tags.includes('tractor-unit')) {
-                session.player.trailer = t; t.coupled = true; t.legsDown = false; attach(session.player, t);
+                session.player.trailer = t; t.coupled = true; t.legsDown = false; t.parkBrake = false; attach(session.player, t);
             }
         }
     }
@@ -311,19 +444,22 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         const p = session.player;
         if (!p.spec.tags.includes('tractor-unit')) return null;
         if (p.trailer) {
-            const t = uncouple(p);
+            // on gentle ground the trailer's parking brake goes on by itself; on a hill the driver must set it
+            const t = uncouple(p, trailerGround(p.trailer).grade);
             if (!t) { session.emit('toast', 'Stop to uncouple'); return null; }
-            if (t.rec) { t.rec.coupledTo = null; t.rec.pose = { x: t.x, y: t.y, heading: t.heading }; t.rec.cargoMass = t.cargoMass; }
+            if (t.rec) { t.rec.coupledTo = null; t.rec.pose = { x: t.x, y: t.y, heading: t.heading }; t.rec.cargoMass = t.cargoMass; t.rec.parkBrake = t.parkBrake; }
             p.rec.trailer = null;
+            // (the warning first: a first-time tip on 'uncoupled' replaces it with the longer explanation)
+            if (!t.parkBrake) session.emit('toast', 'Uncoupled on a hill: hold Space beside the trailer to set its parking brake!');
             session.emit('uncoupled', t);
             return 'uncoupled';
         }
         const t = nearestTrailer(p, session.looseTrailers());
         if (!t) { session.emit('toast', 'No trailer behind you'); return null; }
-        const why = couplingCheck(p, t);
+        const why = couplingCheck(p, t, COUPLE, ground);
         if (why) { session.emit('toast', couplingHint(why) ?? 'Line up under the trailer'); return null; }
-        couple(p, t);
-        if (t.rec) { t.rec.coupledTo = p.rec.id; t.rec.pose = null; }
+        couple(p, t, ground);
+        if (t.rec) { t.rec.coupledTo = p.rec.id; t.rec.pose = null; t.rec.parkBrake = false; }
         p.rec.trailer = t.id;
         session.emit('coupled', t);
         return 'coupled';
@@ -332,7 +468,15 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
     function couplingPrompt(p) {
         if (!p.spec.tags.includes('tractor-unit') || p.trailer) return null;
         const t = nearestTrailer(p, session.looseTrailers(), 14);
-        return t ? couplingHint(couplingCheck(p, t)) : null;
+        return t ? couplingHint(couplingCheck(p, t, COUPLE, ground)) : null;
+    }
+
+    /** A loose trailer near the player with its parking brake off (it may roll): how to set it. */
+    function parkBrakePrompt(p) {
+        const c = bodyCentre(p);
+        const t = unbrakedTrailerNear(session.trailerObjs.values(), c.x, c.y, 25);
+        if (!t) return null;
+        return Math.abs(p.speed) < 0.5 ? 'Trailer brake off! Hold Space to set it' : 'A trailer nearby has its brake off: stop beside it and hold Space';
     }
 
     // ---- reversing practice yard -------------------------------------------------------------------------------
@@ -614,6 +758,8 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
     /** Prompts for the yard the player is stopped in (depot office, garage) or for a tow. */
     function placeHint(p) {
         if (session.outOfFuel) return 'Out of fuel: press F to call a tow';
+        const brake = parkBrakePrompt(p);
+        if (brake) return brake;
         const c = couplingPrompt(p);
         if (c) return c;
         if (Math.abs(p.speed) > 0.3) return null;
@@ -651,7 +797,8 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         let hint = bayHint(check, stop.kind);
         if (check.reason === 'trailer') hint = 'Reverse under the client\u2019s trailer and press C';
         if (check.reason === 'noTrailer') hint = 'Couple the job\u2019s trailer first';
-        session.jobHint = job.working ? `${stop.action === 'load' ? 'Loading' : 'Unloading'}… ${Math.ceil(job.timer)} s` : hint ?? placeHint(p) ?? ferryHint();
+        const working = `${stop.action === 'load' ? 'Loading' : 'Unloading'}… ${Math.ceil(job.timer)} s`;
+        session.jobHint = parkBrakePrompt(p) ?? (job.working ? working : hint ?? placeHint(p) ?? ferryHint());
         routeTimer -= dt;
         if (routeTimer <= 0) updateRoute();
     }
@@ -686,7 +833,8 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         const stop = session.career.job && currentStop(session.career.job);
         if (!stop) { session.route = null; return; }
         const p = session.player;
-        session.route = findRoute(session.world.graph, { x: p.x, y: p.y }, stop, { year: session.year, vmax: p.spec.topSpeedMph * 0.44704 });
+        const load = totalMass(p) - p.spec.mass; // cargo, and any trailer with its cargo: slower up the hills
+        session.route = findRoute(session.world.graph, { x: p.x, y: p.y }, stop, { year: session.year, vmax: p.spec.topSpeedMph * 0.44704, climb: climbModel(p.spec, load) });
     }
 
     /** Drawn under the ground transform: a faint route line and the ring at a kerbside drop. */
@@ -805,7 +953,7 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         const len = p.spec.length + (t ? t.spec.length - 1.5 : 0);
         const rev = p.speed < -0.2;
         const cx = t && rev ? (c.x + t.x) / 2 : c.x, cy = t && rev ? (c.y + t.y) / 2 : c.y;
-        camera.update({ x: cx, y: cy, heading: p.heading, speed: p.speed, reversing: rev, length: len }, view, dt);
+        camera.update({ x: cx, y: cy, z: p.z ?? 0, heading: p.heading, speed: p.speed, reversing: rev, length: len }, view, dt);
     };
 
     session.recordFrame = ms => {
@@ -848,6 +996,34 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         },
         resetPerf() { session.perf.length = 0; },
         newGame: opts => { session.newGame(opts); session.emit('debugStart'); },
+        /** Shows another catalogue vehicle as the player's (for rendering checks only; the physics keeps the old one's state). */
+        setPlayerSpec(id) { const spec = vehicleById(id); if (spec) session.player.spec = spec; return !!spec; },
+        /** Terrain (plan 0007): the heightfield, the driven surface (roads, yards) and the slope under a footprint. */
+        terrainHeight: (x, y) => terrainHeight(session.world.region, x, y),
+        groundZ: (x, y) => groundZ(session.world, x, y),
+        slopeAt: (x, y, heading, length, width) => slopeAt(session.world, x, y, heading, length, width),
+        /**
+         * A pose in the nearside lane at the foot of the steepest `span`-metre stretch of an open A or B road (at least
+         * `minGrade`), facing up it: {x, y, heading, grade, edge}, or null.
+         */
+        steepRoad(minGrade = 0.05, span = 24) {
+            const year = session.year;
+            let best = null;
+            for (const e of session.world.graph.edges) {
+                if (!e.z || e.zBridges?.length || !edgeOpen(e, year) || !['A', 'B'].includes(edgeClass(e, year))) continue;
+                const k = Math.max(1, Math.round(span / e.zStep));
+                for (let i = 0; i + k < e.z.length; i++) {
+                    const g = (e.z[i + k] - e.z[i]) / (k * e.zStep);
+                    if (Math.abs(g) >= minGrade && (!best || Math.abs(g) > Math.abs(best.g))) best = { e, i, k, g };
+                }
+            }
+            if (!best) return null;
+            const { e, i, k, g } = best;
+            const forward = g > 0; // climbing from a to b
+            const along = forward ? i * e.zStep : e.len - (i + k) * e.zStep;
+            const p = lanePoint(e, along, forward, laneOffset(e, year), {});
+            return { x: p.x, y: p.y, heading: p.angle, grade: Math.abs(g), edge: e.id };
+        },
     });
 
     // ---- new games and saves ----------------------------------------------------------------------------------
@@ -890,8 +1066,8 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         session.player.cargoMass = data.cargoMass ?? 0;
         buildTrailers();
         for (const ct of data.clientTrailers ?? []) {
-            const t = spawnTrailer(ct.id, trailerById(ct.model), { x: ct.x, y: ct.y, heading: ct.heading }, { client: true, cargoMass: ct.cargoMass, livery: { livery1: '#7a2b2b', livery2: '#e8e2d0' } });
-            if (ct.coupled && session.player.spec.tags.includes('tractor-unit')) { session.player.trailer = t; t.coupled = true; t.legsDown = false; attach(session.player, t); }
+            const t = spawnTrailer(ct.id, trailerById(ct.model), { x: ct.x, y: ct.y, heading: ct.heading }, { client: true, cargoMass: ct.cargoMass, parkBrake: ct.parkBrake ?? true, livery: { livery1: '#7a2b2b', livery2: '#e8e2d0' } });
+            if (ct.coupled && session.player.spec.tags.includes('tractor-unit')) { session.player.trailer = t; t.coupled = true; t.legsDown = false; t.parkBrake = false; attach(session.player, t); }
         }
         if (session.career.job) updateRoute();
         updateEnvironment(0, true);
@@ -901,6 +1077,77 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
     session.makeSave = () => makeSave(session);
 
     session.teleport = teleport;
+
+    /** Developer tools (Development builds only; ui/debug.js): clock, weather, traffic, money, teleport. */
+    session.debugTools = {
+        trafficTypes: () => Object.entries(TRAFFIC_TYPES).map(([id, t]) => ({ id, name: t.name, from: t.from, to: t.to })),
+        get density() { return session.traffic?.densityScale ?? 1; },
+        setDensity(k) { if (session.traffic) session.traffic.densityScale = Math.max(0, k); },
+        clearTraffic() { if (session.traffic) { session.traffic.agents.length = 0; session.traffic.claims.clear(); } },
+        /** Puts one traffic vehicle on the nearest road ahead of the player (any type, whatever the year). */
+        spawnTraffic(type) {
+            const p = session.player, tr = session.traffic;
+            if (!tr || !TRAFFIC_TYPES[type]) return false;
+            const x = p.x + Math.cos(p.heading) * 35, y = p.y + Math.sin(p.heading) * 35;
+            const near = nearestEdge(session.world.graph, x, y, 80, session.year, e => edgeOpen(e, session.year) && !['lane', 'access', 'ferry'].includes(e.cls));
+            if (!near) return false;
+            const a = tr.spawnOn(near.edge, true, near.along, session.year, type, true);
+            if (a) a.era = session.year < 1930 ? 0 : session.year < 1950 ? 1 : session.year < 1970 ? 2 : session.year < 1995 ? 3 : 4;
+            return !!a;
+        },
+        setYear(year) {
+            const d = dateOf(session.career.calendar.minutes);
+            session.career.calendar.minutes = minutesAt(year, d.month, Math.min(d.day, 28), d.hour, d.minute);
+            const before = session.year;
+            session.year = year;
+            if (session.traffic) session.traffic.agents.length = 0;
+            session.emit('newYear', year);
+            if (session.career.job) updateRoute();
+            updateEnvironment(0, true);
+            return before;
+        },
+        /** Jumps to an hour of the current day (0-24). */
+        setHour(hour) {
+            const d = dateOf(session.career.calendar.minutes);
+            session.career.calendar.minutes += hour * 60 - (d.hour * 60 + d.minute);
+            updateEnvironment(0, true);
+        },
+        setWeather(kind, intensity = 0.8) { weatherOverride = kind ? { kind, intensity } : null; updateEnvironment(0, true); },
+        addMoney(amount) { post(session.career.ledger, session.career.calendar.minutes, 'Debug', amount, 'other'); },
+        /** Tops up fuel, clears damage and wear on the vehicle being driven. */
+        fixVehicle() {
+            const rec = session.player.rec;
+            if (!rec) return;
+            rec.fuel = session.player.spec.fuelTank; rec.damage = 0; rec.wear = 0;
+            session.player.fuel = rec.fuel; session.player.damage = 0;
+            session.outOfFuel = false;
+        },
+        /** Named places to jump to: depots and towns. */
+        places() {
+            const w = session.world;
+            return [
+                ...w.depots.map(d => ({ name: `Depot: ${d.name}`, x: d.yard.marker.x, y: d.yard.marker.y, heading: d.yard.marker.heading, depot: d.id })),
+                ...w.region.towns.map(t => ({ name: t.name, x: t.x, y: t.y })),
+            ];
+        },
+        /** Jumps to a place, onto the nearest road (a depot to its bay). */
+        goTo(place) {
+            if (place.depot) { spawnAtDepot(session.world.depots.find(d => d.id === place.depot)); return true; }
+            const near = nearestEdge(session.world.graph, place.x, place.y, 400, session.year, e => edgeOpen(e, session.year) && !['lane', 'access', 'ferry'].includes(e.cls));
+            if (!near) { teleport(place.x, place.y); return true; }
+            const lp = lanePoint(near.edge, near.along, true, laneOffset(near.edge, session.year), {});
+            teleport(lp.x, lp.y, lp.angle);
+            if (session.traffic) session.traffic.agents.length = 0;
+            return true;
+        },
+        /** Jumps to the current job's next stop. */
+        goToStop() {
+            const stop = session.career.job ? currentStop(session.career.job) : null;
+            if (!stop) return false;
+            return this.goTo({ x: stop.x, y: stop.y });
+        },
+        setSpec: id => session.debugHook().setPlayerSpec(id),
+    };
     session.dispose = () => {};
 
     if (world) setWorld(world);

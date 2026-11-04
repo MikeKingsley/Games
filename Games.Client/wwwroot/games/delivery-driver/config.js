@@ -36,19 +36,21 @@ export const CHUNK_SIZE = 160;
 
 /** Quality presets. The device picks one in settings; low is for mid-range phones. */
 /** Whether renderer 'auto' picks WebGL when available (flipped on in plan 0007 phase 10). */
-export const AUTO_PREFERS_WEBGL = false;
+export const AUTO_PREFERS_WEBGL = true;
 
 export const QUALITY = {
-    low: { traffic: 8, drawChunks: 2, spriteCache: 24, maxDpr: 1, trees: 0.4, shadows: false },
-    medium: { traffic: 16, drawChunks: 3, spriteCache: 48, maxDpr: 1.5, trees: 0.75, shadows: true },
-    high: { traffic: 28, drawChunks: 4, spriteCache: 96, maxDpr: 2, trees: 1, shadows: true },
+    // traffic .. shadows serve both renderers; the rest is WebGL only: view distance (m), shadow map texels per side,
+    // MSAA (applied when the context is created) and the far-field terrain grid resolution
+    low: { traffic: 8, drawChunks: 2, spriteCache: 24, maxDpr: 1, trees: 0.4, shadows: false, viewDistance: 400, shadowMapSize: 0, antialias: false, farField: 48 },
+    medium: { traffic: 16, drawChunks: 3, spriteCache: 48, maxDpr: 1.5, trees: 0.75, shadows: true, viewDistance: 560, shadowMapSize: 1024, antialias: false, farField: 72 },
+    high: { traffic: 28, drawChunks: 4, spriteCache: 96, maxDpr: 2, trees: 1, shadows: true, viewDistance: 720, shadowMapSize: 2048, antialias: true, farField: 96 },
 };
 
 /** Loading-bay tolerances. */
 export const BAY = { position: 1.5, heading: (15 * Math.PI) / 180, speed: 0.05 };
 
-/** Coupling tolerances for articulated trucks. */
-export const COUPLE = { distance: 0.4, heading: (10 * Math.PI) / 180, speed: 0.5 };
+/** Coupling tolerances for articulated trucks (height: kingpin vs fifth wheel, m, on uneven ground). */
+export const COUPLE = { distance: 0.4, heading: (10 * Math.PI) / 180, speed: 0.5, height: 0.25 };
 
 /** Real seconds between autosaves. */
 export const AUTOSAVE_SECONDS = 180;

@@ -4,6 +4,7 @@ import { buildRegion, waterAt } from './region.js';
 import { buildRoadGraph, clearOfRoads, nearestEdge } from './roadgraph.js';
 import { generateTownStreets, generateTownBuildings, layoutFarm, layoutSite, findStreetYardSpot } from './generator.js';
 import { createChunks } from './chunks.js';
+import { gradeRoads } from './terrain.js';
 import { createSpatialHash, sat, obb } from '../sim/collision.js';
 import { seededRng, hashSeed } from '../engine/rng.js';
 
@@ -193,6 +194,8 @@ export function createWorld(regionOrJson, { chunkCap = 160 } = {}) {
 
     /** Everything with a yard and loading marker (depots, sites, farms). */
     world.yards = [...world.depots, ...world.sites, ...world.farms, ...world.garages];
+    // the graph is final now: grade the roads (edge.z, node.z) and level the yards (world.terrain, for groundZ)
+    gradeRoads(world);
     world.chunks = createChunks(world, { cap: chunkCap });
     return world;
 }

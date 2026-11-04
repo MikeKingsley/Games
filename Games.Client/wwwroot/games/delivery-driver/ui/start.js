@@ -4,7 +4,7 @@ import { formatMoney } from '../game/economy.js';
 import { escape } from './hud.js';
 import { tabs } from './menus.js';
 
-export const DEFAULT_SETTINGS = { quality: 'medium', renderer: 'auto', camera: 'chase', manualGears: false, touchLayout: 'slider', units: 'imperial' };
+export const DEFAULT_SETTINGS = { quality: 'medium', renderer: 'auto', camera: 'chase', cameraTilt: 35, manualGears: false, touchLayout: 'slider', units: 'imperial' };
 const SETTINGS_KEY = 'games.dd.settings';
 
 export function loadSettings(storage = globalThis.localStorage) {
@@ -35,7 +35,8 @@ export function registerStartScreens(menus, ctx) {
             for (const s of list) {
                 const busy = confirm === s.slot;
                 if (s.empty) {
-                    html += `<li class="dd-row"><div class="dd-grow"><b>Slot ${s.slot}</b><br><small>Empty</small></div><button class="dd-btn primary" data-act="new" data-slot="${s.slot}">New game</button>`
+                    const note = s.outdated ? 'Empty: the old save here is from an earlier version of the game and can’t be loaded' : 'Empty';
+                    html += `<li class="dd-row"><div class="dd-grow"><b>Slot ${s.slot}</b><br><small>${note}</small></div><button class="dd-btn primary" data-act="new" data-slot="${s.slot}">New game</button>`
                         + `<label class="dd-btn">Import<input type="file" accept=".json,application/json" data-import="${s.slot}" hidden></label></li>`;
                     continue;
                 }
@@ -98,6 +99,12 @@ export function registerStartScreens(menus, ctx) {
                 + '<button class="dd-btn" data-act="slots">Save slots</button>'
                 + '<button class="dd-btn" data-act="settings">Settings</button>'
                 + '<button class="dd-btn" data-act="help">Controls</button>'
+                + '</p><h3>Pass time</h3><p class="dd-tabs">'
+                + '<button class="dd-btn" data-act="wait" data-h="1">Wait 1 hour</button>'
+                + '<button class="dd-btn" data-act="wait" data-h="3">Wait 3 hours</button>'
+                + '<button class="dd-btn" data-act="wait" data-h="morning">Wait until morning</button>'
+                + '</p><h3>Stuck?</h3><p class="dd-tabs">'
+                + '<button class="dd-btn" data-act="recover">Recover truck to depot (tow charge)</button></p><p class="dd-tabs">'
                 + `${session.tutorial && !session.tutorial.done ? '<button class="dd-btn" data-act="skip">Skip the tutorial</button>' : ''}</p>${message ? `<p class="dd-muted">${escape(message)}</p>` : ''}`;
         },
         act(action, data, m) {
@@ -108,6 +115,8 @@ export function registerStartScreens(menus, ctx) {
             else if (action === 'settings') m.open('settings');
             else if (action === 'help') m.open('help');
             else if (action === 'skip') { ctx.skipTutorial(); m.close(); }
+            else if (action === 'wait') { session.waitHours(data.h === 'morning' ? session.hoursUntilMorning() : Number(data.h)); m.close(); }
+            else if (action === 'recover') { if (session.recoverToDepot()) m.close(); else message = 'No depot to recover to from here.'; }
         },
     });
 
@@ -119,6 +128,7 @@ export function registerStartScreens(menus, ctx) {
                 + row('Quality', 'quality', [['low', 'Low (phones)'], ['medium', 'Medium'], ['high', 'High']])
                 + row('Graphics', 'renderer', [['auto', 'Auto'], ['webgl', '3D (WebGL)'], ['canvas2d', 'Compatibility (Canvas)']])
                 + row('Camera', 'camera', [['chase', 'Behind the truck'], ['north', 'North up']])
+                + row('Camera tilt (3D)', 'cameraTilt', [['25', 'Low'], ['35', 'Chase'], ['55', 'High'], ['75', 'Top-down']])
                 + row('Gearbox', 'manualGears', [['false', 'Automatic'], ['true', 'Manual (Shift/Ctrl)']])
                 + row('Touch steering', 'touchLayout', [['slider', 'Slider'], ['wheel', 'Wheel']])
                 + row('Units', 'units', [['imperial', 'mph and miles'], ['metric', 'km/h and km']])
@@ -127,7 +137,7 @@ export function registerStartScreens(menus, ctx) {
         act(action, data, m) {
             if (action === 'set') {
                 const [field, raw] = data.id.split(':');
-                const value = raw === 'true' ? true : raw === 'false' ? false : raw;
+                const value = raw === 'true' ? true : raw === 'false' ? false : field === 'cameraTilt' ? Number(raw) : raw;
                 ctx.applySettings({ ...session.settings, [field]: value });
             } else if (action === 'back') m.open('game');
         },
@@ -138,7 +148,7 @@ export function registerStartScreens(menus, ctx) {
             const rows = [
                 ['W / ↑', 'Accelerate (hold S at a standstill to reverse)'], ['S / ↓', 'Brake'], ['A D / ← →', 'Steer'], ['Space', 'Handbrake'],
                 ['F / Enter', 'Depot office, garage, ferry, tow'], ['C', 'Couple / uncouple a trailer'], ['Q / E', 'Indicators'], ['H', 'Horn'],
-                ['M', 'Map'], ['J', 'Current job'], ['V', 'Camera: behind / north up'], ['Z / X', 'Zoom in / out'], ['G', 'Manual gears (Shift/Ctrl to change)'], ['Esc', 'Game menu'],
+                ['M', 'Map'], ['J', 'Current job'], ['V', 'Camera: behind / north up'], ['B', 'Camera: look the other way (180°)'], ['Z / X', 'Zoom in / out'], ['[ / ]', 'Camera tilt lower / higher (3D)'], ['G', 'Manual gears (Shift/Ctrl to change)'], ['Esc', 'Game menu'],
             ];
             return `<h2>Controls</h2><table class="dd-ledger">${rows.map(([k, v]) => `<tr><td><b>${k}</b></td><td>${v}</td></tr>`).join('')}</table>`
                 + '<p>On a tablet or phone: the slider steers, the pedals drive, R selects reverse, and the buttons do the rest. A gamepad works too.</p><p><button class="dd-btn" data-act="back">Back</button></p>';

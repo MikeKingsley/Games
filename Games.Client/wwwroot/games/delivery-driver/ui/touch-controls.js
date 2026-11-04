@@ -20,7 +20,8 @@ export function createTouchControls(root, input, signal) {
         actionButton('📦', 'interact', 'Depot / load'),
         actionButton('🔗', 'couple', 'Couple / uncouple'),
         actionButton('📯', 'horn', 'Horn'),
-        actionButton('🎥', 'camera', 'Camera'),
+        actionButton('🎥', 'cameraFlip', 'Camera: look the other way'),
+        actionButton('↕', 'tiltCycle', 'Camera tilt'),
         actionButton('🗺️', 'map', 'Map'),
     ];
     buttons.append(...actionButtons);

@@ -2,7 +2,7 @@
 import { prism, ground, rect, shade } from './shapes.js';
 import { toScreen, depth } from './projection.js';
 
-const DEFAULT_LIVERY = { livery1: '#2f5d8a', livery2: '#e8c547' };
+export const DEFAULT_LIVERY = { livery1: '#2f5d8a', livery2: '#e8c547' };
 const tmp = new Array(8);
 const pt = { x: 0, y: 0 };
 const order = [];
@@ -125,7 +125,7 @@ function brakeLights(ctx, p, rearX, rearY, spec, heading) {
     }
 }
 
-const TRAILER_BODY = {
+export const TRAILER_BODY = {
     flat: (len, w) => [{ u0: 0, u1: len, w, z0: 1.1, h: 0.25, color: '#5b4a3a', roof: '#7a6650' }],
     low: (len, w) => [{ u0: 0, u1: len - 3, w, z0: 0.55, h: 0.25, color: '#3a3a3a', roof: '#5a5a5a' }, { u0: len - 3, u1: len, w, z0: 1.1, h: 0.35, color: '#3a3a3a', roof: '#5a5a5a' }],
     box: (len, w, h) => [{ u0: 0, u1: len, w, z0: 1.15, h: h - 1.15, color: 'livery1', roof: '#e8e4dc', sign: true }],

@@ -1,9 +1,10 @@
 // Save games: three slots in localStorage (games.dd.slot1-3), with a small index of them in the shell's progress
 // store (games.progress.delivery-driver). The world is rebuilt from the region seed, so a save only holds what the
 // player changed: the career (money, calendar, fleet, trailers, drivers, loans, depots, reputation, the job) and
-// where things stand. Versioned, with migrations from older versions.
+// where things stand. Versioned: version 3 (terrain, hills and slope physics, plan 0007) dropped older saves with
+// no migration (the game is still in early development); they read as an empty slot with a notice.
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 export const SLOTS = [1, 2, 3];
 export const MAX_BYTES = 500 * 1024;
 const key = slot => `games.dd.slot${slot}`;
@@ -28,15 +29,17 @@ function thin(pts, max) {
 
 /**
  * A save from the running game. `world` state that matters: the player's pose, and trailers in the world
- * (the company's positions are on their records; client trailers of the current job are listed).
+ * (the company's positions are on their records; client trailers of the current job are listed). Dropped trailers
+ * keep x, y, heading and whether their parking brake is on; heights are not saved (they settle onto the ground
+ * on load).
  */
 export function makeSave(session) {
     const p = session.player;
     const clientTrailers = [...(session.trailerObjs?.values() ?? [])]
         .filter(t => t.client && t.id !== 'practice-trailer')
-        .map(t => ({ id: t.id, model: t.spec.id, x: t.x, y: t.y, heading: t.heading, cargoMass: t.cargoMass, coupled: t.coupled }));
+        .map(t => ({ id: t.id, model: t.spec.id, x: t.x, y: t.y, heading: t.heading, cargoMass: t.cargoMass, coupled: t.coupled, parkBrake: t.parkBrake !== false }));
     for (const t of session.trailerObjs?.values() ?? []) {
-        if (t.rec) Object.assign(t.rec, t.coupled ? { pose: null } : { pose: { x: t.x, y: t.y, heading: t.heading } }, { cargoMass: t.cargoMass });
+        if (t.rec) Object.assign(t.rec, t.coupled ? { pose: null } : { pose: { x: t.x, y: t.y, heading: t.heading }, parkBrake: t.parkBrake !== false }, { cargoMass: t.cargoMass });
     }
     if (p.rec) p.rec.pose = null;
     const back = session.practiceReturn ? session.world.depots.find(d => d.id === session.practiceReturn.depot)?.yard.marker : null;
@@ -51,27 +54,17 @@ export function makeSave(session) {
     };
 }
 
-/** Upgrades an older save to the current version. */
+/** A save from before the current version (it can't be loaded: older saves are dropped, not migrated). */
+export const isOutdated = data => !!data && typeof data === 'object' && Number.isFinite(data.version) && data.version >= 1 && data.version < SAVE_VERSION;
+
+/**
+ * Checks a save can be loaded and returns a copy. Saves from before version 3 are dropped (the world and its
+ * physics changed): they throw, as do newer or foreign files. Future versions migrate from 3 here.
+ */
 export function migrate(data) {
-    let d = structuredClone(data);
-    if (!d.version || d.version < 1) throw new Error('Not a Delivery Driver save');
-    if (d.version === 1) {
-        // v1 kept one offer list and no boards, money on the career, and no client trailer list
-        const c = d.career;
-        if (c.money !== undefined && !c.ledger) { c.ledger = { money: c.money, entries: [] }; delete c.money; }
-        c.boards ??= {};
-        delete c.offersKey;
-        delete c.refresh;
-        c.offers = [];
-        c.drivers ??= [];
-        c.trailers ??= [];
-        c.loans ??= [];
-        c.reputation ??= { points: 0 };
-        c.bankruptcy ??= { stage: 0 };
-        d.clientTrailers ??= [];
-        d.version = 2;
-    }
-    return d;
+    if (isOutdated(data)) throw new Error('That save is from an earlier version of the game and can’t be loaded');
+    if (!data || typeof data !== 'object' || data.version !== SAVE_VERSION) throw new Error('Not a Delivery Driver save');
+    return structuredClone(data);
 }
 
 /** One line for the slot list. */
@@ -80,10 +73,18 @@ export function summary(data) {
     return { company: c.company, year: data.year, money: c.ledger.money, savedAt: data.savedAt, retired: !!c.retired, vehicles: c.fleet.length };
 }
 
-/** localStorage-backed slots; `progress` is the shell's {load(), save(obj)} for the index. */
+/**
+ * localStorage-backed slots; `progress` is the shell's {load(), save(obj)} for the index. A slot holding a save from
+ * an earlier version reads as no save; list() marks it `outdated` (shown as an empty slot with a notice until a new
+ * game or an import overwrites it, or it is deleted).
+ */
 export function createSaveStore(storage = globalThis.localStorage, progress = null) {
+    const parse = slot => {
+        try { const raw = storage.getItem(key(slot)); return raw ? JSON.parse(raw) : null; } catch { return null; }
+    };
     const read = slot => {
-        try { const raw = storage.getItem(key(slot)); return raw ? migrate(JSON.parse(raw)) : null; } catch { return null; }
+        const data = parse(slot);
+        try { return data ? migrate(data) : null; } catch { return null; }
     };
     const store = {
         read,
@@ -95,7 +96,11 @@ export function createSaveStore(storage = globalThis.localStorage, progress = nu
             return json.length;
         },
         remove(slot) { storage.removeItem(key(slot)); store.writeIndex(); },
-        list: () => SLOTS.map(slot => { const d = read(slot); return { slot, ...(d ? summary(d) : { empty: true }) }; }),
+        list: () => SLOTS.map(slot => {
+            const d = read(slot);
+            if (d) return { slot, ...summary(d) };
+            return isOutdated(parse(slot)) ? { slot, empty: true, outdated: true } : { slot, empty: true };
+        }),
         writeIndex(last) {
             if (!progress) return;
             const prev = progress.load?.() ?? {};

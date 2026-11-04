@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
 import { createCareer, newFleetVehicle, refreshOffers } from '../../Games.Client/wwwroot/games/delivery-driver/game/career.js';
-import { hirePool, hireDriver, fireDriver, assignVehicle, startAiJob, updateDrivers, aiCannotTake, buyDepot, relocate } from '../../Games.Client/wwwroot/games/delivery-driver/game/fleet.js';
+import { hirePool, hireDriver, fireDriver, assignVehicle, startAiJob, updateDrivers, aiCannotTake, buyDepot, relocate, routeCost } from '../../Games.Client/wwwroot/games/delivery-driver/game/fleet.js';
+import { findRoute } from '../../Games.Client/wwwroot/games/delivery-driver/world/pathfind.js';
+import { createGraph, createSegmentIndex } from '../../Games.Client/wwwroot/games/delivery-driver/world/roadgraph.js';
+import { climbModel } from '../../Games.Client/wwwroot/games/delivery-driver/sim/slope.js';
+import { quote } from '../../Games.Client/wwwroot/games/delivery-driver/game/contracts.js';
+import { MPH } from '../../Games.Client/wwwroot/games/delivery-driver/config.js';
 import { weeklyTick } from '../../Games.Client/wwwroot/games/delivery-driver/game/economy.js';
 import { advanceHours, minutesAt } from '../../Games.Client/wwwroot/games/delivery-driver/game/calendar.js';
 import { createVehicle } from '../../Games.Client/wwwroot/games/delivery-driver/sim/vehicle.js';
@@ -126,4 +131,69 @@ test('a driver can move a vehicle to another owned depot', () => {
     assert.equal(d.depot, ply.id);
     assert.equal(d.job, null);
     assert.ok(!c.ledger.entries.some(e => e.text.startsWith(d.name) && e.category === 'income'), 'no pay for a move');
+});
+
+/** Two separate 600 m B-roads, one level and one over a 15 m hill (up and down, ~8% at the steepest). */
+function hillGraph() {
+    const g = createGraph();
+    const nodes = [[0, 0], [600, 0], [0, 300], [600, 300]].map(([x, y]) => g.addNode(x, y));
+    const level = g.addEdge(nodes[0], nodes[1], [0, 0, 600, 0], { cls: 'B' });
+    const hilly = g.addEdge(nodes[2], nodes[3], [0, 300, 600, 300], { cls: 'B' });
+    profile(level, () => 0);
+    profile(hilly, s => 15 * Math.sin((Math.PI * s) / 600));
+    for (const n of g.nodes) n.junction = 'end';
+    g.index = createSegmentIndex(g);
+    return { g, level, hilly };
+}
+function profile(e, f) {
+    const n = Math.ceil(e.len / 4);
+    e.zStep = e.len / n;
+    e.z = Float32Array.from({ length: n + 1 }, (_, i) => f(i * e.zStep));
+}
+
+test('a hilly route takes strictly more game time and fuel than a level route of equal length', () => {
+    const { g } = hillGraph();
+    const spec = vehicleById('exe-two-tonner');
+    const opts = { year: 1930, vmax: spec.topSpeedMph * MPH, climb: climbModel(spec, spec.payload) };
+    const level = findRoute(g, { x: 0, y: 0 }, { x: 600, y: 0 }, opts);
+    const hilly = findRoute(g, { x: 0, y: 300 }, { x: 600, y: 300 }, opts);
+    assert.ok(Math.abs(level.length - hilly.length) < 1e-6);
+    assert.equal(level.hill, 1);
+    assert.ok(Math.abs(level.fuel - 1) < 1e-9);
+    assert.ok(hilly.hill > 1.05 && hilly.fuel > 1.05, `hill ${hilly.hill}, fuel ${hilly.fuel}`);
+    assert.ok(Math.abs(hilly.climb - 15) < 0.1, `climbed ${hilly.climb}`);
+    const a = routeCost(spec, level, 1), b = routeCost(spec, hilly, 1);
+    assert.ok(b.minutes > a.minutes && b.fuel > a.fuel, `${b.minutes} vs ${a.minutes} min, ${b.fuel} vs ${a.fuel} l`);
+    // weaker vehicles feel the hill more: a 1995 7.5-tonne box loses less time over it than the 1924 two-tonner
+    const modern = vehicleById('exe-75');
+    const fast = findRoute(g, { x: 0, y: 300 }, { x: 600, y: 300 }, { ...opts, vmax: 9 * MPH * 2.5, climb: climbModel(modern, modern.payload) });
+    assert.ok(fast.hill < hilly.hill, `${fast.hill} vs ${hilly.hill}`);
+});
+
+test('between the same two places the route planner takes the level road over an equally long hilly one', () => {
+    // approach roads into a fork: a level road and an equally long hilly one, rejoining before the far approach road
+    const g = createGraph();
+    const start = g.addNode(-200, 0), from = g.addNode(0, 0), to = g.addNode(800, 0), end = g.addNode(1000, 0);
+    const approaches = [g.addEdge(start, from, [-200, 0, 0, 0], { cls: 'B' }), g.addEdge(to, end, [800, 0, 1000, 0], { cls: 'B' })];
+    const level = g.addEdge(from, to, [0, 0, 400, 300, 800, 0], { cls: 'B' });
+    const hilly = g.addEdge(from, to, [0, 0, 400, -300, 800, 0], { cls: 'B' });
+    for (const e of approaches) profile(e, () => 0);
+    profile(level, () => 0);
+    profile(hilly, s => 20 * Math.sin((Math.PI * s) / hilly.len));
+    g.index = createSegmentIndex(g);
+    for (const [a, b] of [[{ x: -150, y: 0 }, { x: 950, y: 0 }], [{ x: 950, y: 0 }, { x: -150, y: 0 }]]) {
+        const r = findRoute(g, a, b, { year: 1930, vmax: 10, climb: climbModel(vehicleById('exe-two-tonner'), 2000) });
+        assert.ok(r.steps.some(s => s.edge === level) && !r.steps.some(s => s.edge === hilly), r.steps.map(s => s.edge.id).join());
+        assert.ok(r.climb < 0.01 && r.hill === 1, `climb ${r.climb}, hill ${r.hill}`);
+    }
+});
+
+test('hilly real roads cost the off-screen fleet more, and contracts pay for the hills', () => {
+    const tavistock = world.region.townById.get('tavistock'); // over the edge of Dartmoor
+    const spec = vehicleById('exe-two-tonner');
+    const r = findRoute(world.graph, home.yard.marker, tavistock, { year: 1930, vmax: spec.topSpeedMph * MPH, climb: climbModel(spec, spec.payload) });
+    assert.ok(r && r.hill > 1.03 && r.fuel > 1.03 && r.climb > 30, `hill ${r?.hill}, fuel ${r?.fuel}, climb ${r?.climb}`);
+    assert.ok(r.time > r.flatTime);
+    assert.ok(routeCost(spec, r, 1).fuel > routeCost(spec, { ...r, fuel: 1 }, 1).fuel);
+    assert.ok(quote(r.length, 1000, 2, 1, r.hill) > quote(r.length, 1000, 2, 1, 1));
 });

@@ -9,6 +9,7 @@ import { workSeconds, settle } from './contracts.js';
 import { carryFor, cannotTake, takeOffer } from './career.js';
 import { worldToMiles } from '../config.js';
 import { addReputation, jobPoints, tierInfo } from './reputation.js';
+import { climbModel } from '../sim/slope.js';
 
 const FIRST = ['Albert', 'Fred', 'Harry', 'Walter', 'Arthur', 'Percy', 'Stanley', 'Reg', 'Ernie', 'George', 'Edith', 'Doris', 'Ivy', 'Mabel', 'Ron', 'Jim', 'Bill', 'Sid', 'Len', 'Joan', 'Pat', 'Dave', 'Kevin', 'Tracy', 'Gary', 'Sharon', 'Darren', 'Lee', 'Kelly', 'Jade'];
 const LAST = ['Trelawny', 'Penrose', 'Hext', 'Pascoe', 'Tremayne', 'Coombe', 'Luxton', 'Vosper', 'Nankivell', 'Kingdon', 'Snell', 'Endacott', 'Rowe', 'Jago', 'Hosking', 'Bartlett', 'Pengelly', 'Hockin', 'Yeo', 'Westaway', 'Northcott', 'Coaker', 'Symons', 'Rundle', 'Stephens'];
@@ -100,9 +101,18 @@ export function aiCannotTake(career, driver, contract) {
 }
 
 /**
+ * Game minutes and fuel (litres, or kWh) for a vehicle to drive a route from findRoute, hills included: the route's
+ * time already has the climbs and steep descents, and its `fuel` multiplier the hills' extra fuel (1 if level).
+ */
+export function routeCost(spec, route, loadFraction = 0) {
+    return { minutes: route.time * GAME_MINUTES_PER_SECOND, fuel: fuelBurn(spec, route.length, loadFraction, 0.7) * (route.fuel ?? 1) };
+}
+
+/**
  * Starts a contract for a driver: the vehicle drives depot -> stops -> depot on route time (era speeds, the
- * vehicle's top speed), plus loading time. Lower skill means longer and a chance of damage, decided now from a
- * seeded roll so the outcome is fixed. Returns the job or null.
+ * vehicle's top speed, and its power to weight up the hills with the load), plus loading time. Lower skill means
+ * longer and a chance of damage, decided now from a seeded roll so the outcome is fixed. The hills' fuel multiplier
+ * is kept on the job for the fuel bill. Returns the job or null.
  */
 export function startAiJob(career, world, driver, contract, year) {
     if (aiCannotTake(career, driver, contract)) return null;
@@ -110,14 +120,17 @@ export function startAiJob(career, world, driver, contract, year) {
     const spec = vehicleById(v.model);
     const depot = world.depots.find(d => d.id === v.depot);
     const vmax = spec.topSpeedMph * 0.44704;
+    const trailer = spec.tags.includes('tractor-unit') ? trailerFor(career, contract, v.depot) : null;
+    const climb = climbModel(spec, contract.weight + (trailer ? trailerById(trailer.model).mass : 0));
     const pts = [depot.yard.marker, ...contract.stops.map(s => ({ x: s.x, y: s.y })), depot.yard.marker];
-    let length = 0, seconds = 0;
+    let length = 0, seconds = 0, fuelMetres = 0;
     const path = [];
     for (let i = 1; i < pts.length; i++) {
-        const r = findRoute(world.graph, pts[i - 1], pts[i], { year, vmax });
+        const r = findRoute(world.graph, pts[i - 1], pts[i], { year, vmax, climb });
         if (!r) return null;
         length += r.length;
         seconds += r.time;
+        fuelMetres += r.fuel * r.length;
         path.push(...r.pts);
     }
     seconds += contract.stops.reduce((t, s) => t + workSeconds(s.weight), 0);
@@ -127,11 +140,10 @@ export function startAiJob(career, world, driver, contract, year) {
     const damage = rng() < 0.35 * sloth ? Math.round(range(rng, 5, 30)) : 0;
     const start = career.calendar.minutes;
     const duration = Math.max(15, seconds * delay * GAME_MINUTES_PER_SECOND);
-    const trailer = spec.tags.includes('tractor-unit') ? trailerFor(career, contract, v.depot) : null;
     if (trailer) trailer.withDriver = driver.id;
     driver.job = {
         contract, title: contract.title, start, end: start + duration, length, damage, path,
-        trailer: trailer?.id ?? null, deadline: start + contract.window,
+        trailer: trailer?.id ?? null, deadline: start + contract.window, hillFuel: length > 0 ? fuelMetres / length : 1,
     };
     takeOffer(career, contract.id);
     return driver.job;
@@ -166,7 +178,7 @@ export function updateDrivers(career, ctx) {
             const fakeJob = { contract: job.contract, startedAt: job.start, deadline: job.deadline, cargoDamage: job.damage };
             const result = settle(fakeJob, job.end);
             const load = spec ? job.contract.weight / Math.max(1, carryFor(spec, job.trailer ? trailerById((career.trailers ?? []).find(t => t.id === job.trailer)?.model) : null).capacity || 1) : 0;
-            const fuel = spec ? fuelBurn(spec, job.length, Math.min(1, load) / 2, 0.7) * fuelPrice(spec) : 0;
+            const fuel = spec ? routeCost(spec, { length: job.length, time: 0, fuel: job.hillFuel ?? 1 }, Math.min(1, load) / 2).fuel * fuelPrice(spec) : 0;
             const net = Math.round((result.total - fuel) * 100) / 100;
             post(career.ledger, minutes, `${d.name}: ${job.title}`, result.total, 'income');
             if (fuel > 0) post(career.ledger, minutes, `${d.name}: fuel`, -Math.round(fuel * 100) / 100, 'fuel');
@@ -223,7 +235,7 @@ export function relocate(career, world, driver, toDepotId, year) {
     const from = world.depots.find(d => d.id === v.depot), to = world.depots.find(d => d.id === toDepotId);
     if (!from || !to || from === to) return null;
     const spec = vehicleById(v.model);
-    const r = findRoute(world.graph, from.yard.marker, to.yard.marker, { year, vmax: spec.topSpeedMph * 0.44704 });
+    const r = findRoute(world.graph, from.yard.marker, to.yard.marker, { year, vmax: spec.topSpeedMph * 0.44704, climb: climbModel(spec) });
     if (!r) return null;
     const start = career.calendar.minutes;
     driver.job = {

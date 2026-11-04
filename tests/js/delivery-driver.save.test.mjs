@@ -47,27 +47,51 @@ test('a save loads back to the same state', () => {
     assert.ok(Math.abs(t.player.x - (depot.x + 40)) < 1e-9);
 });
 
-test('a version 1 save migrates to the current version', () => {
+test('saves are version 3 and older saves are dropped: no save, with a notice, until overwritten', () => {
+    assert.equal(SAVE_VERSION, 3);
     const s = session();
-    const v2 = makeSave(s);
-    const v1 = structuredClone(v2);
-    v1.version = 1;
-    v1.career.money = v1.career.ledger.money;
-    delete v1.career.ledger;
-    delete v1.career.boards;
-    delete v1.clientTrailers;
-    v1.career.offersKey = 'depot-exeter:0';
-    v1.career.refresh = 0;
-    const m = migrate(v1);
-    assert.equal(m.version, SAVE_VERSION);
-    assert.equal(m.career.ledger.money, v2.career.ledger.money);
-    assert.deepEqual(m.career.boards, {});
-    assert.deepEqual(m.clientTrailers, []);
-    assert.equal(m.career.offersKey, undefined);
-    const t = createSession({ world });
-    t.input = stubInput();
-    t.loadSave(m); // loads without complaint
-    assert.equal(t.career.company, 'Tamar Valley Haulage');
+    const current = makeSave(s);
+    assert.equal(current.version, 3);
+    assert.equal(migrate(current).career.company, 'Tamar Valley Haulage');
+    const storage = memoryStorage();
+    const store = createSaveStore(storage);
+    for (const version of [1, 2]) {
+        const old = { ...structuredClone(current), version };
+        assert.throws(() => migrate(old), /earlier version/);
+        storage.setItem('games.dd.slot1', JSON.stringify(old));
+        assert.equal(store.read(1), null, `a v${version} save loads as no save`);
+        assert.deepEqual(store.list()[0], { slot: 1, empty: true, outdated: true });
+        assert.throws(() => store.importJson(2, JSON.stringify(old)), /earlier version/);
+    }
+    assert.throws(() => migrate({ version: 4, career: {} }), /Not a Delivery Driver save/);
+    assert.deepEqual(store.list()[1], { slot: 2, empty: true }, 'a plain empty slot has no notice');
+    store.write(1, current); // a new game in the slot replaces the old save
+    assert.equal(store.list()[0].company, 'Tamar Valley Haulage');
+    assert.equal(store.list()[0].outdated, undefined);
+});
+
+test('dropped trailers keep x, y, heading and their parking brake, and settle onto the ground on load', () => {
+    const s = session();
+    s.career.ledger.money = 1e5;
+    s.career.calendar.minutes += 60 * 24 * 366 * 41; // 1960
+    const depot = s.world.depots.find(d => d.home);
+    const { rec } = buyTrailer(s.career, 'box-12', depot.id);
+    s.emit('trailerBought', { rec, depot });
+    const t = s.trailerObjs.get(rec.id);
+    // drop it out on a hillside road with its brake off
+    const road = s.debugHook().steepRoad(0.05);
+    Object.assign(t, { x: road.x, y: road.y, heading: road.heading, parkBrake: false, z: 123 });
+    const save = JSON.parse(JSON.stringify(makeSave(s)));
+    const saved = save.career.trailers.find(x => x.id === rec.id);
+    assert.deepEqual(saved.pose, { x: road.x, y: road.y, heading: road.heading });
+    assert.equal(saved.parkBrake, false);
+    assert.equal(JSON.stringify(save).includes('"z":'), false, 'no heights in the save');
+    const u = createSession({ world });
+    u.input = stubInput();
+    u.loadSave(migrate(save));
+    const back = u.trailerObjs.get(rec.id);
+    assert.deepEqual({ x: back.x, y: back.y, heading: back.heading, parkBrake: back.parkBrake }, { x: road.x, y: road.y, heading: road.heading, parkBrake: false });
+    assert.ok(Math.abs(back.z - u.debugHook().groundZ(back.x, back.y)) < 0.3, `z ${back.z} vs ground ${u.debugHook().groundZ(back.x, back.y)}`);
 });
 
 test('a slot stays under 500 KB after a busy career: 50 contracts, 10 vehicles, 20 dropped trailers', () => {

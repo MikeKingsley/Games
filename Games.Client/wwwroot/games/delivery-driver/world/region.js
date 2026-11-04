@@ -1,6 +1,6 @@
 // Region data: a hand-written seed JSON (real towns, roads, coast, moors, rivers) projected into world metres.
 // Several regions can be registered by id, so other parts of the UK can be added later as more seed files.
-import { latLonToWorld } from '../config.js';
+import { latLonToWorld, WORLD_SCALE } from '../config.js';
 
 const TOWN_RADIUS = { city: 320, town: 220, small: 160, village: 85 };
 const regions = new Map();
@@ -23,16 +23,21 @@ export function buildRegion(json) {
     const sites = json.sites.map(s => ({ ...s, ...(s.lat !== undefined ? project(s.lat, s.lon) : {}) }));
     const flat = list => list.flatMap(([lat, lon]) => { const w = project(lat, lon); return [w.x, w.y]; });
     const coast = flat(json.coast);
-    const moors = json.moors.map(m => ({ id: m.id, name: m.name, pts: flat(m.points) }));
+    // terrain data (world/terrain.js): heights and radii are real metres in the seed, scaled like positions
+    const moors = json.moors.map(m => ({ id: m.id, name: m.name, pts: flat(m.points), height: m.height !== undefined ? m.height * WORLD_SCALE : undefined }));
     const rivers = json.rivers.map(r => ({
         id: r.id, name: r.name,
         pts: r.points.map(([lat, lon, w]) => ({ ...project(lat, lon), w })),
+    }));
+    const relief = (json.relief ?? []).map(r => ({
+        name: r.name, ...project(r.lat, r.lon), height: r.height * WORLD_SCALE, radius: r.radius * WORLD_SCALE, cliff: !!r.cliff,
     }));
     const nw = project(json.bounds.north, json.bounds.west), se = project(json.bounds.south, json.bounds.east);
     const region = {
         id: json.id, name: json.name, seed: json.seed, origin,
         bounds: { minX: nw.x, minY: nw.y, maxX: se.x, maxY: se.y },
-        towns, townById, sites, roads, coast, moors, rivers,
+        towns, townById, sites, roads, coast, moors, rivers, relief,
+        maxGrade: { ...json.maxGrade },
         project,
         waterCache: new Map(),
     };
@@ -76,14 +81,28 @@ export function segDistance(px, py, ax, ay, bx, by) {
 /** Width of river at the nearest point if (x, y) is inside a river, else 0. */
 export function riverAt(region, x, y) {
     for (const r of region.rivers) {
+        // (same sums as segDistance, without allocating: this runs for every miss of the water cache)
+        const box = (r.box ??= riverBox(r));
+        if (x < box.minX || x > box.maxX || y < box.minY || y > box.maxY) continue;
         for (let i = 0; i < r.pts.length - 1; i++) {
             const a = r.pts[i], b = r.pts[i + 1];
-            const s = segDistance(x, y, a.x, a.y, b.x, b.y);
-            const w = a.w + (b.w - a.w) * s.t;
-            if (s.d <= w / 2) return w;
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const len2 = dx * dx + dy * dy;
+            const t = len2 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / len2)) : 0;
+            const w = a.w + (b.w - a.w) * t;
+            if (Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t)) <= w / 2) return w;
         }
     }
     return 0;
+}
+
+/** A river's bounding box grown by half its widest width (no point outside it can be in the river). */
+function riverBox(r) {
+    const half = Math.max(...r.pts.map(p => p.w)) / 2 + 1;
+    return {
+        minX: Math.min(...r.pts.map(p => p.x)) - half, maxX: Math.max(...r.pts.map(p => p.x)) + half,
+        minY: Math.min(...r.pts.map(p => p.y)) - half, maxY: Math.max(...r.pts.map(p => p.y)) + half,
+    };
 }
 
 export const isLand = (region, x, y) => inPolygon(region.coast, x, y) || x > region.bounds.maxX - 1;

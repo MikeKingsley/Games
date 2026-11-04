@@ -12,13 +12,15 @@ function compile(gl, type, source, label) {
     return shader;
 }
 
-/** Builds a program from {vertex, fragment}; throws an Error with the GLSL log when compiling or linking fails. */
-export function createProgram(gl, { vertex, fragment }, name = 'program') {
+/** Builds a program from {vertex, fragment} (optionally pinning attribute names to slots); throws an Error with the GLSL log when compiling or linking fails. */
+export function createProgram(gl, { vertex, fragment }, name = 'program', locations = null) {
     const vs = compile(gl, gl.VERTEX_SHADER, vertex, `${name} vertex`);
     const fs = compile(gl, gl.FRAGMENT_SHADER, fragment, `${name} fragment`);
     const program = gl.createProgram();
     gl.attachShader(program, vs);
     gl.attachShader(program, fs);
+    // fixed attribute slots let one VAO serve several programs that share a vertex layout
+    if (locations) for (const [attr, slot] of Object.entries(locations)) gl.bindAttribLocation(program, slot, attr);
     gl.linkProgram(program);
     gl.deleteShader(vs);
     gl.deleteShader(fs);

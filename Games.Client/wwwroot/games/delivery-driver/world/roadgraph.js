@@ -83,12 +83,18 @@ function pick(edge) {
 /** Spatial index of edge segments on a coarse grid, for nearest-road and clearance queries. */
 export function createSegmentIndex(graph, cell = 48) {
     const cells = new Map();
+    const edgeCells = new Map(); // edge id -> the cell keys holding its segments
     const key = (i, j) => i * 100003 + j;
     const index = {
         cell,
         add(edge) {
             // remove stale entries for a split edge, then re-add every segment
-            for (const list of cells.values()) for (let k = list.length - 1; k >= 0; k--) if (list[k].edge === edge.id) list.splice(k, 1);
+            for (const k of edgeCells.get(edge.id) ?? []) {
+                const list = cells.get(k);
+                for (let n = list.length - 1; n >= 0; n--) if (list[n].edge === edge.id) list.splice(n, 1);
+            }
+            const mine = new Set();
+            edgeCells.set(edge.id, mine);
             const pts = edge.pts;
             for (let s = 0; s < pts.length / 2 - 1; s++) {
                 const ax = pts[2 * s], ay = pts[2 * s + 1], bx = pts[2 * s + 2], by = pts[2 * s + 3];
@@ -99,6 +105,7 @@ export function createSegmentIndex(graph, cell = 48) {
                     let list = cells.get(k);
                     if (!list) cells.set(k, (list = []));
                     list.push({ edge: edge.id, seg: s });
+                    mine.add(k);
                 }
             }
         },

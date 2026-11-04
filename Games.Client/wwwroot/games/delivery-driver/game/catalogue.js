@@ -96,7 +96,7 @@ export const VEHICLES = [
     }),
     vehicle({
         id: 'dart-eight', name: 'Dart Eight-Wheel Tipper', make: 'Dart Commercial Vehicles', year: 1964, class: 'rigid', tags: ['rigid', 'tipper'],
-        price: 4200, payload: 14000, mass: 9000, axles: 4, extraAxles: [2.9, 7.0],
+        price: 4200, payload: 14000, mass: 9000, axles: 4, extraAxles: [2.9, 5.8],
         length: 9.2, width: 2.5, height: 3.2, wheelbase: 5.6, rearOverhang: 1.5, maxSteer: 0.55, steerRate: 1.0,
         engine: { torque: 900, peakRpm: 1400, idleRpm: 550, maxRpm: 2300 }, gears: [8, 5, 3.1, 1.9, 1.3, 1], wheelRadius: 0.52,
         brakeForce: 52000, cda: 6.8, topSpeedMph: 40, fuelTank: 250, fuelUse: 40, airBrakes: true,
@@ -132,7 +132,7 @@ export const VEHICLES = [
     }),
     vehicle({
         id: 'moorland-m44', name: 'Moorland M44 6x2', make: 'Moorland Engineering', year: 2003, class: 'tractor', tags: ['tractor-unit'],
-        price: 14000, payload: 0, trailerMax: 35500, mass: 8500, axles: 3, extraAxles: [-1.3],
+        price: 14000, payload: 0, trailerMax: 35500, mass: 8500, axles: 3, extraAxles: [2.3],
         length: 6.3, width: 2.55, height: 3.8, wheelbase: 3.7, rearOverhang: 1.0, maxSteer: 0.6, steerRate: 1.5, fifthWheel: 0.1,
         engine: { torque: 2100, peakRpm: 1200, idleRpm: 550, maxRpm: 2000 }, gears: [12, 9, 7, 5.3, 4, 3, 2.3, 1.75, 1.35, 1.1, 1], wheelRadius: 0.52,
         brakeForce: 62000, cda: 5.4, topSpeedMph: 56, fuelTank: 500, fuelUse: 33, airBrakes: true, beeper: true,

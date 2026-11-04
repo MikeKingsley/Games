@@ -4,7 +4,7 @@
   "seed": 1919,
   "origin": { "lat": 50.5, "lon": -4.5 },
   "bounds": { "north": 51.3, "south": 49.92, "west": -5.78, "east": -2.86 },
-  "notes": "Positions are real lat/long (approximate). Road points are town ids or [lat, lon] waypoints. Years: opened/closed are inclusive/exclusive (a road closed in 1961 is gone from 1961). upgrades raise a section's class in a year.",
+  "notes": "Positions are real lat/long (approximate). Road points are town ids or [lat, lon] waypoints. Years: opened/closed are inclusive/exclusive (a road closed in 1961 is gone from 1961). upgrades raise a section's class in a year. Terrain: moor height (plateau lift) and relief height/radius are real metres, scaled by WORLD_SCALE like positions; relief adds a smooth bump (negative carves a dip), and cliff: true marks a cliff coast with that cliff height. maxGrade is the steepest rise per metre the road grading allows on each road class.",
   "towns": [
     { "id": "exeter", "name": "Exeter", "lat": 50.7184, "lon": -3.5339, "size": "city", "industries": ["market", "shops", "warehouse", "brewery", "fuel"], "depot": true, "streets": "organic" },
     { "id": "plymouth", "name": "Plymouth", "lat": 50.3755, "lon": -4.1427, "size": "city", "industries": ["docks", "shops", "warehouse", "fish", "naval"], "streets": "grid" },
@@ -177,9 +177,9 @@
     [50.615, -3.418], [50.62, -3.35], [50.68, -3.235], [50.69, -3.07], [50.72, -2.93], [50.72, -2.86]
   ],
   "moors": [
-    { "id": "dartmoor", "name": "Dartmoor", "points": [[50.72, -3.95], [50.7, -3.8], [50.62, -3.75], [50.5, -3.8], [50.44, -3.9], [50.45, -4.05], [50.55, -4.09], [50.66, -4.06]] },
-    { "id": "bodmin-moor", "name": "Bodmin Moor", "points": [[50.63, -4.64], [50.62, -4.5], [50.55, -4.46], [50.49, -4.52], [50.51, -4.64], [50.58, -4.69]] },
-    { "id": "exmoor", "name": "Exmoor", "points": [[51.2, -3.92], [51.19, -3.55], [51.11, -3.5], [51.08, -3.75], [51.13, -3.93]] }
+    { "id": "dartmoor", "name": "Dartmoor", "height": 230, "points": [[50.72, -3.95], [50.7, -3.8], [50.62, -3.75], [50.5, -3.8], [50.44, -3.9], [50.45, -4.05], [50.55, -4.09], [50.66, -4.06]] },
+    { "id": "bodmin-moor", "name": "Bodmin Moor", "height": 160, "points": [[50.63, -4.64], [50.62, -4.5], [50.55, -4.46], [50.49, -4.52], [50.51, -4.64], [50.58, -4.69]] },
+    { "id": "exmoor", "name": "Exmoor", "height": 250, "points": [[51.2, -3.92], [51.19, -3.55], [51.11, -3.5], [51.08, -3.75], [51.13, -3.93]] }
   ],
   "rivers": [
     { "id": "exe", "name": "River Exe", "points": [[51.05, -3.58, 6], [50.95, -3.5, 10], [50.903, -3.495, 12], [50.8, -3.515, 14], [50.725, -3.54, 18], [50.69, -3.475, 40], [50.66, -3.445, 90], [50.62, -3.43, 110], [50.605, -3.415, 120]] },
@@ -191,5 +191,25 @@
     { "id": "camel", "name": "River Camel", "points": [[50.6, -4.65, 6], [50.5, -4.74, 8], [50.517, -4.835, 16], [50.54, -4.91, 50], [50.57, -4.93, 80]] },
     { "id": "fowey", "name": "River Fowey", "points": [[50.55, -4.58, 5], [50.407, -4.67, 10], [50.36, -4.645, 25], [50.338, -4.628, 30], [50.327, -4.63, 40]] },
     { "id": "teign", "name": "River Teign", "points": [[50.65, -3.83, 5], [50.58, -3.65, 10], [50.535, -3.6, 25], [50.541, -3.53, 40], [50.54, -3.497, 45]] }
-  ]
+  ],
+  "relief": [
+    { "name": "Dartmoor high point", "lat": 50.665, "lon": -3.985, "height": 140, "radius": 14000 },
+    { "name": "Bodmin Moor (Brown Willy)", "lat": 50.589, "lon": -4.603, "height": 110, "radius": 9000 },
+    { "name": "Haldon Hill", "lat": 50.62, "lon": -3.585, "height": 190, "radius": 8000 },
+    { "name": "Telegraph Hill (A38 approach)", "lat": 50.665, "lon": -3.59, "height": 120, "radius": 4000 },
+    { "name": "Exeter's valley", "lat": 50.71, "lon": -3.52, "height": -70, "radius": 10000 },
+    { "name": "Kit Hill", "lat": 50.519, "lon": -4.287, "height": 200, "radius": 3500 },
+    { "name": "St Austell clay country (Hensbarrow)", "lat": 50.385, "lon": -4.82, "height": 160, "radius": 8000 },
+    { "name": "Dunkery Beacon", "lat": 51.163, "lon": -3.586, "height": 120, "radius": 8000 },
+    { "name": "Blackdown Hills", "lat": 50.88, "lon": -3.15, "height": 110, "radius": 10000 },
+    { "name": "West Penwith hills", "lat": 50.16, "lon": -5.6, "height": 90, "radius": 7000 },
+    { "name": "Carnmenellis", "lat": 50.18, "lon": -5.22, "height": 90, "radius": 6000 },
+    { "name": "Hartland coast", "lat": 50.99, "lon": -4.5, "height": 110, "radius": 14000, "cliff": true },
+    { "name": "Exmoor coast", "lat": 51.225, "lon": -3.75, "height": 160, "radius": 18000, "cliff": true },
+    { "name": "North Cornwall coast", "lat": 50.66, "lon": -4.75, "height": 90, "radius": 20000, "cliff": true },
+    { "name": "Land's End", "lat": 50.12, "lon": -5.68, "height": 60, "radius": 10000, "cliff": true },
+    { "name": "The Lizard", "lat": 49.98, "lon": -5.2, "height": 60, "radius": 9000, "cliff": true },
+    { "name": "Start Point and Bolt Head", "lat": 50.22, "lon": -3.72, "height": 90, "radius": 12000, "cliff": true }
+  ],
+  "maxGrade": { "M": 0.05, "dual": 0.06, "A": 0.08, "B": 0.1, "street": 0.08, "access": 0.08, "lane": 0.12, "ferry": 0.12 }
 }

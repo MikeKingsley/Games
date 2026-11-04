@@ -1,28 +1,52 @@
 // Living traffic: era vehicles that follow lanes on the road graph (on the left), keep their distance, give way
 // at junctions (minor to major roads; signals from the 1930s; roundabouts from the 1960s), and spawn/despawn around
-// the player. Pure logic: positions come from the graph, randomness from a seeded RNG.
+// the player. They slow up hills by their power to weight (carts, bicycles, early cars, buses and tractors crawl)
+// and hold back down steep ones, and ride the graded road profile (z, pitch) for drawing.
+// Pure logic: positions come from the graph, randomness from a seeded RNG.
 import { seededRng, pick, range } from '../engine/rng.js';
 import { cruiseSpeed, edgeClass, edgeOpen, laneOffset, lanePoint, junctionType, ROAD_CLASS, nearestEdge } from '../world/roadgraph.js';
+import { roadHeightAt, roadGradeAt } from '../world/terrain.js';
+import { hillSpeed } from '../sim/slope.js';
 
 const STOP_LINE = 7.5;    // metres before the node centre where give-way traffic waits
 const BOX = 6;            // a vehicle within this of the node centre is "in the junction" (less than STOP_LINE)
 const LOOK = 45;          // metres ahead an agent watches for vehicles in its lane
 const SIGNAL_PHASE = 18;  // seconds per signal phase
 const CLAIM_AT = 16;      // metres from the stop line where a vehicle asks for the junction
+const SEE = 330;          // metres within which the player can see ahead (no spawning in the forward cone)
 
-/** Era traffic. len/width in metres, vmax m/s; years the type is on the road; weight in the mix. */
+/**
+ * Era traffic. len/width in metres, vmax m/s; years the type is on the road; weight in the mix; pw: power to
+ * weight at the wheels (W/kg), which sets how fast it can climb (a horse and cart or a cyclist crawls up 6%, a
+ * 1910s car or a bus slows, later cars barely notice).
+ */
 export const TRAFFIC_TYPES = {
-    cart: { name: 'Horse and cart', len: 5.2, width: 1.7, height: 2, vmax: 3.6, from: 1900, to: 1952, mix: [6, 3, 1, 0, 0] },
-    bicycle: { name: 'Bicycle', len: 1.8, width: 0.7, height: 1.7, vmax: 4.5, from: 1900, to: 2100, mix: [4, 3, 2, 1, 1] },
-    tin: { name: 'Motor car', len: 3.8, width: 1.6, height: 1.9, vmax: 11, from: 1908, to: 1938, mix: [4, 2, 0, 0, 0] },
-    saloon30: { name: 'Saloon', len: 4.1, width: 1.65, height: 1.6, vmax: 17, from: 1928, to: 1965, mix: [0, 5, 3, 0, 0] },
-    bus: { name: 'Motor bus', len: 9, width: 2.4, height: 3, vmax: 13, from: 1922, to: 2100, mix: [1, 1, 1, 1, 1] },
-    tractor: { name: 'Tractor', len: 3.4, width: 1.8, height: 2.3, vmax: 6, from: 1925, to: 2100, mix: [1, 1, 2, 1, 1] },
-    car50: { name: 'Family car', len: 4.2, width: 1.65, height: 1.5, vmax: 24, from: 1948, to: 1980, mix: [0, 0, 6, 3, 0] },
-    car70: { name: 'Hatchback', len: 3.9, width: 1.6, height: 1.4, vmax: 30, from: 1968, to: 2005, mix: [0, 0, 0, 6, 3] },
-    car2k: { name: 'Modern car', len: 4.4, width: 1.8, height: 1.5, vmax: 33, from: 1995, to: 2100, mix: [0, 0, 0, 0, 7] },
-    vanTraffic: { name: 'Van', len: 5.2, width: 2, height: 2.4, vmax: 28, from: 1955, to: 2100, mix: [0, 0, 1, 2, 2] },
+    cart: { name: 'Horse and cart', len: 5.2, width: 1.7, height: 2, vmax: 3.6, pw: 1.3, from: 1900, to: 1952, mix: [6, 3, 1, 0, 0] },
+    bicycle: { name: 'Bicycle', len: 1.8, width: 0.7, height: 1.7, vmax: 4.5, pw: 1.8, from: 1900, to: 2100, mix: [4, 3, 2, 1, 1] },
+    tin: { name: 'Motor car', len: 3.8, width: 1.6, height: 1.9, vmax: 11, pw: 7, from: 1908, to: 1938, mix: [4, 2, 0, 0, 0] },
+    saloon30: { name: 'Saloon', len: 4.1, width: 1.65, height: 1.6, vmax: 17, pw: 12, from: 1928, to: 1965, mix: [0, 5, 3, 0, 0] },
+    bus: { name: 'Motor bus', len: 9, width: 2.4, height: 3, vmax: 13, pw: 5, from: 1922, to: 2100, mix: [1, 1, 1, 1, 1] },
+    tractor: { name: 'Tractor', len: 3.4, width: 1.8, height: 2.3, vmax: 6, pw: 3, from: 1925, to: 2100, mix: [1, 1, 2, 1, 1] },
+    car50: { name: 'Family car', len: 4.2, width: 1.65, height: 1.5, vmax: 24, pw: 18, from: 1948, to: 1980, mix: [0, 0, 6, 3, 0] },
+    car70: { name: 'Hatchback', len: 3.9, width: 1.6, height: 1.4, vmax: 30, pw: 30, from: 1968, to: 2005, mix: [0, 0, 0, 6, 3] },
+    car2k: { name: 'Modern car', len: 4.4, width: 1.8, height: 1.5, vmax: 33, pw: 55, from: 1995, to: 2100, mix: [0, 0, 0, 0, 7] },
+    vanTraffic: { name: 'Van', len: 5.2, width: 2, height: 2.4, vmax: 28, pw: 20, from: 1955, to: 2100, mix: [0, 0, 1, 2, 2] },
 };
+/** Each type's climb model for sim/slope.js hillSpeed (per kg). */
+const CLIMB = Object.fromEntries(Object.entries(TRAFFIC_TYPES).map(([id, t]) => [id, { power: t.pw, mass: 1, crr: 0.015 }]));
+
+/**
+ * An agent's height on the road (the graded profile at its distance along the edge) and the grade it is driving
+ * (+ uphill in its direction): sets a.z (a.prevZ keeps the last) and a.pitch, returns the grade.
+ */
+function rideProfile(a, edge) {
+    const d = a.forward ? a.along : edge.len - a.along;
+    const grade = roadGradeAt(edge, d) * (a.forward ? 1 : -1);
+    a.prevZ = a.z ?? 0;
+    a.z = edge.z ? roadHeightAt(edge, d) : 0;
+    a.pitch = Math.atan(grade);
+    return grade;
+}
 const ERA = year => (year < 1930 ? 0 : year < 1950 ? 1 : year < 1970 ? 2 : year < 1995 ? 3 : 4);
 /** Fewer vehicles on the roads in the early years. */
 export const densityFor = year => [0.35, 0.55, 0.75, 0.9, 1][ERA(year)];
@@ -33,7 +57,8 @@ const drivable = (e, year) => edgeOpen(e, year) && e.cls !== 'lane' && e.cls !==
 
 export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
     const rng = seededRng(seed);
-    const traffic = { agents: [], cap, nextId: 1, time: 0, rng, claims: new Map() };
+    const traffic = { agents: [], cap, nextId: 1, time: 0, rng, claims: new Map(), densityScale: 1 };
+    const lp = { x: 0, y: 0, angle: 0 }, ahead = { x: 0, y: 0, angle: 0 }, oldP = { x: 0, y: 0, angle: 0 };
 
     function choose(year) {
         const era = ERA(year);
@@ -44,31 +69,42 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
         return list[0][0];
     }
 
-    /** Places a new agent on a road near (x, y). Returns it, or null if no room. */
-    traffic.spawnNear = (x, y, year, minD = 90, maxD = 240) => {
-        for (let attempt = 0; attempt < 6; attempt++) {
+    /**
+     * Places a new agent on a road 150-280 m from (x, y), never where the player could see it appear: not within
+     * `SEE` metres, and not in the cone ahead of `heading` (the camera looks that way). Returns it, or null if no room.
+     */
+    traffic.spawnNear = (x, y, year, minD = 150, maxD = 280, heading = null) => {
+        for (let attempt = 0; attempt < 8; attempt++) {
             const a = rng() * Math.PI * 2, d = range(rng, minD, maxD);
             const near = nearestEdge(graph, x + Math.cos(a) * d, y + Math.sin(a) * d, 60, year, e => drivable(e, year));
             if (!near) continue;
+            const dx = near.x - x, dy = near.y - y, dist = Math.hypot(dx, dy);
+            if (dist < minD * 0.9) continue; // the road bent back towards the player
+            if (heading !== null && dist < SEE && dx * Math.cos(heading) + dy * Math.sin(heading) > dist * 0.35) continue; // ahead of the player
             const forward = rng() < 0.5;
             const along = Math.max(0, Math.min(near.edge.len, forward ? near.along : near.edge.len - near.along));
-            const agent = traffic.spawnOn(near.edge, forward, along, year);
+            const agent = traffic.spawnOn(near.edge, forward, along, year, undefined, true);
             if (agent) return agent;
         }
         return null;
     };
 
-    /** Places an agent on an edge (travelling forward = from a to b), unless the spot is taken. */
-    traffic.spawnOn = (edge, forward, along, year, type = choose(year)) => {
+    /** Places an agent on an edge (travelling forward = from a to b), unless the spot is taken; `moving` starts it at cruising pace. */
+    traffic.spawnOn = (edge, forward, along, year, type = choose(year), moving = false) => {
         const t = TRAFFIC_TYPES[type];
         const p = lanePoint(edge, along, forward, laneOffset(edge, year), {});
         for (const o of traffic.agents) if (Math.hypot(o.x - p.x, o.y - p.y) < 14) return null;
         const agent = {
             id: traffic.nextId++, type, spec: t, edge: edge.id, forward, along,
-            speed: 0, factor: range(rng, 0.82, 1.05), colour: pick(rng, PALETTE[ERA(year)]),
+            speed: 0, factor: range(rng, 0.82, 1.05), colour: pick(rng, PALETTE[ERA(year)]), era: ERA(year),
             x: p.x, y: p.y, heading: p.angle, prevX: p.x, prevY: p.y, prevHeading: p.angle,
-            next: null, stunned: 0, waiting: 0,
+            next: null, stunned: 0, waiting: 0, z: 0, prevZ: 0, pitch: 0, grade: 0,
         };
+        agent.grade = rideProfile(agent, edge);
+        agent.prevZ = agent.z;
+        if (moving) agent.speed = Math.min(t.vmax, cruiseSpeed(edgeClass(edge, year), year)) * agent.factor * 0.85; // far from the player: already up to speed, not a stationary obstacle
+        agent.lat = laneOffset(edge, year);
+        agent.ox = 0; agent.oy = 0;
         traffic.agents.push(agent);
         return agent;
     };
@@ -174,6 +210,7 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
             const cls = edgeClass(e, ctx.year);
             let target = Math.min(a.spec.vmax, cruiseSpeed(cls, ctx.year)) * a.factor;
             if (ctx.grip !== undefined) target *= 0.75 + 0.25 * ctx.grip; // drive slower in the wet
+            target = hillSpeed(CLIMB[a.type], a.grade ?? 0, target); // crawl up hills, hold back down steep ones
             a.next ??= pickNext(a, ctx.year);
             const toEnd = e.len - a.along;
             // slow for sharp turns and dead ends
@@ -192,36 +229,79 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
             if (yielding) a.speed = Math.min(a.speed, Math.max(0, (toEnd - STOP_LINE) / dt));
             a.along += a.speed * dt;
             while (a.along >= graph.edges[a.edge].len) {
-                a.along -= graph.edges[a.edge].len;
+                const oe = graph.edges[a.edge];
+                lanePoint(oe, oe.len, a.forward, a.lat, oldP);
+                a.along -= oe.len;
                 a.edge = a.next.edge;
                 a.forward = a.next.forward;
                 a.next = null;
                 a.next = pickNext(a, ctx.year);
+                // keep the vehicle where it was: the jump onto the next edge's lane is blended away below
+                lanePoint(graph.edges[a.edge], a.along, a.forward, a.lat, lp);
+                a.ox += oldP.x - lp.x; a.oy += oldP.y - lp.y;
             }
             const ed = graph.edges[a.edge];
-            lanePoint(ed, a.along, a.forward, laneOffset(ed, ctx.year), a);
-            a.heading = a.angle;
+            // ease sideways between lane offsets (a road changing class), follow the lane, and let any junction jump decay
+            const wantLat = laneOffset(ed, ctx.year);
+            a.lat += Math.max(-dt * 1.2, Math.min(dt * 1.2, wantLat - a.lat));
+            lanePoint(ed, a.along, a.forward, a.lat, lp);
+            const decay = Math.exp(-dt / 0.35);
+            a.ox *= decay; a.oy *= decay;
+            a.x = lp.x + a.ox; a.y = lp.y + a.oy;
+            // steer towards a point just ahead on the lane, at a limited yaw rate (so corners are swept, not snapped)
+            lanePoint(ed, Math.min(ed.len, a.along + 2.5 + a.speed * 0.35), a.forward, a.lat, ahead);
+            const far = Math.hypot(ahead.x - lp.x, ahead.y - lp.y) > 0.6;
+            const aim = far ? Math.atan2(ahead.y + a.oy - a.y, ahead.x + a.ox - a.x) : lp.angle;
+            let dh = Math.atan2(Math.sin(aim - a.heading), Math.cos(aim - a.heading));
+            if (Math.abs(dh) > 2.6) a.heading = aim; // a U-turn at a dead end
+            else { const rate = Math.max(2.5, a.speed / 1.8) * dt; a.heading += Math.max(-rate, Math.min(rate, dh)); }
+            a.grade = rideProfile(a, ed);
         }
         releaseClaims();
         // despawn far away, then top up toward the target count
         if (ctx.player) {
-            const far = ctx.despawnAt ?? 320;
+            const far = ctx.despawnAt ?? 340;
             traffic.agents = traffic.agents.filter(a => Math.hypot(a.x - ctx.player.x, a.y - ctx.player.y) < far);
-            const target = Math.round(traffic.cap * densityFor(ctx.year));
-            if (traffic.agents.length < target && rng() < dt * 3) traffic.spawnNear(ctx.player.x, ctx.player.y, ctx.year);
+            const target = Math.round(traffic.cap * densityFor(ctx.year) * traffic.densityScale);
+            if (traffic.agents.length > target + 2) { // fewer wanted than there are: drop the farthest
+                let far = 0, fd = -1;
+                traffic.agents.forEach((a, i) => { const d = Math.hypot(a.x - ctx.player.x, a.y - ctx.player.y); if (d > fd) { fd = d; far = i; } });
+                traffic.agents.splice(far, 1);
+            }
+            if (traffic.agents.length < target && rng() < dt * 3) traffic.spawnNear(ctx.player.x, ctx.player.y, ctx.year, 150, 280, ctx.player.heading ?? null);
         }
     };
 
     return traffic;
 }
 
-/** Rear-axle pose and a drawing spec for an agent (for render/draw-vehicles.js). */
+/** Wheels per traffic type: [rear axle, front axle] as {r, w, kind}, plus how the wheels sit. */
+const TRAFFIC_WHEELS = {
+    cart: { axles: [{ r: 0.62, w: 0.07, kind: 'spoke' }, { r: 0.62, w: 0.07, kind: 'spoke' }], skipAxles: [1] },
+    bicycle: { axles: [{ r: 0.33, w: 0.05, kind: 'cycle' }, { r: 0.33, w: 0.05, kind: 'cycle' }], centreWheels: true },
+    tin: { axles: [{ r: 0.36, w: 0.12, kind: 'spoke' }, { r: 0.36, w: 0.12, kind: 'spoke' }] },
+    saloon30: { axles: [{ r: 0.34, w: 0.16, kind: 'disc' }, { r: 0.34, w: 0.16, kind: 'disc' }] },
+    car50: { axles: [{ r: 0.31, w: 0.16, kind: 'disc' }, { r: 0.31, w: 0.16, kind: 'disc' }] },
+    car70: { axles: [{ r: 0.29, w: 0.17, kind: 'disc' }, { r: 0.29, w: 0.17, kind: 'disc' }] },
+    car2k: { axles: [{ r: 0.33, w: 0.2, kind: 'alloy' }, { r: 0.33, w: 0.2, kind: 'alloy' }] },
+    vanTraffic: { axles: [{ r: 0.34, w: 0.2, kind: 'disc' }, { r: 0.34, w: 0.2, kind: 'disc' }] },
+    bus: { axles: [{ r: 0.5, w: 0.3, kind: 'truck' }, { r: 0.5, w: 0.3, kind: 'truck' }] },
+    tractor: { axles: [{ r: 0.72, w: 0.4, kind: 'tread' }, { r: 0.38, w: 0.2, kind: 'tread' }] },
+};
+
+/** Rear-axle pose and a drawing spec for an agent (for render/draw-vehicles.js and the GL vehicle models). */
 export function agentDrawSpec(a) {
     const t = a.spec;
     if (a._draw) return a._draw;
     const rearOverhang = t.len * 0.2;
     const parts = drawParts(a.type, t, a.colour);
-    a._draw = { length: t.len, width: t.width, height: t.height, rearOverhang, wheelbase: t.len * 0.6, draw: { wheel: { r: a.type === 'bicycle' ? 0.33 : 0.36, w: a.type === 'bicycle' ? 0.06 : 0.2 }, parts } };
+    const wheels = TRAFFIC_WHEELS[a.type] ?? {};
+    const r = wheels.axles?.[0]?.r ?? (a.type === 'bicycle' ? 0.33 : 0.36), w = wheels.axles?.[0]?.w ?? 0.2;
+    a._draw = {
+        id: `traffic-${a.type}`, model: a.type, paint: a.colour, era: a.era ?? 2,
+        length: t.len, width: t.width, height: t.height, rearOverhang, wheelbase: t.len * 0.6,
+        draw: { wheel: { r, w }, axles: wheels.axles, skipAxles: wheels.skipAxles, centreWheels: wheels.centreWheels, parts },
+    };
     return a._draw;
 }
 

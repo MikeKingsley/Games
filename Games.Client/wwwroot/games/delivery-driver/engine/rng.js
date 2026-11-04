@@ -42,3 +42,24 @@ export function valueNoise(seed, x, y) {
     const u = s(xf), v = s(yf);
     return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
+
+/** 32-bit integer hash of a seed and a lattice point, in [0, 1]. */
+function latticeHash(seed, i, j) {
+    let h = (seed ^ Math.imul(i, 0x27d4eb2d) ^ Math.imul(j, 0x165667b1)) >>> 0;
+    h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+    h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+
+/**
+ * The same smooth value noise as valueNoise (in [0, 1]) but on an integer lattice hash, ~10x faster: for the
+ * terrain heightfield, which is sampled ~10^5 times when a world is built. A different hash, so different values.
+ */
+export function smoothNoise(seed, x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = latticeHash(seed, xi, yi), b = latticeHash(seed, xi + 1, yi);
+    const c = latticeHash(seed, xi, yi + 1), d = latticeHash(seed, xi + 1, yi + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}

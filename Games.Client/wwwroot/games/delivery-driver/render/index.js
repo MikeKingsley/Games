@@ -27,7 +27,7 @@ function createCanvas2d(canvas, view) {
 }
 
 /** Returns a renderer of the requested kind, or null when WebGL was requested but could not start. */
-export function createRenderer({ canvas, view, kind, callbacks }) {
-    if (kind === 'webgl') return createGlRenderer({ canvas, view, callbacks });
+export function createRenderer({ canvas, view, kind, callbacks, quality }) {
+    if (kind === 'webgl') return createGlRenderer({ canvas, view, callbacks, quality });
     return createCanvas2d(canvas, view);
 }

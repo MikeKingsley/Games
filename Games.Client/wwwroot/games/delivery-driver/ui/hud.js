@@ -7,6 +7,27 @@ import { worldToMiles, MPH } from '../config.js';
 import { createMinimap } from '../render/minimap.js';
 import { WEATHER_LABEL } from '../game/environment.js';
 import { STEPS } from '../game/tutorial.js';
+import { brakeTemperature, fadeFactor } from '../sim/slope.js';
+
+/** Shown from this grade (along the direction of travel); highlighted from STEEP_GRADE. */
+const SHOW_GRADE = 0.02, STEEP_GRADE = 0.06;
+
+/**
+ * The gradient readout for the speedo: "Hill 8% up" / "Hill 8% down" along the direction of travel (`grade` is
+ * along the heading, so it flips when reversing), or '' on gentle ground.
+ */
+export function gradeLabel(grade, speed = 0) {
+    const g = speed < -0.1 ? -grade : grade;
+    if (Math.abs(g) < SHOW_GRADE) return '';
+    return `Hill ${Math.round(Math.abs(g) * 100)}% ${g > 0 ? 'up' : 'down'}`;
+}
+
+/** The brake warning: {text, level: 'hot' | 'fade'} once the brakes are hot (heat 0.7, ~230 C), or null. */
+export function brakeWarning(heat) {
+    if (heat < 0.7) return null;
+    if (heat < 1) return { text: `Brakes hot ${brakeTemperature(heat)}°C`, level: 'hot' };
+    return { text: `Brakes fading ${Math.round(fadeFactor(heat) * 100)}%`, level: 'fade' };
+}
 
 export function createHud(root, { onMinimap } = {}) {
     const top = el('div', 'dd-hud-top');
@@ -16,10 +37,13 @@ export function createHud(root, { onMinimap } = {}) {
     top.append(clock, weather, money);
     const job = el('div', 'dd-job');
     const gauges = el('div', 'dd-gauges');
-    gauges.innerHTML = '<div class="dd-speedo"><div class="dd-mph">0</div><div class="dd-unit">mph</div><div class="dd-gear">N</div></div><div class="dd-bars"></div>';
+    gauges.innerHTML = '<div class="dd-speedo"><div class="dd-mph">0</div><div class="dd-unit">mph</div><div class="dd-gear">N</div>'
+        + '<div class="dd-grade"></div><div class="dd-brakes"></div></div><div class="dd-bars"></div>';
     const mph = gauges.querySelector('.dd-mph');
     const unit = gauges.querySelector('.dd-unit');
     const gear = gauges.querySelector('.dd-gear');
+    const grade = gauges.querySelector('.dd-grade');
+    const brakes = gauges.querySelector('.dd-brakes');
     const bars = gauges.querySelector('.dd-bars');
     const indL = el('div', 'dd-ind left'); indL.textContent = '◀';
     const indR = el('div', 'dd-ind right'); indR.textContent = '▶';
@@ -61,6 +85,13 @@ export function createHud(root, { onMinimap } = {}) {
             set(unit, 'unit', metric ? 'km/h' : 'mph');
             const gb = p.gearbox;
             set(gear, 'gear', gb.reverse ? 'R' : `${gb.gear}${gb.manual ? ' M' : ''}`);
+            // the hill under the wheels and hot brakes
+            const g = session.slope?.grade ?? 0;
+            set(grade, 'grade', gradeLabel(g, p.speed));
+            grade.classList.toggle('steep', Math.abs(g) >= STEEP_GRADE);
+            const warn = brakeWarning(p.brakeHeat ?? 0);
+            set(brakes, 'brakes', warn?.text ?? '');
+            brakes.classList.toggle('fade', warn?.level === 'fade');
             const t = career.calendar.minutes;
             set(clock, 'clock', `<b>${formatTime(t)}</b> ${formatDate(t)}`, true);
             set(weather, 'weather', `${session.night ? '🌙 ' : ''}${WEATHER_LABEL[session.weather?.kind ?? 'clear']}`);

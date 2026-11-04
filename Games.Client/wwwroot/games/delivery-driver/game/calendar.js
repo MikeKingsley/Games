@@ -5,7 +5,7 @@ import { TIME_SCALE, START_YEAR } from '../config.js';
 const EPOCH = Date.UTC(START_YEAR, 0, 1);
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-export const START_MINUTES = 6 * 60; // the career starts at 06:00
+export const START_MINUTES = 9 * 60 + 30; // the career starts at 09:30
 /** Game minutes per real second (0.25 with TIME_SCALE 15). */
 export const GAME_MINUTES_PER_SECOND = TIME_SCALE / 60;
 
@@ -42,6 +42,8 @@ export function formatDuration(mins) {
 
 /** Day number since the epoch (for daily refreshes and seeded weather). */
 export const dayIndex = minutes => Math.floor(minutes / 1440);
+/** Game hour number since the epoch (contract boards regenerate each hour). */
+export const hourIndex = minutes => Math.floor(minutes / 60);
 /** Week number, weeks starting Monday 00:00 (1 Jan 1919 was a Wednesday). */
 export const weekIndex = minutes => Math.floor((minutes + 2 * 1440) / (7 * 1440));
 

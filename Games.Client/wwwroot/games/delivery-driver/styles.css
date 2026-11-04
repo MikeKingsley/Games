@@ -37,6 +37,13 @@
 .dd-speedo .dd-mph { font-size: 2em; font-weight: 700; line-height: 1; }
 .dd-speedo .dd-unit { font-size: .75em; opacity: .75; }
 .dd-gear { font-size: 1.1em; color: var(--dd-accent); }
+.dd-speedo .dd-grade, .dd-speedo .dd-brakes { font-size: .72em; white-space: nowrap; margin-top: 2px; }
+.dd-speedo .dd-grade:empty, .dd-speedo .dd-brakes:empty { display: none; }
+.dd-speedo .dd-grade { opacity: .85; }
+.dd-speedo .dd-grade.steep { color: var(--dd-accent); opacity: 1; }
+.dd-speedo .dd-brakes { font-weight: 700; color: var(--dd-accent); }
+.dd-speedo .dd-brakes.fade { color: var(--dd-bad); animation: dd-blink .8s steps(2, jump-none) infinite; }
+@keyframes dd-blink { 50% { opacity: .35; } }
 .dd-bars { background: var(--dd-panel); border-radius: 12px; padding: 6px 10px; font-size: .8em; min-width: 110px; }
 .dd-bar { height: 6px; background: #fff2; border-radius: 3px; margin: 2px 0 5px; overflow: hidden; }
 .dd-bar > i { display: block; height: 100%; background: var(--dd-good); }
@@ -53,7 +60,9 @@
     position: absolute; inset: auto 0 40% 0; margin: auto; width: max-content; background: var(--dd-panel);
     padding: 8px 14px; border-radius: 12px; display: none; pointer-events: none;
 }
-.dd-root.portrait .dd-rotate { display: block; }
+/* Shown for a few seconds each time the screen turns portrait, then fades out (display toggling restarts it). */
+.dd-root.portrait .dd-rotate { display: block; animation: dd-rotate-fade 5s ease-in forwards; }
+@keyframes dd-rotate-fade { 0%, 60% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
 
 /* ---- Touch controls (pointer: coarse) ---------------------------------------------------------------- */
 .dd-touch { position: absolute; inset: 0; pointer-events: none; display: none; }
@@ -159,3 +168,17 @@
     .dd-job { top: calc(max(8px, env(safe-area-inset-top)) + 70px); max-width: min(300px, 64vw); font-size: .88em; }
     .dd-root.touch .dd-minimap { left: max(8px, env(safe-area-inset-left)); right: auto; top: calc(max(8px, env(safe-area-inset-top)) + 84px); width: 120px; height: 120px; }
 }
+
+/* ---- developer tools (Development builds) ---- */
+.dd-dbg-btn { position: absolute; left: 8px; bottom: 96px; z-index: 30; width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--dd-panel); font-size: 20px; pointer-events: auto; opacity: .7; }
+.dd-dbg-panel { position: absolute; left: 8px; bottom: 140px; z-index: 31; width: min(380px, 92vw); max-height: 70%; overflow-y: auto; background: rgba(14, 17, 20, .94); color: #eee; border-radius: 12px; padding: 8px 12px 12px; font-size: 13px; pointer-events: auto; }
+.dd-dbg-panel[hidden] { display: none; }
+.dd-dbg-head { display: flex; align-items: center; gap: 8px; position: sticky; top: 0; background: inherit; padding: 4px 0; }
+.dd-dbg-info { flex: 1; opacity: .7; font-size: 11px; }
+.dd-dbg-panel h4 { margin: 10px 0 4px; color: var(--dd-accent); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.dd-dbg-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 4px; }
+.dd-dbg-panel button, .dd-dbg-panel select, .dd-dbg-panel input[type=number] { background: #2a3037; color: #eee; border: 1px solid #444c55; border-radius: 6px; padding: 5px 8px; font: inherit; min-height: 30px; }
+.dd-dbg-panel button:active { background: var(--dd-accent); color: #000; }
+.dd-dbg-panel select { max-width: 100%; flex: 1; min-width: 0; }
+.dd-dbg-panel input[type=range] { flex: 1; min-width: 120px; }
+.dd-dbg-year { width: 80px; }

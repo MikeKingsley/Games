@@ -6,6 +6,7 @@ import { waterAt, moorAt, crossesWater, nearestTown } from './region.js';
 import { pointAt } from './geom.js';
 import { ROAD_CLASS, clearOfRoads } from './roadgraph.js';
 import { obb, sat, createSpatialHash } from '../sim/collision.js';
+import { torSite } from './terrain.js';
 import { CHUNK_SIZE } from '../config.js';
 
 const SPACING = { city: 62, town: 56, small: 50, village: 42 };
@@ -363,10 +364,11 @@ export function generateChunk(world, i, j) {
         }
     }
 
-    // granite tors on the moor
+    // granite tors on the moor, at the chunk's tor site (the heightfield raises a knoll under it)
     const rocks = [];
-    if (moor && chance(rng, 0.35)) {
-        const tx = x0 + range(rng, 30, S - 30), ty = y0 + range(rng, 30, S - 30);
+    const tor = torSite(region, i, j);
+    if (tor) {
+        const tx = tor.x, ty = tor.y;
         for (let k = 0; k < intRange(rng, 3, 6); k++) {
             const r = { x: tx + range(rng, -10, 10), y: ty + range(rng, -10, 10), len: range(rng, 4, 9), dep: range(rng, 3, 7), h: range(rng, 2, 6), angle: rng() * Math.PI };
             r.box = obb(r.x, r.y, r.len, r.dep, r.angle);

@@ -161,7 +161,7 @@ export function createRenderer(ctx, view) {
                 else if (it.kind === 'pv') drawVehicle(ctx, p, it.ref.spec, it.ref.pose, { livery: session.livery, light });
                 else if (it.kind === 'tr') {
                     const t = it.ref;
-                    drawTrailer(ctx, p, t.spec, t.coupled ? lerpPose(t, alpha, trailerPoseTmp) : t, { livery: t.client ? t.livery : session.livery, light, legsDown: !t.coupled, cargo: t.cargoMass > 0, brake: t.coupled && session.controls?.brake > 0 });
+                    drawTrailer(ctx, p, t.spec, t.coupled || t.speed ? lerpPose(t, alpha, trailerPoseTmp) : t, { livery: t.client ? t.livery : session.livery, light, legsDown: !t.coupled, cargo: t.cargoMass > 0, brake: t.coupled && session.controls?.brake > 0 });
                 }
                 else drawVehicle(ctx, p, player.spec, pp, { livery: session.livery, brake: session.controls?.brake > 0, light, lamps: light < 0.6, coupled: !!player.trailer });
             }

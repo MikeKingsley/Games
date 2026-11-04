@@ -68,7 +68,7 @@ Design contract for this game (keep consistent across phases):
 - **Coordinates.** World units are metres in world space, +x east, +y south (canvas), heading in radians, 0 = east.
 - **Debug hook.** When `options.debug` is true, `window.__dd` exposes `{ state, teleport(x,y,heading), setControls({throttle,brake,steer}), completeDrop(), advanceClock(hours) }` for Playwright. It is never exposed in production.
 
-Target file layout (`Games.Client/wwwroot/games/delivery-driver/`):
+Target file layout (`Games.Client/wwwroot/games/delivery-driver/`; plan 0007 later added `render/index.js`, `render/gl/*`, `world/terrain.js` and `sim/slope.js` for the WebGL renderer and terrain, see `_docs/plans/0007-delivery-driver-webgl.md`):
 ```
 index.js            mount/unmount, wiring, debug hook
 config.js           WORLD_SCALE, TIME_SCALE, quality presets, tuning constants

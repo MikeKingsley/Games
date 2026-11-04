@@ -4,6 +4,9 @@
 import { WORLD_SCALE } from '../config.js';
 import { vehicleById, VEHICLES } from './catalogue.js';
 import { seededRng, hashSeed, pick, range } from '../engine/rng.js';
+import { gradeFuelFactor } from '../sim/slope.js';
+
+export { gradeFuelFactor };
 
 const MAX_ENTRIES = 400;
 export const FUEL_PRICE = 0.08;       // £ per litre
@@ -40,11 +43,12 @@ export const formatMoney = n => `${n < 0 ? '-' : ''}£${Math.abs(Math.round(n)).
 
 /**
  * Fuel (litres, or kWh for electric) used to drive `worldMetres`: the vehicle's rate per 100 real km, up to 70%
- * more when fully loaded, and a little less when coasting.
+ * more when fully loaded, a little less when coasting, and more climbing / less descending (gradeFuelFactor: +12%
+ * per 1% up, -8% per 1% down, floor 0.3; `grade` is along the direction of travel).
  */
-export function fuelBurn(spec, worldMetres, loadFraction = 0, throttle = 1) {
+export function fuelBurn(spec, worldMetres, loadFraction = 0, throttle = 1, grade = 0) {
     const realKm = worldMetres / WORLD_SCALE / 1000;
-    return (spec.fuelUse / 100) * realKm * (1 + 0.7 * Math.min(1, Math.max(0, loadFraction))) * (0.45 + 0.55 * throttle);
+    return (spec.fuelUse / 100) * realKm * (1 + 0.7 * Math.min(1, Math.max(0, loadFraction))) * (0.45 + 0.55 * throttle) * gradeFuelFactor(grade);
 }
 
 export const fuelPrice = spec => (spec.electric ? POWER_PRICE : FUEL_PRICE);
@@ -53,6 +57,26 @@ export const refuelCost = (spec, fuel) => Math.max(0, spec.fuelTank - fuel) * fu
 
 /** Wear in percent per real mile driven. */
 export const WEAR_PER_MILE = 0.02;
+
+/**
+ * Hills: a full-throttle climb steeper than CLIMB_GRADE strains the engine once it has gone on for CLIMB_AFTER
+ * seconds: CLIMB_WEAR percent a second at 8% (more on steeper climbs, up to double; ~3x the wear of the distance).
+ */
+export const CLIMB_GRADE = 0.05, CLIMB_AFTER = 5, CLIMB_WEAR = 0.006;
+/** Engine wear (percent) for a step `dt` of a climb that has lasted `seconds` at `grade` (along the travel). */
+export function climbWear(seconds, grade, dt) {
+    if (seconds <= CLIMB_AFTER || grade <= CLIMB_GRADE) return 0;
+    return CLIMB_WEAR * Math.min(2, grade / 0.08) * dt;
+}
+
+/**
+ * Brake wear: percent per J/kg of braking work (a stop from 15 m/s, ~110 J/kg, is ~0.01%), up to 4x when the
+ * brakes are overheating (heat over 1, i.e. fading: sim/slope.js).
+ */
+export const BRAKE_WEAR = 1e-4;
+export function brakeWear(work, mass, heat = 0) {
+    return (Math.max(0, work) / Math.max(1, mass)) * BRAKE_WEAR * (1 + 3 * Math.min(1, Math.max(0, heat - 1)));
+}
 /** Damage (percent) from a collision at `impact` m/s. Gentle bumps do nothing. */
 export const impactToDamage = impact => (impact > 1.5 ? Math.min(60, Math.pow(impact - 1.5, 1.5) * 2) : 0);
 /** Engine power multiplier from wear and damage (a battered lorry is slower). */

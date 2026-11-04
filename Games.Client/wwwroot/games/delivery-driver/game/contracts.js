@@ -3,7 +3,7 @@
 // Job flow: toLoad -> loading -> toDrop -> unloading -> ... -> complete (a stop is a load or unload point).
 import { seededRng, hashSeed, pick, intRange, range, chance } from '../engine/rng.js';
 import { findRoute } from '../world/pathfind.js';
-import { dayIndex, GAME_MINUTES_PER_SECOND } from './calendar.js';
+import { hourIndex, GAME_MINUTES_PER_SECOND } from './calendar.js';
 import { worldToMiles } from '../config.js';
 
 const SURNAMES = ['Trelawny', 'Penrose', 'Hext', 'Chudleigh', 'Pascoe', 'Tremayne', 'Coombe', 'Ashford', 'Luxton', 'Vosper', 'Nankivell', 'Polglase', 'Kingdon', 'Snell', 'Widdicombe', 'Endacott', 'Rowe', 'Jago', 'Trethewey', 'Hosking', 'Bartlett', 'Pengelly', 'Hockin', 'Yeo', 'Westaway', 'Northcott', 'Babb', 'Coaker', 'Lethbridge', 'Symons'];
@@ -47,21 +47,28 @@ export const workSeconds = kg => 2.5 + kg / 200;
 
 /**
  * Pay for a job: a base, per real mile driven, per tonne carried and per stop. Flat prices (no inflation).
- * `distance` is in world metres along the route.
+ * `distance` is in world metres along the route; `hill` (the route's time / its time if level, >= 1) pays the
+ * per-mile part more on hilly routes (slower, and dearer in fuel).
  */
-export function quote(distance, weightKg, stops, specialFactor = 1) {
+export function quote(distance, weightKg, stops, specialFactor = 1, hill = 1) {
     const miles = worldToMiles(distance);
-    return Math.round((3 + miles * 0.9 + (weightKg / 1000) * 4 + stops * 1) * specialFactor);
+    return Math.round((3 + miles * 0.9 * Math.max(1, hill) + (weightKg / 1000) * 4 + stops * 1) * specialFactor);
 }
 
-function routeLength(world, pts, year, vmax) {
-    let len = 0;
+/**
+ * The legs of a job by road, with the same hill model the off-screen fleet uses (pathfind.js): {length, time,
+ * flatTime, hill (time / flatTime)}, or null if any leg is unreachable.
+ */
+export function routeStats(world, pts, year, vmax, climb = undefined) {
+    let length = 0, time = 0, flatTime = 0;
     for (let i = 1; i < pts.length; i++) {
-        const r = findRoute(world.graph, pts[i - 1], pts[i], { year, vmax });
+        const r = findRoute(world.graph, pts[i - 1], pts[i], { year, vmax, climb });
         if (!r) return null;
-        len += r.length;
+        length += r.length;
+        time += r.time;
+        flatTime += r.flatTime;
     }
-    return len;
+    return { length, time, flatTime, hill: flatTime > 0 ? Math.max(1, time / flatTime) : 1 };
 }
 
 /**
@@ -92,17 +99,19 @@ function yardsMatching(world, selector) {
 const goodsYardName = (world, y) => (y.type === 'depot' ? `${world.region.townById.get(y.town).name} Goods Yard` : y.name);
 
 /**
- * Today's offers at a depot. ctx = {world, depot, minutes, year, payload (kg, the vehicle being driven), vmax, count,
- * refresh, tierInfo ({range, haulage, special}), fleet: [{tags, capacity}] (what the fleet can carry)}.
+ * Today's offers at a depot. ctx = {world, depot, minutes, year, payload (kg, the vehicle being driven), vmax, climb
+ * (its sim/slope.js climbModel, unloaded: each offer adds its weight), count, refresh, tierInfo ({range, haulage,
+ * special}), fleet: [{tags, capacity}] (what the fleet can carry)}. Hilly routes get longer windows and more pay.
  * Deterministic for the same depot, game day, refresh number and fleet.
  */
 export function generateOffers(ctx) {
-    const { world, depot, minutes, year, payload = 1000, vmax = 11, count = 6, refresh = 0 } = ctx;
+    const { world, depot, minutes, year, payload = 1000, vmax = 11, refresh = 0 } = ctx;
     const tier = ctx.tierInfo ?? { range: 3000, haulage: false, special: false };
     const fleet = ctx.fleet ?? [{ tags: ['van'], capacity: payload }];
     const capacityFor = tag => Math.max(0, ...fleet.filter(f => f.tags.includes(tag)).map(f => f.capacity));
     const generalCap = Math.max(0, ...GENERAL_TAGS.map(capacityFor));
-    const rng = seededRng(hashSeed(world.region.seed, 'offers', depot.id, dayIndex(minutes), refresh));
+    const rng = seededRng(hashSeed(world.region.seed, 'offers', depot.id, hourIndex(minutes), refresh));
+    const count = ctx.count ?? intRange(rng, 4, 8); // a varying number of contracts on the board
     const town = world.region.townById.get(depot.town);
     const buildings = world.buildingsOfTown(town).filter(b => DROP_TYPES.has(b.type) && b.door);
     const farms = world.farms.filter(y => Math.hypot(y.yard.marker.x - depot.x, y.yard.marker.y - depot.y) < (ctx.collectRange ?? 1500));
@@ -122,17 +131,19 @@ export function generateOffers(ctx) {
         else c = special(rng, world, depot, tier.range, pick(rng, specials), capacityFor);
         if (!c) continue;
         const legs = c.stops.map(s => ({ x: s.x, y: s.y }));
-        const len = routeLength(world, [depot.yard.marker, ...legs], year, vmax);
+        const climb = ctx.climb ? { ...ctx.climb, mass: ctx.climb.mass + c.weight } : undefined;
+        const route = routeStats(world, [depot.yard.marker, ...legs], year, vmax, climb);
         const limit = kind === 'multidrop' || kind === 'collection' ? (ctx.maxRoute ?? 6000) : tier.range * 2.2;
-        if (len === null || len > limit) continue; // skip places that are a long way round by road
-        const driveSeconds = len / (vmax * 0.65) + c.stops.reduce((t, s) => t + workSeconds(s.weight), 0);
+        if (route === null || route.length > limit) continue; // skip places that are a long way round by road
+        const len = route.length;
+        const driveSeconds = (len / (vmax * 0.65)) * route.hill + c.stops.reduce((t, s) => t + workSeconds(s.weight), 0);
         const window = Math.max(90, Math.round((driveSeconds * GAME_MINUTES_PER_SECOND * 2.2 + 45) / 15) * 15);
         offers.push({
             ...c,
-            id: `c${dayIndex(minutes)}-${refresh}-${k}-${depot.id}`,
+            id: `c${hourIndex(minutes)}-${refresh}-${k}-${depot.id}`,
             depot: depot.id,
             distance: len,
-            pay: quote(len, c.weight, c.stops.length, c.factor ?? 1),
+            pay: quote(len, c.weight, c.stops.length, c.factor ?? 1, route.hill),
             window,
             offeredAt: minutes,
         });
@@ -181,7 +192,7 @@ function bayJob(world, type, title, client, cargo, cargoName, weight, from, to, 
 
 function multiDrop(rng, world, depot, buildings, payload, year) {
     if (buildings.length < 4) return null;
-    const n = intRange(rng, 2, year < 1930 ? 3 : 5);
+    const n = intRange(rng, 1, year < 1930 ? 4 : 6);
     const first = chance(rng, 0.15) ? 'pub' : chance(rng, 0.25) ? 'house' : 'shop';
     const cargoId = pick(rng, SHOP_CARGO[first] ?? SHOP_CARGO.shop);
     const cargo = CARGO[cargoId];
@@ -193,7 +204,7 @@ function multiDrop(rng, world, depot, buildings, payload, year) {
         .sort((a, b) => a.d - b.d)
         .filter(({ b }, k, list) => list.findIndex(o => customerOf(o.b).name === customerOf(b).name) === k) // one drop per name
         .slice(0, n);
-    if (near.length < 2) return null;
+    if (near.length < 1) return null;
     const drops = near.map(({ b }) => {
         const c = customerOf(b);
         return { action: 'unload', kind: 'door', name: c.name, client: c.id, x: c.x, y: c.y, weight: Math.round(range(rng, ...cargo.drop) / 5) * 5 };

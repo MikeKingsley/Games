@@ -1,18 +1,29 @@
-// Rigid vehicle: kinematic bicycle model with an engine/gearbox driveline, rolling resistance, aero drag and brakes.
-// The pose (x, y) is the rear-axle centre; heading 0 = east, +y south. Speed is signed along the heading (m/s).
+// Rigid vehicle: kinematic bicycle model with an engine/gearbox driveline, rolling resistance, aero drag, brakes
+// and the ground's slope (gravity along the heading, engine braking, brake fade). The pose (x, y) is the rear-axle
+// centre; heading 0 = east, +y south. Speed is signed along the heading (m/s). z/pitch/roll are kept for drawing.
 import { createGearbox, driveForce, updateGearbox } from './gearbox.js';
 import { obb, sat, resolve } from './collision.js';
+import { G, slopeForce, gradeCos, HOLD_GRADE, fadeFactor, brakeFade, engineBrakeForce } from './slope.js';
+import { trailerHasBrakes, trailerMass, hitchPush, TRAILER_BRAKE } from './trailer.js';
 
-export const G = 9.81;
+export { G };
 const AIR = 1.2;
 const STEER_SPEED_REF = 5;   // m/s: full lock is available below this, and falls off as 1/speed above it
 const HANDBRAKE_FORCE = 0.35; // fraction of the vehicle's weight
+/** Below this speed with no throttle a vehicle counts as stopped (held in gear on gentle grades). */
+const HOLD_SPEED = 0.05;
+/** How fast the drawn pitch and roll follow the ground (per second): a little suspension lag. */
+const TILT_RATE = 10;
 
 export function createVehicle(spec, { x = 0, y = 0, heading = 0 } = {}) {
     return {
         spec,
         x, y, heading, speed: 0, steer: 0,
         prevX: x, prevY: y, prevHeading: heading,
+        /** Ground height under the rear axle (world m), and the body's pitch (+ nose up) and roll (+ leaning right). */
+        z: 0, prevZ: 0, pitch: 0, roll: 0,
+        /** Service brake heat (sim/slope.js brakeFade): 0 cold, fading from 1. */
+        brakeHeat: 0,
         cargoMass: 0,
         gearbox: createGearbox(spec),
         /** 0..1 multipliers set by the economy (damage, wear, out of fuel). */
@@ -43,39 +54,87 @@ export function bodyCentre(v, out = { x: 0, y: 0 }) {
     return out;
 }
 
+/** The centre of the wheelbase: where the ground's slope under a vehicle is measured (world/terrain.js slopeAt). */
+export function wheelbaseCentre(v, out = { x: 0, y: 0 }) {
+    out.x = v.x + Math.cos(v.heading) * v.spec.wheelbase / 2;
+    out.y = v.y + Math.sin(v.heading) * v.spec.wheelbase / 2;
+    return out;
+}
+
+/**
+ * Gravity along the heading on the rig (N): the tractor and its cargo on `grade`, a trailer on its own grade (along
+ * its heading) pulling through the hitch at the articulation angle.
+ */
+export function rigGravity(v, grade, trailerGrade = grade) {
+    const t = v.trailer;
+    if (!t) return slopeForce(totalMass(v), grade);
+    const own = v.spec.mass + v.cargoMass, tm = t.spec.mass + t.cargoMass;
+    return slopeForce(own, grade) + slopeForce(tm, trailerGrade) * Math.cos(v.heading - t.heading);
+}
+
 /**
  * One fixed step. controls = {throttle 0..1, brake 0..1, steer -1..1, handbrake, reverse}.
- * env = {grip: 0..1 (rain lowers brake/steer force), drive: bool (false when out of fuel or jack-knifed), rolling (x rolling resistance)}.
- * Returns the longitudinal force summary (useful for audio and fuel).
+ * env = {grip: 0..1 (rain lowers brake/steer force), drive: bool (false when out of fuel or jack-knifed), rolling (x
+ * rolling resistance), grade (rise per metre ahead under the wheelbase), trailerGrade (along the trailer's heading),
+ * pitch, roll and groundZ (the ground under the rear axle, for drawing), engineBrake (false: none, for tests)}.
+ * On a grade gravity pulls along the heading: a vehicle stopped in gear with no throttle is held on grades up to
+ * HOLD_GRADE and rolls on steeper ones unless braked. Off the throttle the engine brakes in gear; the service
+ * brakes heat up and fade (v.brakeHeat).
+ * Returns the longitudinal force summary (for audio, fuel and wear): {engine, load, yawRate, grade (the rig's
+ * effective grade), brakeForce (service brakes, N), brakeWork (J this step)}.
  */
 export function stepVehicle(v, controls, dt, env = {}) {
     const spec = v.spec;
     const grip = env.grip ?? 1;
     const mass = totalMass(v);
-    v.prevX = v.x; v.prevY = v.y; v.prevHeading = v.heading;
+    v.prevX = v.x; v.prevY = v.y; v.prevHeading = v.heading; v.prevZ = v.z;
 
     // steering: rate-limited toward the requested angle, limited at speed (and by grip)
     const want = controls.steer * steerLimit(spec, v.speed) * (0.75 + 0.25 * grip);
     const maxDelta = spec.steerRate * dt;
     v.steer += Math.max(-maxDelta, Math.min(maxDelta, want - v.steer));
 
-    // driveline: the gearbox picks the gear; reverse is selected only near a standstill
+    // the slope: gravity on the whole rig, and the grade it amounts to (for the gearbox and the hold)
+    const grade = env.grade ?? 0;
+    const gravity = rigGravity(v, grade, env.trailerGrade ?? grade);
+    const effGrade = -gravity / (mass * G);
+
+    // rolling resistance and drag (env.rolling > 1 off the road: grass, mud)
+    const rolling = spec.crr * (env.rolling ?? 1) * mass * G * gradeCos(grade);
+    const aero = 0.5 * AIR * spec.cda * v.speed * v.speed;
+
+    // driveline: the gearbox picks the gear (changing down sooner on climbs, never up into a gear that can't pull the
+    // hill); reverse only near a standstill
     const gb = v.gearbox;
     if (controls.reverse !== gb.reverse && Math.abs(v.speed) < 0.5) gb.reverse = controls.reverse;
-    updateGearbox(gb, spec, v.speed, controls.throttle, dt);
+    updateGearbox(gb, spec, v.speed, controls.throttle, dt, effGrade, { need: Math.max(0, -gravity) + rolling + aero, mass });
     const dir = gb.reverse ? -1 : 1;
     const canDrive = env.drive !== false;
     const engine = canDrive ? driveForce(gb, spec, v.speed, controls.throttle) * v.power : 0;
+    // stopped in gear with the throttle closed, gentle grades don't move it; steeper ones roll it away
+    const held = Math.abs(v.speed) < HOLD_SPEED && controls.throttle <= 0 && Math.abs(effGrade) <= HOLD_GRADE;
+    const pull = held ? 0 : gravity;
 
-    // resistances oppose motion
-    const rolling = spec.crr * (env.rolling ?? 1) * mass * G; // env.rolling > 1 off the road (grass, mud)
-    const aero = 0.5 * AIR * spec.cda * v.speed * v.speed;
-    const brake = controls.brake * spec.brakeForce * (0.6 + 0.4 * grip) + (controls.handbrake ? HANDBRAKE_FORCE * mass * G * grip : 0);
-    const resist = rolling + aero + brake;
+    // resistances oppose motion; a trailer from 1956 brakes itself too (all the brakes share the heat)
+    const pedal = controls.brake * (0.6 + 0.4 * grip) * fadeFactor(v.brakeHeat);
+    const t = v.trailer;
+    const tractorBrakes = pedal * spec.brakeForce;
+    const trailerBrakes = t && trailerHasBrakes(t.spec) ? pedal * TRAILER_BRAKE * G * trailerMass(t) : 0;
+    const service = tractorBrakes + trailerBrakes;
+    const handbrake = controls.handbrake ? HANDBRAKE_FORCE * mass * G * grip : 0;
+    const engineBrake = env.engineBrake === false ? 0 : engineBrakeForce(gb, spec, v.speed, controls.throttle);
+    const resist = rolling + aero + service + handbrake + engineBrake;
+    // braking on the tractor's wheels alone, a trailer pushes on the fifth wheel (jack-knife risk: sim/trailer.js)
+    const push = t ? hitchPush(v, t, tractorBrakes + handbrake + engineBrake) : 0;
 
-    // resistances slow the vehicle toward a standstill but never push it backwards
-    const speed = v.speed + ((dir * engine) / mass) * dt;
+    // the engine and gravity accelerate; resistances slow the vehicle toward a standstill but never push it backwards
+    const before = v.speed;
+    const speed = v.speed + ((dir * engine + pull) / mass) * dt;
     v.speed = speed - Math.sign(speed) * Math.min(Math.abs(speed), (resist / mass) * dt);
+
+    // the service brakes turn the work they did into heat (and fade as they get hot)
+    const roadSpeed = (Math.abs(before) + Math.abs(v.speed)) / 2;
+    v.brakeHeat = brakeFade(v.brakeHeat, dt, service, roadSpeed, mass).heat;
 
     // kinematic bicycle: the rear axle follows its heading, the heading turns by v/L * tan(steer)
     const yawRate = (v.speed / spec.wheelbase) * Math.tan(v.steer);
@@ -86,7 +145,14 @@ export function stepVehicle(v, controls, dt, env = {}) {
     v.x += Math.cos(v.heading) * step;
     v.y += Math.sin(v.heading) * step;
     v.odometer += Math.abs(step);
-    return { engine, load: controls.throttle, yawRate };
+
+    // for drawing: the height follows the ground (env.groundZ is under the rear axle before this step's move, carried
+    // along the slope), pitch and roll with a little lag
+    if (env.groundZ !== undefined) v.z = env.groundZ + grade * step;
+    const k = Math.min(1, dt * TILT_RATE);
+    v.pitch += ((env.pitch ?? 0) - v.pitch) * k;
+    v.roll += ((env.roll ?? 0) - v.roll) * k;
+    return { engine, load: controls.throttle, yawRate, grade: effGrade, brakeForce: service, brakeWork: service * roadSpeed * dt, push };
 }
 
 /** The vehicle body as an OBB (for collisions). */

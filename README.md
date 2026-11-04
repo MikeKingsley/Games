@@ -121,7 +121,7 @@ Off by default. **Fullscreen** (Options page, or the in-game grown-ups panel) ma
 
 ## Delivery Driver
 
-A semi top-down, faux-3D haulage game (Canvas 2D, no dependencies). You start on 1 January 1919 at an Exeter depot with a Tamar T-Ton van and £400, and grow a company across Devon and Cornwall: bigger vehicles, articulated lorries with trailers, hired drivers and more depots. All makes are fictional.
+A 3D haulage game (hand-written WebGL2 with a Canvas 2D fallback, no dependencies): a chase camera over real hills, sun and shadows, night lights and weather. You start on 1 January 1919 at an Exeter depot with a Tamar T-Ton van and £400, and grow a company across Devon and Cornwall: bigger vehicles, articulated lorries with trailers, hired drivers and more depots. All makes are fictional.
 
 ### Controls
 
@@ -135,7 +135,7 @@ A semi top-down, faux-3D haulage game (Canvas 2D, no dependencies). You start on
 | C | 🔗 | Couple / uncouple a trailer (tractor units) |
 | Q / E, H | 📯 | Indicators, horn |
 | M, J | 🗺️ | Map, current job |
-| V, Z / X | 🎥 | Camera (behind / north up), zoom |
+| V, Z / X, [ / ] | 🎥 | Camera (behind / north up), zoom, tilt |
 | G, Shift / Ctrl | | Manual gearbox on/off, gear up / down |
 | Esc | ☰ | Game menu: save, save slots, settings, controls, skip the tutorial |
 
@@ -149,11 +149,13 @@ A gamepad works too (left stick, triggers, A for the handbrake). Phones show the
 - **Reputation** from on-time, undamaged jobs moves you from Local Carrier to National Haulage, unlocking haulage and special work, longer routes and depot purchases.
 - **Fleet:** buy vehicles and trailers at the dealer, hire drivers (skill and wage) and give them jobs or let them auto-take work; they run off-screen on route time and show as dots on the map. Buy depots in other towns (Regional Haulier and up).
 - **Articulated lorries** pivot on the fifth wheel and reverse like the real thing (unstable; they can jack-knife past 85°). Reverse the fifth wheel under the kingpin (0.4 m, 10°) and press C. The depot office has a **reversing practice yard** (any year, any vehicle).
-- **World:** a stylised Devon and Cornwall compressed about 1:13 (Exeter to Penzance is about 10 real minutes at 50 mph): real towns, A-roads and ferries from `world/seed/sw-england.json`, with town streets, buildings, farms, fields, woods and moors generated from the seed. Day and night follow the season; the weather is seeded per day (rain lowers grip, fog is common on the moors).
+- **World:** a stylised Devon and Cornwall compressed about 1:13 (Exeter to Penzance is about 10 real minutes at 50 mph): real towns, A-roads and ferries from `world/seed/sw-england.json`, with town streets, buildings, farms, fields, woods and moors generated from the seed. Day and night follow the season; the weather is seeded per day (rain lowers grip, fog is common on the moors). The ground has real slopes: hills slow heavy loads, long descents heat the brakes (use a low gear), parked trailers need their brake on a hill, and climbing burns more fuel; routes and pay allow for the hills.
 
 ### Saves and settings
 
-Three save slots in `localStorage` (`games.dd.slot1` to `slot3`, versioned and migrated), with an index in the shell's progress store (`games.progress.delivery-driver`). Autosave after every completed delivery, every 3 real minutes and on exit; export and import from the slot menu. Device settings (quality, camera, gearbox, touch steering, units) are in `games.dd.settings`.
+Three save slots in `localStorage` (`games.dd.slot1` to `slot3`, versioned and migrated), with an index in the shell's progress store (`games.progress.delivery-driver`). Autosave after every completed delivery, every 3 real minutes and on exit; export and import from the slot menu. Device settings (quality, graphics, camera and tilt, gearbox, touch steering, units) are in `games.dd.settings`. Saves from before version 3 (the terrain update) can't be loaded.
+
+**Graphics:** Auto uses 3D (WebGL2) when the browser supports it and falls back to Compatibility (Canvas 2D) when it doesn't, when a shader fails or when the GPU context keeps being lost (with a "Switched to compatibility graphics" note). On Auto a device that stays under about 25 fps drops one quality level (never raises it). Both renderers play identically; Canvas 2D shows no relief apart from a shaded hint on the maps.
 
 ### Code
 
@@ -165,8 +167,9 @@ Three save slots in `localStorage` (`games.dd.slot1` to `slot3`, versioned and m
 | `world/` | Region seed + projection, road graph, generator, chunks, A* routes, road history |
 | `traffic/` | Era traffic: lane following, junction claims, signals |
 | `game/` | Session, career, calendar, contracts, economy, catalogue, dealer, fleet, reputation, environment, save, tutorial |
-| `render/`, `ui/`, `audio/` | Canvas drawing, DOM menus and HUD, WebAudio synth |
+| `render/` | `index.js` renderer factory (Auto / WebGL / Canvas), the Canvas 2D renderer, and `render/gl/`: pure mesh, camera, sun, shadow and map-mesh modules plus the WebGL2 drawing code (see plan 0007) |
+| `ui/`, `audio/` | DOM menus and HUD, WebAudio synth |
 
 Logic in `sim/`, `world/`, `traffic/` and most of `game/` is DOM-free and tested in Node (`tests/js/delivery-driver.*.test.mjs`); `tests/e2e/delivery-driver.spec.mjs` drives the real game.
 
-**Debug hook** (Development environment only): `window.__dd` exposes `state` (the session), `teleport(x, y, heading)`, `setControls({throttle, brake, steer, handbrake, reverse} | null)`, `completeDrop()`, `advanceClock(hours)`, `setWeather({kind, intensity})`, `newGame(opts)` (an unsaved game, skipping the slot menu), `spawnAtDepot()`, `stats()` and `resetPerf()`.
+**Debug hook** (Development environment only): `window.__dd` exposes `state` (the session), `teleport(x, y, heading)`, `setControls({throttle, brake, steer, handbrake, reverse} | null)`, `completeDrop()`, `advanceClock(hours)`, `setWeather({kind, intensity})`, `newGame(opts)` (an unsaved game, skipping the slot menu), `spawnAtDepot()`, `stats()`, `resetPerf()`, and for the renderers `renderer` (`kind`, `stats`, `loseContext()`), `setRenderer(kind)`, `setSettings(patch)`, `camera`, `map()`, `terrainHeight`, `groundZ`, `slopeAt`.

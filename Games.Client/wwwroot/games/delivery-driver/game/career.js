@@ -1,6 +1,6 @@
 // The player's career: company, calendar, money, today's offers and the active job. Pure state + functions,
 // so the whole career can be saved and tested without the canvas.
-import { createCalendar, dayIndex, dateOf, weekIndex } from './calendar.js';
+import { createCalendar, hourIndex, dateOf, weekIndex } from './calendar.js';
 import { createLedger, post } from './economy.js';
 import { vehicleById, trailerById } from './catalogue.js';
 import { tierInfo } from './reputation.js';
@@ -8,6 +8,7 @@ import { GENERAL_TAGS } from './contracts.js';
 import { addReputation, jobPoints, ABANDON_POINTS } from './reputation.js';
 import { generateOffers, startJob, settle } from './contracts.js';
 import { START_MONEY } from '../config.js';
+import { climbModel } from '../sim/slope.js';
 
 export function createCareer({ company = 'Exe Valley Carriers', money = START_MONEY, minutes, livery = { livery1: '#2f5d8a', livery2: '#e8c547' }, homeDepot = 'depot-exeter' } = {}) {
     const calendar = createCalendar(minutes);
@@ -35,28 +36,31 @@ export function createCareer({ company = 'Exe Valley Carriers', money = START_MO
         boards: {},
         clients: {},
         stats: { jobs: 0, onTime: 0, earned: 0 },
+        /** One-off tips already shown to this company (game/tutorial.js HILL_TIPS). */
+        tips: [],
     };
 }
 
 /**
- * Today's offers at a depot (regenerated when the day changes, or when forced after taking one).
+ * The current offers at a depot (regenerated each game hour, or when forced after taking one).
  * vehicle gives the payload and speed the offers are sized for.
  */
 export function refreshOffers(career, world, depot, vehicle, year, force = false) {
-    const day = dayIndex(career.calendar.minutes);
+    const hour = hourIndex(career.calendar.minutes);
     const boards = (career.boards ??= {});
     let b = boards[depot.id];
-    if (!b || b.day !== day || force) {
-        const sameDay = b?.day === day;
-        const refresh = sameDay ? b.refresh + (force ? 1 : 0) : 0;
-        const taken = sameDay ? b.taken : [];
+    if (!b || b.hour !== hour || force) {
+        const sameHour = b?.hour === hour;
+        const refresh = sameHour ? b.refresh + (force ? 1 : 0) : 0;
+        const taken = sameHour ? b.taken : [];
         const offers = generateOffers({
             world, depot, minutes: career.calendar.minutes, year,
             payload: carryFor(vehicle.spec, vehicle.trailer?.spec).capacity || 1000, vmax: vehicle.spec.topSpeedMph * 0.44704, refresh,
+            climb: climbModel(vehicle.spec, vehicle.trailer?.spec.mass ?? 0), // each offer adds its own load
             tierInfo: tierInfo(career.reputation.points), fleet: fleetCapabilities(career),
             tractors: career.fleet.map(v => vehicleById(v.model)).filter(s => s.tags.includes('tractor-unit')).map(s => s.trailerMax),
         }).filter(o => !taken.includes(o.id));
-        b = boards[depot.id] = { day, refresh, taken, offers };
+        b = boards[depot.id] = { hour, refresh, taken, offers };
     }
     career.offers = b.offers; // the board last looked at (kept for the UI and tests)
     return b.offers;

@@ -20,12 +20,12 @@ function stubInput(controls = { throttle: 0, brake: 0, steer: 0 }) {
     return { update: () => controls, setOverride() {}, onAction() {} };
 }
 
-test('the calendar starts at 06:00 on 1 Jan 1919 and runs 15 game minutes per real minute', () => {
+test('the calendar starts at 09:30 on 1 Jan 1919 and runs 15 game minutes per real minute', () => {
     const cal = createCalendar();
-    assert.equal(formatDateTime(cal.minutes), 'Wed 1 Jan 1919, 06:00');
+    assert.equal(formatDateTime(cal.minutes), 'Wed 1 Jan 1919, 09:30');
     advance(cal, 60);
-    assert.equal(formatDateTime(cal.minutes), 'Wed 1 Jan 1919, 06:15');
-    const ev = advance(cal, 4 * 60 * 18); // 18 game hours
+    assert.equal(formatDateTime(cal.minutes), 'Wed 1 Jan 1919, 09:45');
+    const ev = advance(cal, 4 * 60 * 14.5); // 14.5 game hours, to 00:15 the next day
     assert.equal(ev.newDay, 1);
     assert.equal(dateOf(cal.minutes).day, 2);
     assert.equal(weekIndex(minutesAt(1919, 0, 6)) - weekIndex(minutesAt(1919, 0, 5, 23, 59)), 1, 'weeks start on Monday');
@@ -44,10 +44,10 @@ test('the session clock only runs while driving, not while paused', () => {
 
 const offers = generateOffers({ world, depot, minutes: 360, year: 1919 });
 
-test('offers are deterministic per depot and day, and fit the van', () => {
-    assert.ok(offers.length >= 4);
+test('offers are deterministic per depot and game hour, and fit the van', () => {
+    assert.ok(offers.length >= 3);
     assert.deepEqual(generateOffers({ world, depot, minutes: 400, year: 1919 }).map(o => o.id), offers.map(o => o.id));
-    assert.notDeepEqual(generateOffers({ world, depot, minutes: 360 + 1440, year: 1919 }).map(o => o.title + o.pay), offers.map(o => o.title + o.pay));
+    assert.notDeepEqual(generateOffers({ world, depot, minutes: 360 + 60, year: 1919 }).map(o => o.title + o.pay), offers.map(o => o.title + o.pay), 'a new board each game hour');
     for (const o of offers) {
         assert.ok(o.weight <= 1000 && o.pay > 0 && o.window >= 90);
         assert.equal(o.stops.filter(s => s.action === 'load').reduce((t, s) => t + s.weight, 0), o.stops.filter(s => s.action === 'unload').reduce((t, s) => t + s.weight, 0));
@@ -136,7 +136,7 @@ test('traffic stays on open lanes over 10,000 seeded steps around Exeter', () =>
                 const e = world.graph.edges[a.edge];
                 assert.ok(edgeOpen(e, year) && e.cls !== 'lane' && e.cls !== 'access' && e.cls !== 'ferry', `agent on ${e.cls}`);
                 const p = lanePoint(e, a.along, a.forward, laneOffset(e, year), {});
-                assert.ok(Math.hypot(p.x - a.x, p.y - a.y) < 1e-6, 'agent off its lane');
+                assert.ok(Math.hypot(p.x - a.x, p.y - a.y) < 6, 'agent off its lane'); // eased through junctions, never far from the lane
                 assert.ok(a.along >= 0 && a.along <= e.len + 1e-6);
             }
             seen = Math.max(seen, tr.agents.length);

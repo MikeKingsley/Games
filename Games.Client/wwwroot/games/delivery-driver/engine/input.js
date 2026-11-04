@@ -6,8 +6,8 @@ const HOLD = {
 };
 /** One-shot actions; `horn` also reports key-up so it sounds while held. */
 export const ACTIONS = {
-    KeyC: 'couple', KeyQ: 'indicateLeft', KeyE: 'indicateRight', KeyH: 'horn', KeyM: 'map', KeyV: 'camera',
-    KeyZ: 'zoomIn', KeyX: 'zoomOut', KeyF: 'interact', Enter: 'interact', KeyJ: 'jobs', KeyG: 'gearMode',
+    KeyC: 'couple', KeyQ: 'indicateLeft', KeyE: 'indicateRight', KeyH: 'horn', KeyM: 'map', KeyV: 'camera', KeyB: 'cameraFlip',
+    KeyZ: 'zoomIn', KeyX: 'zoomOut', BracketRight: 'tiltUp', BracketLeft: 'tiltDown', KeyF: 'interact', Enter: 'interact', KeyJ: 'jobs', KeyG: 'gearMode',
     ShiftLeft: 'gearUp', ShiftRight: 'gearUp', ControlLeft: 'gearDown', ControlRight: 'gearDown', Escape: 'escape',
 };
 
