@@ -1,7 +1,7 @@
 // Map rendering for the minimap and the full map. The pure half (view transform, hillshade, relief raster, road
 // selection, map mesh) is testable in Node; the GL half draws it on a private WebGL2 canvas that the 2D map code
 // blits onto the HUD / full-map canvas and decorates with labels and the player arrow.
-import { LEGACY_DISTANCE } from '../../config.js';
+import { TRIP_RATE } from '../../config.js';
 import { terrainHeight } from '../../world/terrain.js';
 import { edgeOpen, edgeClass } from '../../world/roadgraph.js';
 import { createBuilder, addStrip } from './meshes.js';
@@ -85,7 +85,7 @@ export function reliefColour(region, x, y, step = 60) {
 const reliefCache = new WeakMap();
 
 /** The whole region as a coarse RGBA raster (`cell` metres per texel), built once per world. */
-export function reliefRaster(world, cell = 60 * LEGACY_DISTANCE) {
+export function reliefRaster(world, cell = 60 * TRIP_RATE) {
     const cached = reliefCache.get(world);
     if (cached && cached.cell === cell) return cached;
     const region = world.region, b = region.bounds;

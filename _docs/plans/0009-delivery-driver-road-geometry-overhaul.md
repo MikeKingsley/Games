@@ -347,21 +347,50 @@ Things the next agent should know:
 - Playwright load of `/play/delivery-driver` on the rebuilt dev server: world ready, new game, throttle gave 6.5 m/s, 0 console errors, 0 GL errors; start-up and heap recorded above
 
 ## Phase 6: Economy and timing rebalance
-Status: Not started
+Status: Complete
 Model: sonnet
 Effort: medium
 
-- [ ] Add a single constant (for example `TRIP_RATE = (1/4) / (1/13)` in `config.js`, documented) and apply it so income and fuel per minute of driving match the 1:13 game: pay per mile and fuel use per mile scale by it in `game/economy.js`; distances shown stay real miles (`worldToMiles`)
-- [ ] Review contract windows (`game/contracts.js`, `window`, `vmax` default 11), the offer generator's distance ranges, fleet AI job durations and earnings (`game/fleet.js`), session fuel and cost accounting (`game/session.js`), and tutorial text/thresholds; each must give the same minutes-per-job as before for the same shape of job, or a value justified in the Phase Summary
-- [ ] Add tests: a fixed job's pay-per-driving-minute and fuel-per-minute at the new scale are within 5% of the old scale's, a contract window grows with distance, AI fleet income per game day is within 10% of before
-- [ ] Print the longest contracts (Exeter to Penzance, Ilfracombe to Penzance, Lynton to St Ives) with real miles, window and expected drive minutes; record in the Phase Summary
+- ✅ Add a single constant (for example `TRIP_RATE = (1/4) / (1/13)` in `config.js`, documented) and apply it so income and fuel per minute of driving match the 1:13 game: pay per mile and fuel use per mile scale by it in `game/economy.js`; distances shown stay real miles (`worldToMiles`)
+  - Note: `TRIP_RATE = WORLD_SCALE / LEGACY_SCALE` (= 3.25; new `LEGACY_SCALE = 1/13`) in `config.js`. It REPLACES Phase 3's `LEGACY_DISTANCE` (same value, renamed everywhere: reputation tiers, contracts ranges, minimap raster cell, road-mesh test budget). Applied to: `quote` per-mile rate, `fuelBurn` real km, new `wearForMiles` (wear per mile) used by session and fleet.
+- ✅ Review contract windows (`game/contracts.js`, `window`, `vmax` default 11), the offer generator's distance ranges, fleet AI job durations and earnings (`game/fleet.js`), session fuel and cost accounting (`game/session.js`), and tutorial text/thresholds; each must give the same minutes-per-job as before for the same shape of job, or a value justified in the Phase Summary
+  - Note: windows (`len / (vmax*0.65) * hill` seconds + work, x2.2 + 45) and AI job duration (`route.time`) are driven by world route length, so they grow 3.25x on their own; AI fleet pay is the scaled contract pay minus scaled `fuelBurn` and wear. Also scaled by TRIP_RATE so jobs span the same real distances: default farm `collectRange` 1500, haul/trailer minimum trip 300 (special cargo already 250). Left unchanged on purpose: breakdown tow (a call-out penalty by real miles to the depot from the same real place; tow time is real-speed based), weekly wages/upkeep/interest (per game-time), fuel price, `climbWear`/`brakeWear` (per second or per braking event). Tutorial has no distance thresholds (15 m move only). Unchanged defaults: `vmax` 11.
+- ✅ Add tests: a fixed job's pay-per-driving-minute and fuel-per-minute at the new scale are within 5% of the old scale's, a contract window grows with distance, AI fleet income per game day is within 10% of before
+- ✅ Print the longest contracts (Exeter to Penzance, Ilfracombe to Penzance, Lynton to St Ives) with real miles, window and expected drive minutes; record in the Phase Summary
+  - Note: `node scripts/economy-per-minute.mjs` (new, committed in `scripts/`) prints the before/after pay-per-minute table and the longest contracts; table is in the Phase Summary.
 
 ### Verification Plan
 - `npm test` passes including the new economy tests
 - A Node script prints pay per driving minute for a sample of contracts before (1:13 constants) and after; difference within 5%
 
 ### Phase Summary
-_(write when phase completes)_
+Done (2026-11-05). Income, fuel and wear per minute of driving now match the 1:13 game; shown distances are still real miles.
+
+Constants (`config.js`): `LEGACY_SCALE = 1/13` (the pre-plan scale) and `TRIP_RATE = WORLD_SCALE / LEGACY_SCALE = 3.25`. `TRIP_RATE` REPLACES Phase 3's stop-gap `LEGACY_DISTANCE` (same value, renamed everywhere: `game/reputation.js` tier ranges, `game/contracts.js`, the Phase 5 map relief raster cell in `render/gl/minimap-gl.js`, the road-mesh test time budget). Meaning: vehicle speeds are unchanged real mph, so a real mile now takes 3.25x longer to drive; per-real-mile rates are multiplied by it, and world-metre distances tuned at 1:13 are multiplied by it so jobs span the same real distances.
+
+What changed:
+- `game/contracts.js` `quote`: the WHOLE quote is times `TRIP_RATE` (base, per mile, per tonne, per stop, special factor). Scaling only the per-mile term left short jobs 20-29% short per driving minute, because the fixed parts pay for loading time, which is seconds. Also times `TRIP_RATE`: default farm `collectRange` (1500), the haul and trailer minimum trip (300, special cargo already had 250), plus Phase 3's tier ranges, default tier range, default `maxRoute` 6000 and special minimum 250.
+- `game/economy.js` `fuelBurn`: real km times `TRIP_RATE`; new `wearForMiles(miles) = miles * WEAR_PER_MILE * TRIP_RATE`, used by `game/session.js` (player) and `game/fleet.js` (off-screen drivers). Odometer mileage still adds real miles (`worldToMiles`).
+- Contract windows and AI job durations needed no change: they derive from route length / speed (`window = (len / (vmax*0.65) * hill + work) * 2.2 + 45`, AI `route.time`), so they grow 3.25x on their own, and `vmax` default 11 is unchanged.
+- Left unchanged on purpose: breakdown tow (cost is 15 + 1.5 per real mile to the depot from the same real place, tow time is real-speed based), wages/upkeep/interest (per game time), fuel price, `climbWear` (per second), `brakeWear` (per braking event), tutorial (no distance thresholds, 15 m move only).
+
+Before/after (`node scripts/economy-per-minute.mjs`, in `scripts/`, about 5 s; Exe Two-Tonner, 1930, 1000 kg, 2 stops, half load; before = the same real route with pre-plan formulas and drive time divided by `TRIP_RATE`). Pay per minute of driving, old -> new (diff): Exeter-Tiverton 16.5 mi 0.39 -> 0.38 (-1.5%); Exeter-Exmouth 13.9 mi 0.49 -> 0.49 (-0.7%); Exeter-Newton Abbot 19.5 mi 0.40 -> 0.41 (+1.4%); Exeter-Plymouth 41.3 mi 0.35 -> 0.35 (-0.2%); Plymouth-Truro 53.5 mi 0.32 -> 0.32 (+0.7%); Barnstaple-Okehampton 29.4 mi 0.36 -> 0.37 (+0.9%); Exeter-Truro 85.3 mi 0.31 -> 0.31 (-0.3%). Pay per minute of the whole job is within +4.0% on every route (rounding of the integer pound pay on short jobs); fuel per driving minute differs by 0.0% everywhere. Worst difference on routes over 8 miles: 4.0% (limit 5%).
+
+Longest contracts (same table; windows scale with the longer drive):
+
+| route | real miles | drive time (game / real) | before | window | before | pay | before |
+|---|---|---|---|---|---|---|---|
+| Exeter - Penzance | 112.5 | 19.5 h / 78 min | 6.0 h | 66.8 h | 21.3 h | £364 | £112 |
+| Ilfracombe - Penzance | 117.6 | 20.6 h / 82 min | 6.3 h | 70.5 h | 22.3 h | £383 | £118 |
+| Lynton - St Ives | 120.8 | 21.5 h / 86 min | 6.6 h | 73.3 h | 23.0 h | £396 | £122 |
+
+Tests: new `tests/js/delivery-driver.economy-rate.test.mjs` (4: `TRIP_RATE` value; pay and fuel per driving minute within 5% on five real routes plus wear; a contract window grows with distance and always covers the drive; an off-screen driver's income per game day within 10% of the 1:13 figure). `npm test`: 366 pass, 0 fail (362 + 4).
+
+For the next agent: a Penzance run in the slowest early vehicle takes about 80 real minutes (the user chose "normal speeds, longer trips"); faster later vehicles, and the tier ranges (still the same real distances as before), keep typical offers shorter. If the user finds long runs too slow, the lever is the offer ranges (`TIERS[].range`), not `TRIP_RATE`.
+
+### Verification Results
+- `npm test`: 366 pass, 0 fail, including the new economy-rate tests
+- `node scripts/economy-per-minute.mjs`: pay and fuel per minute of driving within 4.0% (limit 5%) on all routes over 8 miles
 
 ## Phase 7: Layered road surfaces and height lookup
 Status: Not started

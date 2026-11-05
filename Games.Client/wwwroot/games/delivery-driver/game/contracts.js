@@ -4,7 +4,7 @@
 import { seededRng, hashSeed, pick, intRange, range, chance } from '../engine/rng.js';
 import { findRoute } from '../world/pathfind.js';
 import { hourIndex, GAME_MINUTES_PER_SECOND } from './calendar.js';
-import { worldToMiles, LEGACY_DISTANCE } from '../config.js';
+import { worldToMiles, TRIP_RATE } from '../config.js';
 
 const SURNAMES = ['Trelawny', 'Penrose', 'Hext', 'Chudleigh', 'Pascoe', 'Tremayne', 'Coombe', 'Ashford', 'Luxton', 'Vosper', 'Nankivell', 'Polglase', 'Kingdon', 'Snell', 'Widdicombe', 'Endacott', 'Rowe', 'Jago', 'Trethewey', 'Hosking', 'Bartlett', 'Pengelly', 'Hockin', 'Yeo', 'Westaway', 'Northcott', 'Babb', 'Coaker', 'Lethbridge', 'Symons'];
 const TRADES = ['Grocers', 'Drapers', 'Ironmongers', 'Bakery', 'Butchers', 'Chemist', 'Stationers', 'Tobacconist', 'Outfitters', 'Hardware', 'Fishmonger', 'Saddlers', 'Cycle Shop', 'Tea Rooms'];
@@ -48,11 +48,13 @@ export const workSeconds = kg => 2.5 + kg / 200;
 /**
  * Pay for a job: a base, per real mile driven, per tonne carried and per stop. Flat prices (no inflation).
  * `distance` is in world metres along the route; `hill` (the route's time / its time if level, >= 1) pays the
- * per-mile part more on hilly routes (slower, and dearer in fuel).
+ * per-mile part more on hilly routes (slower, and dearer in fuel). The whole quote is times TRIP_RATE: a real mile
+ * now takes that much longer to drive than at 1:13, and the loading time is negligible beside the driving, so a
+ * minute of driving pays what it did at 1:13 for the same route (plan 0009 phase 6).
  */
 export function quote(distance, weightKg, stops, specialFactor = 1, hill = 1) {
     const miles = worldToMiles(distance);
-    return Math.round((3 + miles * 0.9 * Math.max(1, hill) + (weightKg / 1000) * 4 + stops * 1) * specialFactor);
+    return Math.round((3 + miles * 0.9 * Math.max(1, hill) + (weightKg / 1000) * 4 + stops * 1) * specialFactor * TRIP_RATE);
 }
 
 /**
@@ -106,7 +108,7 @@ const goodsYardName = (world, y) => (y.type === 'depot' ? `${world.region.townBy
  */
 export function generateOffers(ctx) {
     const { world, depot, minutes, year, payload = 1000, vmax = 11, refresh = 0 } = ctx;
-    const tier = ctx.tierInfo ?? { range: 3000 * LEGACY_DISTANCE, haulage: false, special: false };
+    const tier = ctx.tierInfo ?? { range: 3000 * TRIP_RATE, haulage: false, special: false };
     const fleet = ctx.fleet ?? [{ tags: ['van'], capacity: payload }];
     const capacityFor = tag => Math.max(0, ...fleet.filter(f => f.tags.includes(tag)).map(f => f.capacity));
     const generalCap = Math.max(0, ...GENERAL_TAGS.map(capacityFor));
@@ -114,7 +116,7 @@ export function generateOffers(ctx) {
     const count = ctx.count ?? intRange(rng, 4, 8); // a varying number of contracts on the board
     const town = world.region.townById.get(depot.town);
     const buildings = world.buildingsOfTown(town).filter(b => DROP_TYPES.has(b.type) && b.door);
-    const farms = world.farms.filter(y => Math.hypot(y.yard.marker.x - depot.x, y.yard.marker.y - depot.y) < (ctx.collectRange ?? 1500));
+    const farms = world.farms.filter(y => Math.hypot(y.yard.marker.x - depot.x, y.yard.marker.y - depot.y) < (ctx.collectRange ?? 1500 * TRIP_RATE));
     const specials = tier.special ? SPECIAL.filter(sp => year >= sp.year && capacityFor(sp.needs) > 0) : [];
     const tractorMax = Math.max(0, ...(ctx.tractors ?? []));
     const kinds = [['multidrop', 0.4], ['collection', farms.length ? 0.25 : 0], ['haul', tier.haulage ? 0.2 : 0], ['special', specials.length ? 0.3 : 0], ['trailer', tier.haulage && tractorMax ? 0.35 : 0]];
@@ -133,7 +135,7 @@ export function generateOffers(ctx) {
         const legs = c.stops.map(s => ({ x: s.x, y: s.y }));
         const climb = ctx.climb ? { ...ctx.climb, mass: ctx.climb.mass + c.weight } : undefined;
         const route = routeStats(world, [depot.yard.marker, ...legs], year, vmax, climb);
-        const limit = kind === 'multidrop' || kind === 'collection' ? (ctx.maxRoute ?? 6000 * LEGACY_DISTANCE) : tier.range * 2.2;
+        const limit = kind === 'multidrop' || kind === 'collection' ? (ctx.maxRoute ?? 6000 * TRIP_RATE) : tier.range * 2.2;
         if (route === null || route.length > limit) continue; // skip places that are a long way round by road
         const len = route.length;
         const driveSeconds = (len / (vmax * 0.65)) * route.hill + c.stops.reduce((t, s) => t + workSeconds(s.weight), 0);
@@ -158,7 +160,7 @@ function haul(rng, world, depot, reach, capacity) {
     const near = places.filter(p => Math.hypot(p.x - depot.x, p.y - depot.y) < reach * 0.6);
     if (!near.length) return null;
     const from = pick(rng, near);
-    const dest = places.filter(p => p !== from && Math.hypot(p.x - from.x, p.y - from.y) < reach && Math.hypot(p.x - from.x, p.y - from.y) > 300);
+    const dest = places.filter(p => p !== from && Math.hypot(p.x - from.x, p.y - from.y) < reach && Math.hypot(p.x - from.x, p.y - from.y) > 300 * TRIP_RATE);
     if (!dest.length) return null;
     const to = pick(rng, dest);
     const weight = Math.round(Math.min(capacity, range(rng, 600, Math.max(800, capacity))) / 50) * 50;
@@ -171,7 +173,7 @@ function special(rng, world, depot, reach, sp, capacityFor) {
     const sources = sp.from.flatMap(sel => yardsMatching(world, sel)).filter(y => Math.hypot(y.x - depot.x, y.y - depot.y) < reach * 0.7);
     if (!sources.length) return null;
     const from = pick(rng, sources);
-    const dests = sp.to.flatMap(sel => yardsMatching(world, sel)).filter(y => y !== from && Math.hypot(y.x - from.x, y.y - from.y) < reach && Math.hypot(y.x - from.x, y.y - from.y) > 250 * LEGACY_DISTANCE);
+    const dests = sp.to.flatMap(sel => yardsMatching(world, sel)).filter(y => y !== from && Math.hypot(y.x - from.x, y.y - from.y) < reach && Math.hypot(y.x - from.x, y.y - from.y) > 250 * TRIP_RATE);
     if (!dests.length) return null;
     const to = pick(rng, dests);
     const weight = Math.round(Math.min(capacityFor(sp.needs), range(rng, sp.kg[0], sp.kg[1])) / 100) * 100;
@@ -330,7 +332,7 @@ function trailerJob(rng, world, depot, reach, tractorMax, year) {
     const places = [...world.depots, ...world.sites.filter(s => ['docks', 'dairy', 'timber', 'fish'].includes(s.type))];
     const from = pick(rng, places.filter(p => Math.hypot(p.x - depot.x, p.y - depot.y) < reach * 0.6));
     if (!from) return null;
-    const to = pick(rng, places.filter(p => p !== from && Math.hypot(p.x - from.x, p.y - from.y) < reach && Math.hypot(p.x - from.x, p.y - from.y) > 300));
+    const to = pick(rng, places.filter(p => p !== from && Math.hypot(p.x - from.x, p.y - from.y) < reach && Math.hypot(p.x - from.x, p.y - from.y) > 300 * TRIP_RATE));
     if (!to) return null;
     const weight = Math.round(Math.min(cap, range(rng, cap * 0.3, cap)) / 100) * 100;
     const swap = from.type === 'depot' && to.type === 'depot' && chance(rng, 0.5);

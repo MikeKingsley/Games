@@ -27,7 +27,7 @@ import { drawGuideLines } from '../render/draw-vehicles.js';
 import { rearPoint } from './depots.js';
 import { hashSeed } from '../engine/rng.js';
 import { slipNear, crossingMinutes, eventsBetween, describeEvent } from '../world/history.js';
-import { post, fuelBurn, WEAR_PER_MILE, CLIMB_GRADE, climbWear, brakeWear, impactToDamage, performanceFactor, weeklyTick, refuelCost, repairCost, formatMoney } from './economy.js';
+import { post, fuelBurn, wearForMiles, CLIMB_GRADE, climbWear, brakeWear, impactToDamage, performanceFactor, weeklyTick, refuelCost, repairCost, formatMoney } from './economy.js';
 import { worldToMiles } from '../config.js';
 import { tierOf } from './reputation.js';
 import { daylight, weatherFor, gripFor, visibilityFor } from './environment.js';
@@ -301,7 +301,7 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
             rec.fuel = Math.max(0, rec.fuel - fuelBurn(p.spec, ds, load, throttle, travelGrade));
             const miles = worldToMiles(ds);
             rec.mileage += miles;
-            wear += miles * WEAR_PER_MILE;
+            wear += wearForMiles(miles);
         }
         rec.wear = Math.min(100, rec.wear + wear);
         p.fuel = rec.fuel;

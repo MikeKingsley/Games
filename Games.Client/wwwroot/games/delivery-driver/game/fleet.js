@@ -1,7 +1,7 @@
 // The fleet beyond the vehicle the player drives: hired drivers, their jobs (simulated off-screen on route time),
 // extra depots and moving vehicles between depots. Pure functions on the career (+ the world for routes).
 import { vehicleById, trailerById } from './catalogue.js';
-import { post, fuelBurn, fuelPrice, WEAR_PER_MILE } from './economy.js';
+import { post, fuelBurn, fuelPrice, wearForMiles } from './economy.js';
 import { findRoute } from '../world/pathfind.js';
 import { seededRng, hashSeed, pick, range } from '../engine/rng.js';
 import { weekIndex, GAME_MINUTES_PER_SECOND, dateOf } from './calendar.js';
@@ -185,7 +185,7 @@ export function updateDrivers(career, ctx) {
             if (v) {
                 const miles = worldToMiles(job.length);
                 v.mileage += miles;
-                v.wear = Math.min(100, v.wear + miles * WEAR_PER_MILE);
+                v.wear = Math.min(100, v.wear + wearForMiles(miles));
                 v.damage = Math.min(100, v.damage + job.damage / 3);
             }
             const tr = (career.trailers ?? []).find(t => t.id === job.trailer);

@@ -1,7 +1,7 @@
 // Money and running costs: the ledger, fuel, wear and damage, repairs, vehicle values and the used market,
 // loans, the Monday weekly tick (wages, interest, upkeep) and the bankruptcy sequence
 // (forced bailout loan -> forced sale -> game over). Prices are flat across the decades (no inflation).
-import { WORLD_SCALE } from '../config.js';
+import { WORLD_SCALE, TRIP_RATE } from '../config.js';
 import { vehicleById, VEHICLES } from './catalogue.js';
 import { seededRng, hashSeed, pick, range } from '../engine/rng.js';
 import { gradeFuelFactor } from '../sim/slope.js';
@@ -42,12 +42,12 @@ export const formatMoney = n => `${n < 0 ? '-' : ''}£${Math.abs(Math.round(n)).
 // ---- Fuel, wear and damage -----------------------------------------------------------------------------------
 
 /**
- * Fuel (litres, or kWh for electric) used to drive `worldMetres`: the vehicle's rate per 100 real km, up to 70%
+ * Fuel (litres, or kWh for electric) used to drive `worldMetres`: the vehicle's rate per 100 real km (times TRIP_RATE, so a minute of driving burns what it did at 1:13), up to 70%
  * more when fully loaded, a little less when coasting, and more climbing / less descending (gradeFuelFactor: +12%
  * per 1% up, -8% per 1% down, floor 0.3; `grade` is along the direction of travel).
  */
 export function fuelBurn(spec, worldMetres, loadFraction = 0, throttle = 1, grade = 0) {
-    const realKm = worldMetres / WORLD_SCALE / 1000;
+    const realKm = (worldMetres / WORLD_SCALE / 1000) * TRIP_RATE;
     return (spec.fuelUse / 100) * realKm * (1 + 0.7 * Math.min(1, Math.max(0, loadFraction))) * (0.45 + 0.55 * throttle) * gradeFuelFactor(grade);
 }
 
@@ -57,6 +57,8 @@ export const refuelCost = (spec, fuel) => Math.max(0, spec.fuelTank - fuel) * fu
 
 /** Wear in percent per real mile driven. */
 export const WEAR_PER_MILE = 0.02;
+/** Wear for driving `miles` real miles: per-mile wear times TRIP_RATE, so wear per minute of driving is as at 1:13. */
+export const wearForMiles = miles => miles * WEAR_PER_MILE * TRIP_RATE;
 
 /**
  * Hills: a full-throttle climb steeper than CLIMB_GRADE strains the engine once it has gone on for CLIMB_AFTER

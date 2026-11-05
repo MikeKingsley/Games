@@ -197,13 +197,13 @@ test('building every edge in the region takes well under a second and stays with
     }
     assert.ok(built > 1000);
     // the time budget grows with the road length in world metres: 3 s at the old 1:13, so 3.25x that at 1:4 (Phase 12 adds corridor LOD)
-    assert.ok(Date.now() - t < 3000 * LEGACY_DISTANCE, `took ${Date.now() - t} ms`);
+    assert.ok(Date.now() - t < 3000 * TRIP_RATE, `took ${Date.now() - t} ms`);
     assert.ok(tris / built < 600, `${(tris / built) | 0} triangles per edge on average`);
     void region;
 });
 
 import { buildChunkRoads, edgeWindows } from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/road-mesh.js';
-import { CHUNK_SIZE, LEGACY_DISTANCE } from '../../Games.Client/wwwroot/games/delivery-driver/config.js';
+import { CHUNK_SIZE, TRIP_RATE } from '../../Games.Client/wwwroot/games/delivery-driver/config.js';
 
 test('chunk roads: the chunks\' windows tile every edge exactly, and the merge keeps the counts', () => {
     const exeter = region.townById.get('exeter');

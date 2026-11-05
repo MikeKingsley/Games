@@ -2,8 +2,19 @@
 
 /** Real metres to world metres: the map is 1:4 (plan 0009). Vehicle speeds stay real mph, so Exeter-Penzance takes ~3x longer than at the old 1:13. */
 export const WORLD_SCALE = 1 / 4;
-/** Multiplier for world distances that were tuned at the old 1:13 map (offer ranges and route limits): same real distance at 1:4. */
-export const LEGACY_DISTANCE = WORLD_SCALE * 13;
+/** The map scale before plan 0009 (1:13), the baseline every economy value was tuned against. */
+export const LEGACY_SCALE = 1 / 13;
+/**
+ * New-to-old map scale (3.25). Vehicle speeds are unchanged real mph, so any real distance now takes TRIP_RATE times
+ * longer to drive than at 1:13. It is the one economy/timing rebalance constant:
+ * - per-real-mile rates (job pay per mile, fuel per km, wear per mile) are multiplied by it, so a minute of driving
+ *   pays and costs what it did at 1:13 (distances shown to the player stay real miles via worldToMiles);
+ * - world-metre distances tuned at 1:13 (offer ranges, route limits, farm radius, minimum trip lengths) are
+ *   multiplied by it so jobs still span the same real distances (their drive times grow by the same factor, and
+ *   contract windows follow because they derive from route length / speed);
+ * - the Phase 5 map-raster cell and a road-mesh time budget reuse it as a plain "same real area" factor.
+ */
+export const TRIP_RATE = WORLD_SCALE / LEGACY_SCALE;
 /** Game minutes per real minute: 1 real minute = 15 game minutes. */
 export const TIME_SCALE = 15;
 /** Reference latitude for the equirectangular projection. */
