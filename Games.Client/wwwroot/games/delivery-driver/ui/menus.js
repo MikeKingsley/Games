@@ -147,7 +147,7 @@ function registerCoreScreens(menus, session) {
         },
         mounted(panel) {
             const canvas = panel.querySelector('.dd-fullmap');
-            view ??= { x: session.player.x, y: session.player.y, range: 7000 };
+            view ??= { x: session.player.x, y: session.player.y, range: 14000 };
             const draw = () => {
                 const dpr = Math.min(2, window.devicePixelRatio || 1);
                 const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -197,7 +197,7 @@ function registerCoreScreens(menus, session) {
     });
 }
 
-const clampRange = r => Math.max(150, Math.min(32000, r));
+const clampRange = r => Math.max(150, Math.min(64000, r));
 
 function contractsHtml(session, depot) {
     const job = session.career.job;

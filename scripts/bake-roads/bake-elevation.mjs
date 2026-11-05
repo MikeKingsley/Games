@@ -4,7 +4,7 @@
 // (`unproject`), so the terrain lines up with the baked roads. At 1:4 the default 24 world m cell (~96 real m, the
 // source DEM is ~49 m) gives ~3.5 M cells, delta/run-length coded to about 1 MB (world/elevation-format.js).
 //
-//   node scripts/bake-roads/bake-elevation.mjs [--cell 24]
+//   node scripts/bake-roads/bake-elevation.mjs [--cell 48]
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,7 +16,7 @@ const game = p => import(pathToFileURL(`${GAME}/${p}`).href);
 const lonToTileX = (lon, z) => ((lon + 180) / 360) * 2 ** z;
 const latToTileY = (lat, z) => { const r = (lat * Math.PI) / 180; return ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** z; };
 
-export async function bakeElevation(seed, { outDir = `${GAME}/world/seed/baked`, cell = 24, log = console.log } = {}) {
+export async function bakeElevation(seed, { outDir = `${GAME}/world/seed/baked`, cell = 48, log = console.log } = {}) {
     const dir = resolve(CACHE, 'elevation');
     const meta = JSON.parse(readFileSync(resolve(dir, 'grid.json'), 'utf8'));
     const raw = readFileSync(resolve(dir, 'grid.f32'));
@@ -59,5 +59,5 @@ export async function bakeElevation(seed, { outDir = `${GAME}/world/seed/baked`,
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
     const i = process.argv.indexOf('--cell');
-    await bakeElevation(loadSeed(), { cell: i > 0 ? +process.argv[i + 1] : 24 });
+    await bakeElevation(loadSeed(), { cell: i > 0 ? +process.argv[i + 1] : 48 });
 }

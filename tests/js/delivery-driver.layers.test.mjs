@@ -27,7 +27,7 @@ test('the region has grade-separated crossings, every separated one clears 5.5 m
         assert.ok(gap >= CLEARANCE - 0.01, `crossing at ${c.x.toFixed(0)},${c.y.toFixed(0)}: ${gap.toFixed(2)} m`);
     }
     // a bridge lifted over a road ramps: some edges are raised, by no more than a sensible amount
-    assert.ok(L.raisedEdges > 100 && L.largestRamp < 600, `${L.raisedEdges} raised, largest ramp ${L.largestRamp.toFixed(0)} m`);
+    assert.ok(L.raisedEdges > 100 && L.largestRamp < 800, `${L.raisedEdges} raised, largest ramp ${L.largestRamp.toFixed(0)} m`);
     assert.ok(L.worstGrade <= 0.25, `worst grade ${L.worstGrade}`);
 });
 

@@ -406,9 +406,13 @@ function addFerry(g, region, f) {
     const line = f.pts.filter(p => p.key);
     if (line.length < 2) return null;
     const ok = n => n.edges.some(id => { const e = g.edges[id]; return (e.cls === 'street' || e.cls === 'B' || e.cls === 'A') && alwaysOpen(e) && !e.oneway && !e.link && !e.dual && !e.bridge && !e.tunnel; });
-    const near = p => g.nodes.filter(n => Math.hypot(n.x - p.x, n.y - p.y) < 350 && ok(n))
+    const near = (p, R = 350) => g.nodes.filter(n => Math.hypot(n.x - p.x, n.y - p.y) < R && ok(n))
         .sort((m, n) => Math.hypot(m.x - p.x, m.y - p.y) - Math.hypot(n.x - p.x, n.y - p.y)).slice(0, 70);
-    const starts = near(line[0]), ends = near(line[line.length - 1]);
+    // each end node must be on its own bank (nearer its own shore point): at 1:2 the Saltash crossing is only 300 m wide, so the two
+    // 350 m searches overlap and the shortest wet pair was two nodes on one bank
+    const p0 = line[0], p1 = line[line.length - 1];
+    const bank = (p, q) => { for (const R of [350, 700, 1200]) { const l = near(p, R).filter(n => Math.hypot(n.x - p.x, n.y - p.y) <= Math.hypot(n.x - q.x, n.y - q.y)); if (l.length) return l; } return []; };
+    const starts = bank(p0, p1), ends = bank(p1, p0);
     // try for a real crossing (12 m of water, then 5 m); where the baked water does not cover the gap (the Dart is not
     // in the coastline) fall back to the two road nodes nearest the seed's shore points
     let best = null;
@@ -417,7 +421,7 @@ function addFerry(g, region, f) {
             for (const b of ends) {
                 if (a === b) continue;
                 const len = Math.hypot(b.x - a.x, b.y - a.y);
-                if (len < (minWet < 0 ? 30 : 16) || len > 600) continue;
+                if (len < (minWet < 0 ? 30 : 16) || len > (minWet < 0 ? 1000 : 600)) continue;
                 let wet = 0;
                 if (minWet >= 0) {
                     const n = Math.max(2, Math.ceil(len / 3));

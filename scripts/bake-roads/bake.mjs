@@ -1556,7 +1556,9 @@ export function absorbIntoRoundabouts(g, { passes = 12 } = {}) {
     const ringOf = n => {
         let w = 0;
         for (const id of n.edges) w = Math.max(w, widthOf(g.edges.get(id)));
-        return RING_ISLAND + w;
+        // the layout sizes the ring from the OSM radius (island up to 14 m plus the circulating width, about 22 m outside): at 1:2 big
+        // roundabouts are bigger than the fixed island, so a junction inside that ring is absorbed too
+        return Math.max(RING_ISLAND + w, Math.min(n.ringRadius ?? 0, 22));
     };
     let absorbed = 0, merged = 0, stubs = 0;
     for (let pass = 0; pass < passes; pass++) {
@@ -1581,6 +1583,24 @@ export function absorbIntoRoundabouts(g, { passes = 12 } = {}) {
                 if (keep !== R) break; // R is gone
             }
         }
+        // a junction that is not joined by a short edge but still stands inside the ring (a hairpin or loop of road comes back
+        // past the roundabout, found at 1:2 where rings are bigger): its surface would overlap the ring's, so it joins the roundabout too
+        const roundabouts = [...g.nodes.values()].filter(R => R.junction === 'roundabout' && !R.mini && R.edges.size >= 3);
+        for (const R of roundabouts) {
+            if (!g.nodes.has(R.id)) continue;
+            const ring = ringOf(R) - 0.4;
+            for (const o of [...g.nodes.values()]) {
+                if (o === R || o.boundary || o.junction === 'roundabout' || o.edges.size < 3 || Math.abs(o.x - R.x) > ring || Math.abs(o.y - R.y) > ring) continue;
+                if (Math.hypot(o.x - R.x, o.y - R.y) >= ring) continue;
+                if ([...o.edges].some(oid => { const f = g.edges.get(oid); return f.segs.some(Boolean); })) continue;
+                if ([...R.edges].some(rid => { const f = g.edges.get(rid); return f.segs.some(Boolean); })) continue;
+                R.signals ||= o.signals;
+                g.mergeNodes(R, o);
+                R.junction = 'roundabout';
+                absorbed++;
+                changed++;
+            }
+        }
         if (changed) contractShort(g, 0.001);
         if (!changed) break;
     }
@@ -1595,6 +1615,19 @@ export function absorbIntoRoundabouts(g, { passes = 12 } = {}) {
 
 /** How much an edge deserves to stay: higher class first, then numbered roads, then the longer one, then the lower id. */
 const keepScore = e => rankOf(e) * 1e9 + (e.ref ? 1e8 : 0) + Math.min(e.len, 9e7) - e.id * 1e-6;
+
+/** True if node `m` would have only one-way roads that all enter it, or all leave it, once `v` is removed. */
+function makesOneWaySink(g, m, v) {
+    let ins = 0, outs = 0, n = 0;
+    for (const id of m.edges) {
+        if (id === v.id) continue;
+        const f = g.edges.get(id);
+        n++;
+        if (!f.oneway || f.a === f.b) return false;
+        if (f.b === m.id) ins++; else outs++;
+    }
+    return n > 0 && (ins === 0 || outs === 0);
+}
 
 /** Longest bridge or tunnel stretch (m, per edge) a minor road may carry and still be dropped whole by generalisation. */
 const DROPPABLE_STRUCTURE = 80;
@@ -1841,6 +1874,8 @@ export function generaliseSeparation(g, { rounds = 8, nudgeRounds = 10, passes =
             const droppable = v => {
                 if (!removable(g, v)) return false;
                 const na = g.nodes.get(v.a), nb = g.nodes.get(v.b);
+                // dropping a slip road must not leave a node that traffic can only drive into (or only out of): its one-way partner would be a dead end
+                if ([na, nb].some(m => !m.boundary && makesOneWaySink(g, m, v))) return false;
                 const spur = na.edges.size === 1 || nb.edges.size === 1;
                 if (!spur && !connectedWithout(g, v, limit) && !tinyBranch(g, v)) return false;
                 return !(isTrunk(v) && !trunkConnectedWithout(g, v));
@@ -2011,6 +2046,15 @@ export function bake(elements, seed, { scale, tolScale = 1, log = () => {}, prob
         if (!overlapsLeft.some(p => !p.level) && !stats.crossings3.final) break;
     }
     log('separation', stats.separation, 'components', stats.components3, 'stubs', stats.stubs2, 'crossings', stats.crossings3);
+    // a junction needs room for its trims and a queue: links under 12 m left by the separation passes (a joined or split road) are contracted
+    stats.shortLinks = contractShort(g, 12);
+    stats.components4 = keepLargestComponent(g);
+    quantiseGraph(g);
+    stats.crossings4 = repairCrossings(g, { straightenBelow: toWorld_(520) });
+    quantiseGraph(g);
+    stats.crossings4.final = findCrossings(g).length;
+    overlapsLeft = findStripOverlaps(g);
+    log("short links", stats.shortLinks, "overlaps left", overlapsLeft.length, "crossings", stats.crossings4);
     // signals within ~25 real metres of a junction (they sit on the approaches), measured in world metres
     const sigWorld = parsed.signals.map(s => proj.fromReal(s.x, s.y));
     stats.junctions = typeJunctions(g, sigWorld, n => Math.max(1.5, 30 * proj.localScale(n.x, n.y)));

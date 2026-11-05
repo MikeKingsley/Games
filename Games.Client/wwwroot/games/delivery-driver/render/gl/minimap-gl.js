@@ -160,8 +160,8 @@ export function buildMapMesh(world, year, { cx, cy, range = RANGE, scale }) {
     const region = world.region;
     // the land east of the seed area (the Canvas map fills it the same way)
     const bx = region.bounds.maxX - 2, land = unit(LAND);
-    const y0 = region.bounds.minY - 9000, y1 = region.bounds.maxY + 9000;
-    const q = [[bx, y0], [bx + 60000, y0], [bx + 60000, y1], [bx, y1]].map(([x, y]) => b.vertex(x, y, 0, 0, 0, 1, land[0], land[1], land[2]));
+    const y0 = region.bounds.minY - 18000, y1 = region.bounds.maxY + 18000;
+    const q = [[bx, y0], [bx + 120000, y0], [bx + 120000, y1], [bx, y1]].map(([x, y]) => b.vertex(x, y, 0, 0, 0, 1, land[0], land[1], land[2]));
     b.tri(q[0], q[1], q[2]); b.tri(q[0], q[2], q[3]);
     const river = unit(RIVER);
     for (const r of region.rivers) {

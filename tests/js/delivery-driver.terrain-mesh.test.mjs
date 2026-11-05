@@ -250,7 +250,7 @@ test('chunk meshes: the sea has a flat water surface and a bluish floor; the moo
 
 // Inland rivers are not in the game (the baked coastline holds the tidal rivers and estuaries), so the water mesh checks
 // run on the sea and estuary water around Plymouth.
-function waterChunksNear(town, r = 2) {
+function waterChunksNear(town, r = 5) { // (Plymouth Sound lies about 1.3 world km from the town centre at 1:2)
     const ci = Math.floor(town.x / CHUNK_SIZE), cj = Math.floor(town.y / CHUNK_SIZE), out = [];
     for (let di = -r; di <= r; di++) for (let dj = -r; dj <= r; dj++) out.push(world.chunks.get(ci + di, cj + dj));
     return out;

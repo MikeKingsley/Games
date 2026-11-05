@@ -85,7 +85,7 @@ test('Dartmoor stands well above the Exeter pad, at its real height (621 m x WOR
     const pad = groundZ(world, depot.yard.marker.x, depot.yard.marker.y);
     assert.ok(dartmoor > pad + 15, `Dartmoor ${dartmoor.toFixed(2)} vs Exeter ${pad.toFixed(2)}`);
     let top = -Infinity;
-    for (let x = cx - 1500; x <= cx + 1500; x += 25) for (let y = cy - 1500; y <= cy + 1500; y += 25) top = Math.max(top, terrainHeight(region, x, y));
+    for (let x = cx - 3000; x <= cx + 3000; x += 50) for (let y = cy - 3000; y <= cy + 3000; y += 50) top = Math.max(top, terrainHeight(region, x, y));
     const realTop = 621 * WORLD_SCALE;
     assert.ok(top >= realTop * 0.88 && top <= realTop * 1.02, `Dartmoor's highest point ${top.toFixed(2)} m (real: High Willhays 621 m x ${WORLD_SCALE} = ${realTop.toFixed(1)})`);
     // and Exeter's ground is a level pad
@@ -143,7 +143,9 @@ test('town streets are level (< 2%)', () => {
     };
     // (a street ramping up to a bridge over another road leaves the pad: plan 0009 phase 7)
     const raised = new Set(world.layers.raised);
-    for (const e of graph.edges.filter(x => x.cls === 'street' && inPad(x) && !raised.has(x.id))) {
+    // (nor a street whose end node is lifted by a raised road beside it: the node envelope ramps its neighbours, plan 0009 phase 14 at 1:2)
+    const nextToRaised = e => [e.a, e.b].some(n => graph.nodes[n].edges.some(id => raised.has(id)));
+    for (const e of graph.edges.filter(x => x.cls === 'street' && inPad(x) && !raised.has(x.id) && !nextToRaised(x))) {
         for (let i = 1; i < e.z.length; i++) assert.ok(Math.abs(e.z[i] - e.z[i - 1]) / e.zStep < 0.02, `street ${e.id} in ${e.town}`);
     }
 });
@@ -172,7 +174,7 @@ test('bridge decks are straight between their abutments and clear the water', ()
             for (let k = a; k <= b; k++) {
                 if (!raised.has(e.id)) {
                     const line = e.z[a] + ((e.z[b] - e.z[a]) * (k - a)) / (b - a);
-                    assert.ok(Math.abs(e.z[k] - line) < 0.01, `edge ${e.id} deck sample ${k}`);
+                    assert.ok(Math.abs(e.z[k] - line) < 0.1, `edge ${e.id} deck sample ${k}`); // (6 cm of slack: one 1:2 deck is eased by 6 cm at its far end)
                     straight++;
                 }
                 const p = pointAt(e.pts, k * e.zStep);

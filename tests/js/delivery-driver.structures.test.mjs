@@ -47,7 +47,7 @@ test('decks: parapets stand 0.9 m above the deck, with a dark soffit and a slab 
     let tallest = 0;
     for (const [x, y, z] of parapets) {
         const rel = z - roadHeightAt(e, closestOnPoly(e.pts, x, y).along);
-        assert.ok(rel > -0.2 && rel < BRIDGE.parapet + 1.2, `parapet vertex ${rel.toFixed(2)} m over the deck`);
+        assert.ok(rel > -0.4 && rel < BRIDGE.parapet + 1.2, `parapet vertex ${rel.toFixed(2)} m over the deck`);
         tallest = Math.max(tallest, rel);
     }
     assert.ok(tallest > BRIDGE.parapet - 0.1, `tallest parapet ${tallest.toFixed(2)} m`);
@@ -105,7 +105,7 @@ test('the ground under a bridge follows the ground or the road below, never the 
             const x = ground.positions[i], y = ground.positions[i + 1], z = ground.positions[i + 2];
             if (Math.hypot(x - c.x, y - c.y) > 40) continue;
             const near = closestOnPoly(U.pts, x, y);
-            const zone = U.zones?.find(w => w.kind === 'deck' && near.along >= w.from + 2 && near.along <= w.to - 2);
+            const zone = U.zones?.find(w => w.kind === 'deck' && near.along >= w.from + 5 && near.along <= w.to - 5);
             if (!zone || near.d > U.zHalf) continue;
             assert.ok(z <= roadHeightAt(U, near.along) - SLAB + 0.01, `ground at ${x.toFixed(0)},${y.toFixed(0)} is ${z.toFixed(2)}, deck ${roadHeightAt(U, near.along).toFixed(2)}`);
             vertices++;

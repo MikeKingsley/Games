@@ -113,7 +113,7 @@ test('soak: seeded traffic around Exeter and Plymouth stays off closed and wrong
         assert.equal(r.inIsland, 0, `${at}: vehicles inside a roundabout island`);
         assert.equal(r.offRing, 0, `${at}: vehicles off a roundabout ring`);
         assert.equal(r.ringWrong, 0, `${at}: vehicles going anticlockwise round a ring`);
-        // (known: Plymouth's signalled junction 12637 and its neighbour 12638 are 16 m apart; queues on their arms touch, a few percent of samples)
+        // (the Plymouth 12637/12638 cluster of the 1:4 bake is gone after the 1:2 re-bake; the 6% allowance for Plymouth is kept as slack)
         assert.ok(r.overlaps <= r.samples * (town === 'plymouth' ? 0.06 : 0.015), `${at}: ${r.overlaps} overlapping samples of ${r.samples}`);
         assert.ok(r.maxAgents >= 4, `${at}: ${r.maxAgents} agents`);
         assert.ok(r.junctionSamples > 0, `${at}: vehicles drove through junction layouts`);

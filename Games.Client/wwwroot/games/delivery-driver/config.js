@@ -1,11 +1,11 @@
 // Tuning constants shared by the logic and the renderer. Pure data: safe to import from Node tests.
 
-/** Real metres to world metres: the map is 1:4 (plan 0009). Vehicle speeds stay real mph, so Exeter-Penzance takes ~3x longer than at the old 1:13. */
-export const WORLD_SCALE = 1 / 4;
+/** Real metres to world metres: the map is 1:2 (plan 0009, moved from 1:4 in phase 14). Vehicle speeds stay real mph, so Exeter-Penzance takes ~6.5x longer than at the old 1:13. */
+export const WORLD_SCALE = 1 / 2;
 /** The map scale before plan 0009 (1:13), the baseline every economy value was tuned against. */
 export const LEGACY_SCALE = 1 / 13;
 /**
- * New-to-old map scale (3.25). Vehicle speeds are unchanged real mph, so any real distance now takes TRIP_RATE times
+ * New-to-old map scale (6.5 at 1:2). Vehicle speeds are unchanged real mph, so any real distance now takes TRIP_RATE times
  * longer to drive than at 1:13. It is the one economy/timing rebalance constant:
  * - per-real-mile rates (job pay per mile, fuel per km, wear per mile) are multiplied by it, so a minute of driving
  *   pays and costs what it did at 1:13 (distances shown to the player stay real miles via worldToMiles);

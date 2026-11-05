@@ -78,6 +78,9 @@ const PALETTE = [['#1d1d1d', '#2a2a2a', '#3b2f2f', '#2c3a2c'], ['#1d1d1d', '#3b3
 /** Roads AI vehicles use (not farm lanes, yard access or ferries). */
 const drivable = (e, year) => edgeOpen(e, year) && e.cls !== 'lane' && e.cls !== 'access' && e.cls !== 'ferry' && !(edgeClass(e, year) === 'M' && year < 1977);
 
+/** Seconds a vehicle may sit still before it is taken off the road (longer than any signal phase or give-way wait). */
+const STUCK_LIMIT = 90;
+
 export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
     const rng = seededRng(seed);
     const traffic = { agents: [], cap, nextId: 1, time: 0, rng, claims: new Map(), densityScale: 1 };
@@ -269,7 +272,10 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
             if (fwd <= 0 || fwd > LOOK) continue;
             const lat = Math.abs(-rx * s + ry * c);
             // (a vehicle on the same road going the same way is in the way whatever its lane: lanes ease sideways between road classes)
-            const sameRoad = o.edge === a.edge && o.forward === a.forward && !o.conn && !a.conn;
+            // (and so is one queued on the road it is about to turn onto: on a very short link the two lanes sit metres apart)
+            const sameRoad = !o.conn && !a.conn && o.forward !== undefined && ((o.edge === a.edge && o.forward === a.forward) || (a.next && o.edge === a.next.edge && o.forward === a.next.forward && fwd < 25 && Math.cos(o.heading - a.heading) > 0.8));
+            // (oncoming traffic is never ahead: two near-parallel streets that leave one node close together would otherwise lock head to head)
+            if (!sameRoad && !a.conn && o.edge !== undefined && o.heading !== undefined && Math.cos(o.heading - a.heading) < -0.5 && endNode(o) !== endNode(a)) continue;
             if (!sameRoad && lat > (a.spec.width + (o.spec?.width ?? o.width ?? 2)) / 2 + 0.4) continue;
             if (otherLayer(a, o, fwd)) continue; // over or under it: not in this vehicle's way
             gap = Math.min(gap, fwd - (a.spec.len + (o.spec?.len ?? o.len ?? 4)) / 2);
@@ -388,6 +394,8 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
             // never roll past a stop line while giving way
             if (yielding) a.speed = Math.min(a.speed, Math.max(0, (toEnd - stopFront - a.spec.len / 2 + 0.5) / dt));
             advance(a, a.speed * dt, ctx.year);
+            // a vehicle jammed for 90 s (a queue folded onto a very short link between two junctions) is taken off the road; another spawns
+            if (a.speed < 0.05) { a.stuck = (a.stuck ?? 0) + dt; if (a.stuck > STUCK_LIMIT) a.gone = true; } else a.stuck = 0;
             const ed = graph.edges[a.edge];
             // ease sideways between lane offsets (a road changing class), follow the lane or the junction path, and let any jump decay
             const wantLat = laneOffset(ed, ctx.year);
