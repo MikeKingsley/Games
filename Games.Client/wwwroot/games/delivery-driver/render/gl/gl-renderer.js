@@ -11,7 +11,7 @@ import { groundZ } from '../../world/terrain.js';
 import { uploadMesh, drawMesh, deleteMesh, ATTRIB_SLOTS, INSTANCE_SLOTS, uploadInstances, drawInstances, deleteInstances, createStream } from './gpu-mesh.js';
 import { buildChunkMesh, buildFarField, WATER_ALPHA } from './terrain-mesh.js';
 import { buildChunkRoads, chunkRoadSignature } from './road-mesh.js';
-import { buildChunkProps, propsEra, chunkSignalNodes, buildDynamicProps, lampStyle } from './prop-mesh.js';
+import { buildChunkProps, chunkPropsSig, chunkSignalNodes, buildDynamicProps, lampStyle } from './prop-mesh.js';
 import { sceneLighting, shadowDirection } from './sun.js';
 import { fitShadow, shadowRadius, SHADOW_SIZE } from './shadow.js';
 import { rainSettings } from './weather.js';
@@ -19,6 +19,7 @@ import { broadleafTemplate, coniferTemplate, rockTemplate, buildTreeInstances, b
 import { signalPhase } from '../../traffic/traffic.js';
 import { currentStop } from '../../game/contracts.js';
 import { createVehicleDrawer } from './gl-vehicles.js';
+import { isLive } from '../../world/furniture.js';
 import { createChunkCache } from './chunk-cache.js';
 import { obliqueCamera, cameraFromView, frustumPlanes, visibleChunks, lodFor, viewDistance } from './camera3d.js';
 
@@ -43,7 +44,7 @@ function refreshRoads(gl, world, entry, year, wet, track) {
 
 /** Rebuilds only the static props mesh (buildings, lamps, signs, hedges) of a cached chunk when the era changed. */
 function refreshProps(gl, world, entry, year, detail, track) {
-    const sig = propsEra(year);
+    const sig = chunkPropsSig(entry.chunk, year);
     entry.data.signals = chunkSignalNodes(world, entry.chunk, year);
     if (sig === entry.data.propsSig) return false;
     if (entry.data.props) { track(-entry.data.props.bytes); deleteMesh(gl, entry.data.props); }
@@ -111,7 +112,7 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
                 const trees = buildTreeInstances(chunk, treeQuality, !near);
                 const data = {
                     ground: uploadMesh(gl, m.ground), surf: uploadMesh(gl, m.surf), water: uploadMesh(gl, m.water), roads: uploadMesh(gl, roads),
-                    roadSig: chunkRoadSignature(world, chunk, year, wet), props: uploadMesh(gl, props), propsSig: propsEra(year),
+                    roadSig: chunkRoadSignature(world, chunk, year, wet), props: uploadMesh(gl, props), propsSig: chunkPropsSig(chunk, year),
                     treesB: uploadInstances(gl, tmpl.broadleaf, trees.broadleaf), treesC: uploadInstances(gl, tmpl.conifer, trees.conifer),
                     rocks: uploadInstances(gl, tmpl.rock, buildRockInstances(chunk)), signals: chunkSignalNodes(world, chunk, year),
                     trees: trees.count, buildings: chunk.buildings.length, furniture: near ? chunk.lamps.length + chunk.signs.length : 0,
@@ -265,6 +266,7 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
         for (const e of entries) {
             if (e.lod !== 0) continue;
             for (const l of e.chunk.lamps ?? []) {
+                if (!isLive(l, yearNow)) continue;
                 const d = Math.hypot(l.x - pl.x, l.y - pl.y);
                 if (d < 55) lamps.push({ l, d });
             }

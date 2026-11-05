@@ -84,6 +84,15 @@ export function drawRoads(ctx, graph, edgeIds, year, detail = true, region = nul
     }
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    // 0. pavements beside town roads (reduced fidelity: one wide stroke under the kerb)
+    if (detail) {
+        ctx.strokeStyle = year < 1950 ? '#aaa597' : '#8f8c86';
+        for (const e of list) {
+            if (!e.town || e.link || e.bridge || e.tunnel || (e.cls !== 'street' && e.cls !== 'B' && e.cls !== 'A')) continue;
+            ctx.lineWidth = edgeWidth(e, year) + 1.6 + 2.4;
+            ctx.stroke(pathOf(e));
+        }
+    }
     // 1. kerbs/verges
     ctx.strokeStyle = style.kerb;
     for (const e of list) {
@@ -131,7 +140,7 @@ export function drawRoads(ctx, graph, edgeIds, year, detail = true, region = nul
                 ctx.stroke(paths[1]);
                 ctx.setLineDash([]);
             }
-        } else if (style.centre && (cls !== 'street' || year >= 1935)) {
+        } else if (style.centre && !e.oneway && (cls !== 'street' || year >= 1935)) {
             ctx.setLineDash([3, 6]);
             ctx.strokeStyle = style.centre;
             ctx.lineWidth = 0.15;

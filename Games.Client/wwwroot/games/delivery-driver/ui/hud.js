@@ -50,9 +50,10 @@ export function createHud(root, { onMinimap } = {}) {
     const toast = el('div', 'dd-toast hide');
     const rotate = el('div', 'dd-rotate'); rotate.textContent = 'Turn your device sideways for a bigger view';
     const mini = el('canvas', 'dd-minimap');
-    mini.title = 'Map (M)';
+    mini.title = 'Map (M). Map data © OpenStreetMap contributors (ODbL)';
     mini.addEventListener('click', () => onMinimap?.());
-    root.append(top, job, gauges, indL, indR, toast, rotate, mini);
+    const attr = el('div', 'dd-attr'); attr.textContent = '© OpenStreetMap contributors';
+    root.append(top, job, gauges, indL, indR, toast, rotate, mini, attr);
     const minimap = createMinimap(mini);
 
     const cache = new Map();

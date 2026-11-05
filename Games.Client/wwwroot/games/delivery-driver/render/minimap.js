@@ -1,6 +1,6 @@
 // Minimap: roads around the player, towns, the route line to the next stop and the target, drawn on a small
 // round canvas. It turns with the chase camera (or stays north-up) and is redrawn a few times a second.
-import { RANGE, ROUTE_COLOUR, ROAD_COLOURS, roadPixels, visibleRoads, reliefRaster, sharedGlMap } from './gl/minimap-gl.js';
+import { RANGE, ROUTE_COLOUR, ROAD_COLOURS, roadColour, roadPixels, visibleRoads, reliefRaster, sharedGlMap } from './gl/minimap-gl.js';
 
 export { ROUTE_COLOUR };
 
@@ -77,7 +77,7 @@ export function drawMap(ctx, session, { w, h, cx, cy, range = RANGE, rot = 0, pl
     // roads: small ones only when zoomed in
     const year = session.year;
     for (const { edge: e, cls } of visibleRoads(world, year, { cx, cy, range })) {
-        ctx.strokeStyle = ROAD_COLOURS[cls] ?? '#ccc';
+        ctx.strokeStyle = roadColour(e, cls);
         ctx.lineWidth = roadPixels(cls) / scale;
         if (cls === 'ferry') ctx.setLineDash([4 / scale, 4 / scale]);
         ctx.beginPath();

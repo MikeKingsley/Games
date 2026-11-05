@@ -8,6 +8,7 @@ import { eraOf } from '../era.js';
 import { CHUNK_SIZE } from '../../config.js';
 import { groundZ } from '../../world/terrain.js';
 import { clearOfRoads, junctionType } from '../../world/roadgraph.js';
+import { isLive, signalPolesOf } from '../../world/furniture.js';
 import { obb } from '../../sim/collision.js';
 import { waterAt } from '../../world/region.js';
 
@@ -40,6 +41,13 @@ export function addLamp(b, lamp, year) {
 /** A signpost: a white finger post before 1965, a Worboys-style green sign on two posts after. */
 export function addSign(b, sign, year) {
     const z = sign.z ?? 0;
+    if (sign.kind === 'giveway' || sign.kind === 'roundabout') {
+        // a post with a plate facing oncoming traffic: a red-edged white triangle (approximated by a square plate) / a blue disc
+        compose.cylinder(b, sign.x, sign.y, z, 0.04, 2.1, 5, hex('#777777'));
+        const plate = sign.kind === 'giveway' ? hex('#f1efe9') : hex('#1f4f9a');
+        compose.prism(b, rectPoly(sign.x, sign.y, 0.06, 0.7, sign.angle), 0.7, plate, { z0: z + 1.5, roofColor: sign.kind === 'giveway' ? hex('#c0261d') : plate });
+        return;
+    }
     if (year < 1965) {
         const white = hex('#ece8dc');
         compose.cylinder(b, sign.x, sign.y, z, 0.07, 2.8, 5, white);
@@ -116,6 +124,8 @@ export function addHarbour(b, harbour) {
 
 /** The per-chunk static props mesh signature input: rebuild when this changes (a year crossing an era). */
 export const propsEra = year => `${buildingEra(year)}:${year < 1965 ? 0 : 1}`;
+/** Props signature of a chunk in a year: the era plus which of its lamps and signs stand (they come and go with their roads). */
+export const chunkPropsSig = (chunk, year) => `${propsEra(year)}:${(chunk.lamps ?? []).filter(l => isLive(l, year)).length}:${(chunk.signs ?? []).filter(s => isLive(s, year)).length}`;
 
 /**
  * One merged mesh for a chunk: its buildings, plus (when `detail`) lamps, signs, hedges and the harbours whose centre
@@ -125,8 +135,8 @@ export function buildChunkProps(world, chunk, year, { detail = true } = {}) {
     const b = createBuilder();
     for (const bd of chunk.buildings) addBuilding(b, bd, year, detail);
     if (detail) {
-        for (const l of chunk.lamps ?? []) addLamp(b, l, year);
-        for (const s of chunk.signs ?? []) addSign(b, s, year);
+        for (const l of chunk.lamps ?? []) if (isLive(l, year)) addLamp(b, l, year);
+        for (const s of chunk.signs ?? []) if (isLive(s, year)) addSign(b, s, year);
         if (chunk.hedges?.length) addHedges(b, chunk.hedges, (x, y) => groundZ(world, x, y), world.graph, world.region);
     }
     const x0 = chunk.i * CHUNK_SIZE, y0 = chunk.j * CHUNK_SIZE;
@@ -166,12 +176,12 @@ const SIGNAL = { pole: hex('#2b2b2b'), head: hex('#111111'), green: hex('#3cff6a
  * phase (`phase` is 0 or 1 from traffic.js signalPhase; corners 0/2 are east-west, 1/3 north-south).
  */
 export function addSignals(b, world, node, phase) {
-    for (const c of signalCorners(node)) {
+    for (const c of signalPolesOf(world, node)) {
         const z = groundZ(world, c.x, c.y);
         compose.cylinder(b, c.x, c.y, z, 0.07, 3, 5, SIGNAL.pole);
-        const cs = Math.cos(c.face), sn = Math.sin(c.face);
+        const cs = Math.cos(c.face), sn = Math.sin(c.face); // the head looks back along the arm toward oncoming traffic
         compose.prism(b, rectPoly(c.x, c.y, 0.3, 0.36, c.face), 0.95, SIGNAL.head, { z0: z + 2.4 });
-        const green = (c.k % 2) === phase;
+        const green = c.group === phase;
         // the lamp: a small quad on the face turned toward the junction
         const nx = cs, ny = sn, tx = -sn, ty = cs;
         const ox = c.x + nx * 0.17, oy = c.y + ny * 0.17, zc = z + (green ? 2.55 : 3.2);

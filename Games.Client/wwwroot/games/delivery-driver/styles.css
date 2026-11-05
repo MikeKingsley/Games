@@ -55,6 +55,11 @@
     position: absolute; right: max(8px, env(safe-area-inset-right)); bottom: max(8px, env(safe-area-inset-bottom));
     width: 180px; height: 180px; border-radius: 50%; border: 3px solid #0008; background: #2a3a22; pointer-events: auto; cursor: pointer;
 }
+.dd-attr {
+    position: absolute; right: max(8px, env(safe-area-inset-right)); bottom: max(2px, env(safe-area-inset-bottom)); font-size: 9px; line-height: 1;
+    color: #fffc; text-shadow: 0 0 3px #000; pointer-events: none; opacity: 0.8;
+}
+.dd-root.touch .dd-attr { top: calc(max(8px, env(safe-area-inset-top)) + 96px + 132px); bottom: auto; }
 .dd-hud-buttons { position: absolute; top: 50%; right: 8px; transform: translateY(-50%); display: none; flex-direction: column; gap: 8px; }
 .dd-rotate {
     position: absolute; inset: auto 0 40% 0; margin: auto; width: max-content; background: var(--dd-panel);

@@ -14,6 +14,10 @@ export function saveSettings(settings, storage = globalThis.localStorage) {
     try { storage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* storage full or blocked */ }
 }
 
+/** Required credit for the road, coastline and elevation data (ODbL; see scripts/bake-roads/NOTICE.md). */
+export const ATTRIBUTION = 'Map data © OpenStreetMap contributors (ODbL). Elevation: Mapzen terrain tiles (SRTM and other public sources).';
+const credit = `<p class="dd-muted"><small>${ATTRIBUTION}</small></p>`;
+
 const when = t => (t ? new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
 
 /**
@@ -48,7 +52,7 @@ export function registerStartScreens(menus, ctx) {
             html += '</ul>';
             if (any && list.every(s => !s.empty)) html += '<p class="dd-muted">All slots are in use: delete one to start another company.</p>';
             if (session.career && args.inGame) html += '<p><button class="dd-btn" data-act="back">Back to the game</button></p>';
-            return html;
+            return html + credit;
         },
         mounted(panel) {
             panel.querySelectorAll('[data-import]').forEach(input => input.addEventListener('change', async () => {
@@ -105,7 +109,7 @@ export function registerStartScreens(menus, ctx) {
                 + '<button class="dd-btn" data-act="wait" data-h="morning">Wait until morning</button>'
                 + '</p><h3>Stuck?</h3><p class="dd-tabs">'
                 + '<button class="dd-btn" data-act="recover">Recover truck to depot (tow charge)</button></p><p class="dd-tabs">'
-                + `${session.tutorial && !session.tutorial.done ? '<button class="dd-btn" data-act="skip">Skip the tutorial</button>' : ''}</p>${message ? `<p class="dd-muted">${escape(message)}</p>` : ''}`;
+                + `${session.tutorial && !session.tutorial.done ? '<button class="dd-btn" data-act="skip">Skip the tutorial</button>' : ''}</p>${message ? `<p class="dd-muted">${escape(message)}</p>` : ''}${credit}`;
         },
         act(action, data, m) {
             message = '';

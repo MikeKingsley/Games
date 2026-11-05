@@ -7,7 +7,9 @@ import { drawRoads, drawJunctions, drawBridges } from './draw-road.js';
 import { drawBuilding, drawTree, drawRock, drawCone } from './draw-buildings.js';
 import { groundTransform } from './sprite-cache.js';
 import { drawLamp, drawSign, drawSignals } from './era.js';
+import { isLive } from '../world/furniture.js';
 import { junctionType } from '../world/roadgraph.js';
+import { bbox } from '../world/geom.js';
 import { signalPhase } from '../traffic/traffic.js';
 import { drawNightGround, drawDusk, drawHeadlights, drawRain, drawFog } from './draw-weather.js';
 import { bodyCentre } from '../sim/vehicle.js';
@@ -78,7 +80,17 @@ export function createRenderer(ctx, view) {
             drawHarbours(ctx, world, vw);
             edgeIds.clear();
             nodeIds.clear();
-            for (const c of chunks) for (const id of c.edges) edgeIds.add(id);
+            // only edges that reach into the view circle (a chunk's edge list also holds roads far off its corner), and
+            // not the small streets and lanes when zoomed right out (the real network has thousands of short edges)
+            for (const c of chunks) {
+                for (const id of c.edges) {
+                    const e = world.graph.edges[id];
+                    if (!detail && (e.cls === 'street' || e.cls === 'lane' || e.cls === 'access')) continue;
+                    const bb = (e._bb ??= bbox(e.pts));
+                    const dx = Math.max(bb.minX - p.cx, 0, p.cx - bb.maxX), dy = Math.max(bb.minY - p.cy, 0, p.cy - bb.maxY);
+                    if (dx * dx + dy * dy <= (r + 12) * (r + 12)) edgeIds.add(id);
+                }
+            }
             for (const id of edgeIds) { const e = world.graph.edges[id]; nodeIds.add(e.a); nodeIds.add(e.b); }
             for (const y of world.yards) {
                 if (Math.hypot(y.yard.zone.x - p.cx, y.yard.zone.y - p.cy) < r + 40) drawYard(ctx, y, y === session.activeYard);
@@ -120,8 +132,8 @@ export function createRenderer(ctx, view) {
                 }
                 for (const rk of c.rocks) if (near(rk.x, rk.y)) drawables.push(item('r', rk, depth(p, rk.x, rk.y)));
                 if (detail) {
-                    for (const l of c.lamps ?? []) if (near(l.x, l.y)) drawables.push(item('l', l, depth(p, l.x, l.y)));
-                    for (const sg of c.signs ?? []) if (near(sg.x, sg.y)) drawables.push(item('s', sg, depth(p, sg.x, sg.y)));
+                    for (const l of c.lamps ?? []) if (isLive(l, year) && near(l.x, l.y)) drawables.push(item('l', l, depth(p, l.x, l.y)));
+                    for (const sg of c.signs ?? []) if (isLive(sg, year) && near(sg.x, sg.y)) drawables.push(item('s', sg, depth(p, sg.x, sg.y)));
                 }
             }
             for (const id of nodeIds) {

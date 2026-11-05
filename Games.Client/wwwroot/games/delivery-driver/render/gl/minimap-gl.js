@@ -104,6 +104,15 @@ export function reliefRaster(world, cell = 60) {
 
 // ---- roads and the map mesh -----------------------------------------------------------------------------------
 
+/** One-way roads are drawn in a cooler tint of their class colour so they read as different from two-way ones. */
+export const ONEWAY_TINT = '#8aa4c8';
+export const roadColour = (edge, cls) => (edge.oneway && cls !== 'ferry' ? mixHex(ROAD_COLOURS[cls] ?? '#cccccc', ONEWAY_TINT, 0.45) : ROAD_COLOURS[cls] ?? '#cccccc');
+function mixHex(a, b, t) {
+    const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+    const ch = sh => Math.round(((pa >> sh) & 255) * (1 - t) + ((pb >> sh) & 255) * t);
+    return `#${[16, 8, 0].map(sh => ch(sh).toString(16).padStart(2, '0')).join('')}`;
+}
+
 /** Road line width in screen pixels. */
 export const roadPixels = cls => (cls === 'M' || cls === 'dual' ? 3.2 : cls === 'A' ? 2.6 : cls === 'B' ? 2 : 1.4);
 
@@ -163,7 +172,7 @@ export function buildMapMesh(world, year, { cx, cy, range = RANGE, scale }) {
         addDisc(b, t.x, t.y, t.radius, town, 28);
     }
     for (const { edge, cls } of visibleRoads(world, year, { cx, cy, range })) {
-        addStrip(b, edgePoints(edge.pts), roadPixels(cls) / scale, 0, hexRgb(ROAD_COLOURS[cls] ?? '#cccccc'));
+        addStrip(b, edgePoints(edge.pts), roadPixels(cls) / scale, 0, hexRgb(roadColour(edge, cls)));
     }
     return b.finish();
 }
