@@ -1477,6 +1477,12 @@ async function main() {
         stats: { nodes: g.nodes.size, edges: g.edges.size, perClass, junctions: res.stats.junctions },
     };
     write('manifest.json', manifest);
+    // real elevation (needs the cached grid from fetch-elevation.mjs; patches manifest.json with an `elevation` entry)
+    if (existsSync(resolve(CACHE, 'elevation', 'grid.f32'))) {
+        const { bakeElevation } = await import('./bake-elevation.mjs');
+        const dem = await bakeElevation(seed, { outDir, log: quiet ? () => {} : console.log });
+        files_.push({ name: 'elevation.bin', bytes: dem.width * dem.height * 2, gzip: gzipSync(readFileSync(resolve(outDir, 'elevation.bin')), { level: 9 }).length });
+    }
 
     const gz = files_.reduce((a, f) => a + f.gzip, 0), raw = files_.reduce((a, f) => a + f.bytes, 0);
     console.log(`\nnodes ${g.nodes.size}, edges ${g.edges.size}`);

@@ -5,7 +5,7 @@ used by Delivery Driver (plan `_docs/plans/0008-delivery-driver-real-roads.md`).
 gitignored `.cache/` folder; the baked output is written under
 `Games.Client/wwwroot/games/delivery-driver/world/seed/baked/`.
 
-Map data © OpenStreetMap contributors (ODbL). Elevation: AWS Open Data terrain tiles (Terrarium).
+Map data © OpenStreetMap contributors (ODbL). Elevation: AWS Open Data terrain tiles (Terrarium). See `NOTICE.md`.
 
 ## Prerequisites
 
@@ -71,3 +71,19 @@ must go through the same projection.
 `roundaboutFrom`). Precedence: curated table, OSM `start_date`, class rules, town growth rings, then propagation so
 nothing opens before it is reachable. The bake fails (exit 1, nothing written) if any town centre is cut off from the
 main network in 1919, 1930, 1950, 1970, 1990 or 2024. Edit `history.json` and re-run `node scripts/bake-roads/bake.mjs`.
+
+## Elevation bake
+
+`bake.mjs` also runs `bake-elevation.mjs` when `.cache/elevation/grid.f32` exists (it can be run alone:
+`node scripts/bake-roads/bake-elevation.mjs [--cell 12]`). It resamples the Mercator grid onto a 12 world-metre grid
+through the town-lens projection and writes `elevation.bin` (format in `world/elevation-format.js`) plus an
+`elevation` entry in `manifest.json`.
+
+## Checks
+
+```
+node scripts/validate-roads.mjs --area all --check-yards --furniture --strict   # graph, yards, furniture (full game world)
+node scripts/validate-roads.mjs --baked --area all                               # the baked graph alone
+node scripts/terrain-stats.mjs                                                  # land heights and road grades
+node scripts/traffic-soak.mjs --town exeter --steps 10000                        # seeded traffic soak
+```

@@ -6,7 +6,9 @@
 //
 // --baked validates the baked OSM graph (world/seed/baked/, see scripts/bake-roads/bake.mjs) instead of the seeded
 // world, with the baked coast for water, and adds the trunk chain check (M5, A30 and A38 form one network).
-// Exit code is 0 unless --strict is given and a hard check fails. Not yet implemented: --check-yards.
+// // --check-yards (full game world only) checks every depot, garage, industry site and farm: connected to the main
+// road network in each sample year, its yard clear of roads and of other yards.
+// Exit code is 0 unless --strict is given and a hard check fails.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -20,7 +22,9 @@ const { closestOnPoly, pointAt } = await game('world/geom.js');
 const { waterAt } = await game('world/region.js');
 const { obb, sat } = await game('sim/collision.js');
 const { gradeLimit } = await game('world/terrain.js');
+const { isLive } = await game('world/furniture.js');
 
+const SAMPLE_YEARS = [1919, 1930, 1950, 1970, 1990, 2024];
 const DEFAULT_AREAS = ['exeter', 'plymouth', 'truro', 'penzance'];
 const YARD_KINDS = new Set(['depot', 'site', 'farm']);
 
@@ -191,6 +195,57 @@ export function validateChains(world, { refs = ['M5', 'A30', 'A38'], year = 2024
     return { counts: { components: list.length, edges: edges.length, km: +(edges.reduce((a, e) => a + e.len, 0) / 1000).toFixed(1), sizes: list.slice(0, 5).map(c => +c.len.toFixed(0)) }, issues };
 }
 
+/**
+ * Yard checks. `world` needs `graph` (with `index`) and `yards` (depots, garages, sites, farms; each with `node`,
+ * `yard.zone`). Hard issues: yard-disconnected (its node is not in the biggest road component in a sample year),
+ * yard-on-road (the yard zone overlaps a carriageway other than its own access), yard-overlap (two yard zones overlap).
+ */
+export function validateYards(world, { years = SAMPLE_YEARS } = {}) {
+    const { graph } = world;
+    const issues = [];
+    const add = (check, y, detail) => issues.push({ check, hard: true, x: y.x, y: y.y, detail });
+    for (const year of years) {
+        const parent = graph.nodes.map((_, i) => i);
+        const find = x => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+        const size = new Map();
+        for (const e of graph.edges) if (edgeOpen(e, year)) parent[find(e.a)] = find(e.b);
+        for (const n of graph.nodes) if (n.edges.some(id => edgeOpen(graph.edges[id], year))) { const r = find(n.id); size.set(r, (size.get(r) ?? 0) + 1); }
+        const main = [...size.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+        for (const y of world.yards) if (find(y.node) !== main) add('yard-disconnected', y, `${y.name} (${y.type}) is not on the main road network in ${year}`);
+    }
+    for (const y of world.yards) {
+        const own = new Set(graph.nodes[y.node].edges);
+        const zone = y.yard.zone;
+        for (const s of graph.index.near(zone.x, zone.y, Math.hypot(zone.hx, zone.hy) + 30)) {
+            if (own.has(s.edge)) continue;
+            const e = graph.edges[s.edge];
+            if (e.cls === 'ferry') continue;
+            const ax = e.pts[2 * s.seg], ay = e.pts[2 * s.seg + 1], bx = e.pts[2 * s.seg + 2], by = e.pts[2 * s.seg + 3];
+            if (segBoxGap(ax, ay, bx, by, zone) < ROAD_CLASS[e.cls].width / 2 - 0.01) { add('yard-on-road', y, `${y.name} (${y.type}) overlaps ${e.name ?? e.cls}`); break; }
+        }
+    }
+    for (let i = 0; i < world.yards.length; i++) {
+        for (let j = i + 1; j < world.yards.length; j++) {
+            const a = world.yards[i].yard.zone, b = world.yards[j].yard.zone;
+            if (Math.hypot(a.x - b.x, a.y - b.y) < 80 && sat(a, b)) add('yard-overlap', world.yards[i], `${world.yards[i].name} overlaps ${world.yards[j].name}`);
+        }
+    }
+    return { counts: { yards: world.yards.length }, issues };
+}
+
+/** Distance from a segment to an obb (0 when they touch), by sampling. */
+function segBoxGap(ax, ay, bx, by, box) {
+    const c = Math.cos(box.angle), s = Math.sin(box.angle);
+    const n = Math.max(2, Math.ceil(Math.hypot(bx - ax, by - ay) / 1.5));
+    let best = Infinity;
+    for (let i = 0; i <= n; i++) {
+        const x = ax + ((bx - ax) * i) / n - box.x, y = ay + ((by - ay) * i) / n - box.y;
+        const lx = x * c + y * s, ly = -x * s + y * c;
+        best = Math.min(best, Math.hypot(Math.max(0, Math.abs(lx) - box.hx), Math.max(0, Math.abs(ly) - box.hy)));
+    }
+    return best;
+}
+
 /** Builds a validation world ({graph, region}) from the baked tiles under world/seed/baked/. */
 export async function loadBakedWorld(dir = `${GAME}/world/seed/baked`) {
     const { decodeTiles, decodeLines } = await game('world/baked-format.js');
@@ -269,14 +324,14 @@ export function validateFurniture(world, props, { year = 2024, margin = 0.5, bui
 }
 
 /** Lamps, signs and signals of the chunks covering a box (generates them). */
-export function collectFurniture(world, box) {
+export function collectFurniture(world, box, year = 2024) {
     const { CHUNK_SIZE } = world.constants;
     const props = [], buildings = new Map();
     for (let i = Math.floor(box.minX / CHUNK_SIZE); i <= Math.floor(box.maxX / CHUNK_SIZE); i++) {
         for (let j = Math.floor(box.minY / CHUNK_SIZE); j <= Math.floor(box.maxY / CHUNK_SIZE); j++) {
             const c = world.chunks.get(i, j);
-            for (const l of c.lamps ?? []) props.push({ kind: 'lamp', x: l.x, y: l.y });
-            for (const s of c.signs ?? []) props.push({ kind: 'sign', x: s.x, y: s.y });
+            for (const l of c.lamps ?? []) if (isLive(l, year)) props.push({ kind: 'lamp', x: l.x, y: l.y });
+            for (const s of c.signs ?? []) if (isLive(s, year)) props.push({ kind: 'sign', x: s.x, y: s.y });
             for (const s of c.signals ?? []) props.push({ kind: 'signal', x: s.x, y: s.y });
             for (const b of c.buildings ?? []) buildings.set(b, b);
         }
@@ -285,6 +340,8 @@ export function collectFurniture(world, box) {
 }
 
 // ---- CLI ---------------------------------------------------------------------------------------------------------
+
+const toArrayBuffer = b => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 
 function parseArgs(argv) {
     const o = { area: DEFAULT_AREAS.join(','), year: 2024, radius: 1500, furniture: false, strict: false, json: false };
@@ -297,7 +354,7 @@ function parseArgs(argv) {
         else if (a === '--strict') o.strict = true;
         else if (a === '--json') o.json = true;
         else if (a === '--baked') o.baked = true;
-        else if (a === '--check-yards') o.unsupported = [...(o.unsupported ?? []), a];
+        else if (a === '--check-yards') o.yards = true;
         else throw new Error(`unknown argument ${a}`);
     }
     return o;
@@ -312,10 +369,15 @@ async function main() {
         if (opts.furniture) { console.warn('note: --furniture needs generated chunks; not available with --baked yet'); opts.furniture = false; }
     } else {
         const { createWorld } = await game('world/world.js');
-        world = createWorld(JSON.parse(readFileSync(`${GAME}/world/seed/sw-england.json`, 'utf8')));
+        // the full game world: seed + baked roads + yards, farms and generated chunks (what the game builds at load)
+        const { decodeBaked } = await game('world/baked-loader.js');
+        const dir = `${GAME}/world/seed/baked`;
+        const manifest = JSON.parse(readFileSync(`${dir}/manifest.json`, 'utf8'));
+        const baked = decodeBaked(manifest, manifest.tiles.map(t => JSON.parse(readFileSync(`${dir}/${t.file}`, 'utf8'))), JSON.parse(readFileSync(`${dir}/${manifest.coast}`, 'utf8')), toArrayBuffer(readFileSync(`${dir}/${manifest.elevation.file}`)));
+        world = createWorld({ ...JSON.parse(readFileSync(`${GAME}/world/seed/sw-england.json`, 'utf8')), baked });
     }
     world.constants = { CHUNK_SIZE };
-    for (const a of opts.unsupported ?? []) console.warn(`note: ${a} is not implemented yet (baked data arrives in a later phase)`);
+    if (opts.yards && !world.yards) { console.warn('note: --check-yards needs the full game world; it is skipped with --baked'); opts.yards = false; }
 
     const areas = opts.area === 'all' ? [null] : opts.area.split(',').map(id => {
         const t = world.region.towns.find(t => t.id === id);
@@ -332,11 +394,12 @@ async function main() {
         let furnitureCounts = null;
         if (opts.furniture) {
             const fbox = box ?? { minX: world.region.bounds.minX, maxX: world.region.bounds.maxX, minY: world.region.bounds.minY, maxY: world.region.bounds.maxY };
-            const { props, buildings } = collectFurniture(world, fbox);
+            const { props, buildings } = collectFurniture(world, fbox, opts.year);
             const f = validateFurniture(world, props, { year: opts.year, buildings });
             furnitureCounts = f.counts;
             issues = issues.concat(f.issues);
         }
+        if (opts.yards) issues = issues.concat(validateYards(world).issues.filter(i => !box || (i.x >= box.minX && i.x <= box.maxX && i.y >= box.minY && i.y <= box.maxY)));
         const byCheck = {};
         for (const i of issues) byCheck[i.check] = (byCheck[i.check] ?? 0) + 1;
         let chains = null;
