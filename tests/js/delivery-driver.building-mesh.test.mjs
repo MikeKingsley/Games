@@ -169,7 +169,7 @@ test('cones stand up, and lie flat when knocked over', () => {
 });
 
 test('tree instances: expected counts per quality preset, thinned for low quality and far chunks', () => {
-    const c = world.chunks.around(world.region.project(50.65, -3.95).x, world.region.project(50.65, -3.95).y, 900).reduce((best, ch) => (ch.trees.length > best.trees.length ? ch : best));
+    const c = world.chunks.around(world.region.project(50.65, -3.95).x, world.region.project(50.65, -3.95).y, 4500).reduce((best, ch) => (ch.trees.length > best.trees.length ? ch : best));
     assert.ok(c.trees.length > 20, `${c.trees.length} trees`);
     const total = q => I.buildTreeInstances(c, QUALITY[q].trees).count;
     assert.equal(total('high'), c.trees.length);

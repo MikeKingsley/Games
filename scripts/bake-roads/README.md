@@ -47,8 +47,7 @@ so the stitcher replaces any pixel more than 60 m from the mean of its neighbour
 ## Bake
 
 ```
-node scripts/bake-roads/bake.mjs                  # .cache/osm -> world/seed/baked/ (about 12 s)
-node scripts/bake-roads/bake.mjs --no-lens        # plain 1:13 projection, no town lenses
+node scripts/bake-roads/bake.mjs                  # .cache/osm -> world/seed/baked/ (about 13 s)
 node scripts/validate-roads.mjs --baked --area all  # check the result
 ```
 
@@ -58,10 +57,12 @@ footprints, merge, contract, simplify, type junctions, then write the manifest, 
 per town, `coast.json` and `rivers.json` (format in `world/baked-format.js`). It fails if the output exceeds
 10 MiB gzipped.
 
-Coordinates are world metres from `world/projection.js`: the 1:13 projection of `config.js` plus a smooth town lens
-per town, which magnifies each town's real street footprint (`footprintM`) to its game radius so real streets
-stay drivable at the compressed scale. Everything placed in the world (towns, sites, coast, elevation samples)
-must go through the same projection.
+Coordinates are world metres from `world/projection.js`: a plain equirectangular projection at `WORLD_SCALE` in
+`config.js` (1:4 since plan 0009; there is no town lens any more). Clean-up tolerances in `bake()` are written in real
+metres and converted by the scale. Town street footprints are real-metre radii per size (`TOWN_FOOTPRINT` in
+`world/projection.js`: city 1210, town 910, small 730, village 505, exactly what the OSM cache covers); the game's
+`TOWN_RADIUS` is that times the scale. Enlarging them needs a fresh `fetch-osm.mjs` run (it reads `townBoxes`).
+Everything placed in the world (towns, sites, coast, elevation samples) must go through the same projection.
 
 
 ## Era rules (Phase 5)
@@ -75,9 +76,10 @@ main network in 1919, 1930, 1950, 1970, 1990 or 2024. Edit `history.json` and re
 ## Elevation bake
 
 `bake.mjs` also runs `bake-elevation.mjs` when `.cache/elevation/grid.f32` exists (it can be run alone:
-`node scripts/bake-roads/bake-elevation.mjs [--cell 12]`). It resamples the Mercator grid onto a 12 world-metre grid
-through the town-lens projection and writes `elevation.bin` (format in `world/elevation-format.js`) plus an
-`elevation` entry in `manifest.json`.
+`node scripts/bake-roads/bake-elevation.mjs [--cell 24]`). It resamples the Mercator grid onto a 24 world-metre grid
+(~96 real m) through the game projection and writes `elevation.bin` (format `ELV2` in `world/elevation-format.js`:
+plane-predicted residuals, zig-zag varints, zero runs collapsed; about 1.5 MB, 0.6 MB gzipped) plus an `elevation`
+entry in `manifest.json`.
 
 ## Checks
 

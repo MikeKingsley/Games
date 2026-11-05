@@ -8,7 +8,7 @@ import {
     terrainHeight, waterLevel, groundZ, roadHeightAt, slopeAt, slopeFrom, groundNormal, gridHeight, GRID_N,
 } from '../../Games.Client/wwwroot/games/delivery-driver/world/terrain.js';
 import { pointAt } from '../../Games.Client/wwwroot/games/delivery-driver/world/geom.js';
-import { CHUNK_SIZE } from '../../Games.Client/wwwroot/games/delivery-driver/config.js';
+import { CHUNK_SIZE, WORLD_SCALE } from '../../Games.Client/wwwroot/games/delivery-driver/config.js';
 
 const json = () => seedWithBaked();
 const world = createWorld(json());
@@ -75,7 +75,7 @@ test('the sea (and the shore strip) is at or below sea level, and deepens offsho
     assert.equal(waterLevel(region, offshore.x, offshore.y), 0);
 });
 
-test('Dartmoor stands well above the Exeter pad, at its real height (621 m / 13)', () => {
+test('Dartmoor stands well above the Exeter pad, at its real height (621 m x WORLD_SCALE)', () => {
     const moor = region.moors.find(m => m.id === 'dartmoor');
     let cx = 0, cy = 0;
     for (let i = 0; i < moor.pts.length; i += 2) { cx += moor.pts[i]; cy += moor.pts[i + 1]; }
@@ -86,7 +86,8 @@ test('Dartmoor stands well above the Exeter pad, at its real height (621 m / 13)
     assert.ok(dartmoor > pad + 15, `Dartmoor ${dartmoor.toFixed(2)} vs Exeter ${pad.toFixed(2)}`);
     let top = -Infinity;
     for (let x = cx - 1500; x <= cx + 1500; x += 25) for (let y = cy - 1500; y <= cy + 1500; y += 25) top = Math.max(top, terrainHeight(region, x, y));
-    assert.ok(top >= 42 && top <= 48.5, `Dartmoor's highest point ${top.toFixed(2)} m (real: High Willhays 621 m / 13 = 47.8)`);
+    const realTop = 621 * WORLD_SCALE;
+    assert.ok(top >= realTop * 0.88 && top <= realTop * 1.02, `Dartmoor's highest point ${top.toFixed(2)} m (real: High Willhays 621 m x ${WORLD_SCALE} = ${realTop.toFixed(1)})`);
     // and Exeter's ground is a level pad
     for (let k = 0; k < 16; k++) {
         const a = (k / 16) * Math.PI * 2;
@@ -116,7 +117,7 @@ test('no road is ever steeper than its class allows (and none climbs over 12% fo
         for (let i = 1; i < z.length; i++) if (Math.abs(z[i] - z[i - 1]) / zStep > limit + 1e-4) bad.push(`${e.id}@${i}`);
         // between the samples too (roadHeightAt interpolates)
         for (let t = 0; t + 1 <= e.len; t += 2.3) if (Math.abs(roadHeightAt(e, t + 1) - roadHeightAt(e, t)) > limit + 1e-4) bad.push(`${e.id}@${t}m`);
-        for (let t = 0; t + 100 <= e.len; t += 10) if (Math.abs(roadHeightAt(e, t + 100) - roadHeightAt(e, t)) / 100 > 0.12) bad.push(`${e.id} sustained@${t}m`);
+        for (let t = 0; t + 100 <= e.len; t += 10) if (Math.abs(roadHeightAt(e, t + 100) - roadHeightAt(e, t)) / 100 > 0.12 + 1e-4) bad.push(`${e.id} sustained@${t}m`);
     }
     assert.deepEqual(bad.slice(0, 10), []);
     // the relief makes some real hills: a share of the A-roads climb at 4% or more

@@ -3,9 +3,9 @@
 //   node scripts/bake-roads/measure-scale.mjs [--only 1:4,1:13] [--out DIR] [--validate] [--quiet]
 //
 // Re-bakes the cached OSM data (.cache/osm/) several times WITHOUT touching the committed baked folder: every bake is
-// written to a scratch folder (default .cache/measure-scale/<name>/, gitignored) with the town lens off at 1:13, 1:5
+// written to a scratch folder (default .cache/measure-scale/<name>/, gitignored) at 1:13, 1:5
 // and 1:4 (the clean-up tolerances are scaled so they stay the same in real metres, like the planned phase 3 bake),
-// plus two reference rows: today's 1:13 + lens, and 1:4 with the raw (unscaled) tolerances. Per bake it prints:
+// plus two reference rows: the old 1:13 reference and 1:4 with the raw (unscaled) tolerances. Per bake it prints:
 //   - node / edge / vertex counts, edges under 6 m, junction pairs closer than 25 m, gzip size of the road files;
 //   - the share of town street length (class street, inside a town, open in 2024) within 11 m of another road at the
 //     same level that it does not share a node with (ignoring 25 m around a shared node): "overlap";
@@ -14,7 +14,7 @@
 //   - tunnels and bridge spans per level, and roundabouts by real radius band.
 // With --validate it also loads each scratch bake and runs the phase 2 validator checks (scripts/validate-roads.mjs).
 // Limitation: the cached OSM tiles only hold the streets inside each town's current footprint (world/projection.js
-// footprintM), so streets further out than that are not measured.
+// townFootprint), so streets further out than that are not measured.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,11 +30,10 @@ const base = resolve(opt('--out', resolve(CACHE, 'measure-scale')));
 const YEAR = 2024, NEAR = 11, JUNCTION_SKIP = 25, STEP = 3;
 
 const CONFIGS = [
-    { name: '1:13+lens', denom: 13, lens: true },
-    { name: '1:13', denom: 13, lens: false },
-    { name: '1:5', denom: 5, lens: false },
-    { name: '1:4', denom: 4, lens: false },
-    { name: '1:4 rawtol', denom: 4, lens: false, rawTol: true },
+    { name: '1:13', denom: 13 },
+    { name: '1:5', denom: 5 },
+    { name: '1:4', denom: 4 },
+    { name: '1:4 rawtol', denom: 4, rawTol: true },
 ];
 
 // ---- analysis helpers (world metres) ------------------------------------------------------------------------------
@@ -221,7 +220,7 @@ const results = [];
 for (const cfg of CONFIGS.filter(c => !only || only.includes(c.name.split(' ')[0]))) {
     const scale = 1 / cfg.denom;
     const t0 = Date.now();
-    const res = bake(elements, seed, { lens: cfg.lens, scale, tolScale: cfg.rawTol ? 1 : 13 / cfg.denom, history, log: () => {} });
+    const res = bake(elements, seed, { scale, tolScale: cfg.rawTol ? 1 / (13 * scale) : 1, history, log: () => {} });
     const dir = resolve(base, cfg.name.replace(/[^a-z0-9.+-]/gi, '_'));
     const { files_ } = writeBaked(res, seed, dir, history);
     const r = analyse(res, scale, files_);

@@ -1,11 +1,13 @@
 // Reputation: points for the company and for each client, earned by on-time, undamaged deliveries and lost by
 // late, damaged or abandoned jobs. Company tiers unlock bigger contracts, longer routes and depot purchases.
 
+import { LEGACY_DISTANCE } from '../config.js';
+
 export const TIERS = [
-    { name: 'Local Carrier', at: 0, range: 3000, haulage: false, special: false, depots: false },
-    { name: 'District Haulier', at: 40, range: 6000, haulage: true, special: true, depots: false },
-    { name: 'Regional Haulier', at: 120, range: 10000, haulage: true, special: true, depots: true },
-    { name: 'County Haulage Co.', at: 300, range: 16000, haulage: true, special: true, depots: true },
+    { name: 'Local Carrier', at: 0, range: 3000 * LEGACY_DISTANCE, haulage: false, special: false, depots: false },
+    { name: 'District Haulier', at: 40, range: 6000 * LEGACY_DISTANCE, haulage: true, special: true, depots: false },
+    { name: 'Regional Haulier', at: 120, range: 10000 * LEGACY_DISTANCE, haulage: true, special: true, depots: true },
+    { name: 'County Haulage Co.', at: 300, range: 16000 * LEGACY_DISTANCE, haulage: true, special: true, depots: true },
     { name: 'National Haulage', at: 700, range: Infinity, haulage: true, special: true, depots: true },
 ];
 

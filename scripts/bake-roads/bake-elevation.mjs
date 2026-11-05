@@ -1,9 +1,10 @@
 // Resamples the cached elevation grid (.cache/elevation/grid.f32, Web Mercator pixels, see fetch-elevation.mjs) into
 // the game's world-metre grid and writes world/seed/baked/elevation.bin (world/elevation-format.js), then records it
-// in manifest.json. Heights are real metres x WORLD_SCALE, sea floor clamped to 0. Samples go through the town-lens
-// projection (`unproject`), so the terrain lines up with the baked roads.
+// in manifest.json. Heights are real metres x WORLD_SCALE, sea floor clamped to 0. Samples go through the game projection
+// (`unproject`), so the terrain lines up with the baked roads. At 1:4 the default 24 world m cell (~96 real m, the
+// source DEM is ~49 m) gives ~3.5 M cells, delta/run-length coded to about 1 MB (world/elevation-format.js).
 //
-//   node scripts/bake-roads/bake-elevation.mjs [--cell 12]
+//   node scripts/bake-roads/bake-elevation.mjs [--cell 24]
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -15,7 +16,7 @@ const game = p => import(pathToFileURL(`${GAME}/${p}`).href);
 const lonToTileX = (lon, z) => ((lon + 180) / 360) * 2 ** z;
 const latToTileY = (lat, z) => { const r = (lat * Math.PI) / 180; return ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** z; };
 
-export async function bakeElevation(seed, { outDir = `${GAME}/world/seed/baked`, cell = 12, log = console.log } = {}) {
+export async function bakeElevation(seed, { outDir = `${GAME}/world/seed/baked`, cell = 24, log = console.log } = {}) {
     const dir = resolve(CACHE, 'elevation');
     const meta = JSON.parse(readFileSync(resolve(dir, 'grid.json'), 'utf8'));
     const raw = readFileSync(resolve(dir, 'grid.f32'));
@@ -28,7 +29,7 @@ export async function bakeElevation(seed, { outDir = `${GAME}/world/seed/baked`,
     const pad = 200;
     const minX = Math.floor((nw.x - pad) / cell) * cell, minY = Math.floor((nw.y - pad) / cell) * cell;
     const width = Math.ceil((se.x + pad - minX) / cell) + 1, height = Math.ceil((se.y + pad - minY) / cell) + 1;
-    const unit = 1 / 256; // world metres per step: +-128 m world covers 1664 real m
+    const unit = 1 / 4; // world metres per step (1 real metre): Int16 covers +-8191 world m
     const data = new Int16Array(width * height);
     const W = meta.width, H = meta.height;
     const at = (px, py) => grid[Math.max(0, Math.min(H - 1, py)) * W + Math.max(0, Math.min(W - 1, px))];
@@ -58,5 +59,5 @@ export async function bakeElevation(seed, { outDir = `${GAME}/world/seed/baked`,
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
     const i = process.argv.indexOf('--cell');
-    await bakeElevation(loadSeed(), { cell: i > 0 ? +process.argv[i + 1] : 12 });
+    await bakeElevation(loadSeed(), { cell: i > 0 ? +process.argv[i + 1] : 24 });
 }

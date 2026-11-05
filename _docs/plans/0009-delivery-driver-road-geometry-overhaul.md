@@ -191,22 +191,55 @@ For the next agent: the scratch bakes live in `.cache/measure-scale/` (gitignore
 - `npm test`: 344 tests, 344 pass, 0 fail (339 baseline + 5 new)
 
 ## Phase 3: Rescale projection, bake and elevation
-Status: Not started
+Status: Complete
 Model: sonnet
 Effort: medium
 
-- [ ] Set `WORLD_SCALE = 1 / 4` in `config.js`; grep every use (`world/projection.js`, `world/region.js`, `world/elevation-format.js`, `game/economy.js`, `worldToMiles`, bake scripts) and confirm each reads the constant
-- [ ] Delete the town lens from `world/projection.js` (`createLens`, lens list, `TOWN_RADIUS` magnification, `footprintM`); `createProjection` keeps the same API (`project`, `unproject`, `fromReal`, `toReal`, `localScale`) as plain equirectangular; remove `--no-lens` and the lens fields from `manifest.json` and `decodeBaked`; update `delivery-driver.bake.test.mjs` (lens tests go)
-- [ ] Re-express bake tolerances in real metres converted by the scale (endpoint snap, `contractShort`, Douglas-Peucker 1.5/4 world m, `dropOverlaps`, spur pruning, crossing repair) so geometry fidelity is the same in real terms; set baked town street footprints per size in real metres (city 2500, town 1500, small 900, village 450 as starting values; adjust within the 10 MB gzip budget) and the game `TOWN_RADIUS` to footprint times scale
-- [ ] Re-bake elevation for the new scale with a wire size of at most ~3 MB (coarser grid of about 24 world m, and/or delta plus byte-plane coding, and/or tiles); update `world/elevation-format.js` and `sampleElevation` accordingly, keep the bilinear sampling API, and keep the sea floor clamped to 0
-- [ ] Re-run `node scripts/bake-roads/bake.mjs`; keep the per-year connectivity check passing; record node/edge counts per class and total gzip size
+- ✅ Set `WORLD_SCALE = 1 / 4` in `config.js`; grep every use (`world/projection.js`, `world/region.js`, `world/elevation-format.js`, `game/economy.js`, `worldToMiles`, bake scripts) and confirm each reads the constant
+  - Note: grep confirmed `projection.js`, `region.js`, `economy.js`, `worldToMiles`, `config.latLonToWorld` and `bake-elevation.mjs` all read the constant (`elevation-format.js` only mentions it in a comment; its grid is in world metres). Economy rebalance is Phase 6, so pay per mile is unchanged here.
+- ✅ Delete the town lens from `world/projection.js` (`createLens`, lens list, `TOWN_RADIUS` magnification, `footprintM`); `createProjection` keeps the same API (`project`, `unproject`, `fromReal`, `toReal`, `localScale`) as plain equirectangular; remove `--no-lens` and the lens fields from `manifest.json` and `decodeBaked`; update `delivery-driver.bake.test.mjs` (lens tests go)
+  - Note: `createLens`, the lens list and the `lens` option/field are gone (`bake()`, `createProjection`, `decodeBaked`, manifest, validator, measure-scale). `footprintM` was renamed `townFootprint(t)` (backed by a `TOWN_FOOTPRINT` table in real metres) so the Phase 13 grep for `footprintM` finds nothing; `TOWN_RADIUS` is derived as footprint x `WORLD_SCALE`. The lens test became a plain-projection test plus a TOWN_RADIUS test.
+- ✅ Re-express bake tolerances in real metres converted by the scale (endpoint snap, `contractShort`, Douglas-Peucker 1.5/4 world m, `dropOverlaps`, spur pruning, crossing repair) so geometry fidelity is the same in real terms; set baked town street footprints per size in real metres (city 2500, town 1500, small 900, village 450 as starting values; adjust within the 10 MB gzip budget) and the game `TOWN_RADIUS` to footprint times scale
+  - Note (orchestrator decision): the OSM cache only holds town streets inside each town's current footprint, and this plan re-bakes offline only, so the plan's starting footprints (city 2500, town 1500, small 900, village 450) are NOT used. Footprints stay at the cached extents (city 1210, town 910, small 730, village 505 real m) and `TOWN_RADIUS` = footprint x 1/4 (city 302.5, town 227.5, small 182.5, village 126.25 world m). Enlarging town footprints needs a fresh Overpass fetch (`fetch-osm.mjs` reads `townBoxes`) that the user must approve.
+  - Note: `bake()` clean-up tolerances are now written in real metres and converted by the scale (`toWorld_`): merge/contract 45.5 m, simplify 19.5 m (town) / 52 m, trim reach 104 m / gap 13 m, straighten-below 520 m, i.e. exactly the old 1:13 world values in real terms. Endpoint snap and spur pruning were already real-metre. `dropOverlaps` (slack 0.9, step 2) and `pruneArtificialEnds` (10 m) stay in world metres as measured in Phase 2 (changing them would alter the validated generalisation numbers; Phase 4 owns separation).
+- ✅ Re-bake elevation for the new scale with a wire size of at most ~3 MB (coarser grid of about 24 world m, and/or delta plus byte-plane coding, and/or tiles); update `world/elevation-format.js` and `sampleElevation` accordingly, keep the bilinear sampling API, and keep the sea floor clamped to 0
+  - Note: new `ELV2` format (24 world m cell = 96 real m, 2172 x 1608 = 3.49 M cells, unit 0.25 world m): LOCO plane-predicted residuals, zig-zag varints, zero runs collapsed; `elevation.bin` 1.50 MB raw, 0.60 MB gzip (target was ~3 MB). Bilinear `sampleElevation` API unchanged; the loader still decodes synchronously. Round-trip unit test added.
+- ✅ Re-run `node scripts/bake-roads/bake.mjs`; keep the per-year connectivity check passing; record node/edge counts per class and total gzip size
+  - Note: 30,091 nodes, 39,272 edges, 1.49 MiB gzip total (counts per class in the Phase Summary); era connectivity OK for all 6 sample years.
 
 ### Verification Plan
 - `node scripts/bake-roads/bake.mjs` exits 0, per-year connectivity passes, gzip total under 10 MB, `elevation.bin` (or tiles) at most ~3 MB on the wire
 - `node --test tests/js/delivery-driver.bake.test.mjs tests/js/delivery-driver.era.test.mjs` pass
 
 ### Phase Summary
-_(write when phase completes)_
+Done (2026-11-05). The game now runs on a plain 1:4 projection with no town lens, re-baked offline from the existing caches.
+
+What was done:
+- `config.js`: `WORLD_SCALE = 1 / 4`. All users read the constant (`projection.js`, `region.js`, `economy.js`, `worldToMiles`, `latLonToWorld`, `bake-elevation.mjs`). New `LEGACY_DISTANCE = WORLD_SCALE * 13` (= 3.25), a stop-gap multiplier for world distances tuned at 1:13 (see Key decisions); Phase 6 should replace it with the proper economy/timing constant.
+- `world/projection.js`: `createLens`, the lens list, `footprintM` and the `lens` option/field are deleted. `createProjection(json, {scale})` is plain equirectangular (`project/unproject/fromReal/toReal/localScale/worldScale`). New `TOWN_FOOTPRINT` (real m) table and `townFootprint(t)`; `TOWN_RADIUS` is derived as footprint x `WORLD_SCALE`. `--no-lens`, `manifest.projection.lens`, `decodeBaked().lens` are gone.
+- Town footprints (orchestrator decision, recorded on item 3): the OSM cache holds streets only inside each town's current footprint and this plan re-bakes offline, so the plan's starting values (2500/1500/900/450) were NOT used. Footprints are the cached extents: city 1210, town 910, small 730, village 505 real m, so `TOWN_RADIUS` = 302.5 / 227.5 / 182.5 / 126.25 world m. Enlarging town footprints needs a fresh Overpass fetch (`fetch-osm.mjs` reads `townBoxes` from `common.mjs`) that the user must approve.
+- `bake.mjs`: clean-up tolerances are written in real metres and converted by the scale (`toWorld_`): merge/contract 45.5 m, simplify 19.5 m (town) / 52 m, trim reach 104 m and gap 13 m, straighten-below 520 m (identical to the old 1:13 world values in real terms; also what Phase 2 measured). `dropOverlaps` and `pruneArtificialEnds` stay in world metres on purpose (Phase 4 owns separation). `measure-scale.mjs` and the validator no longer pass `lens`.
+- Elevation: new `ELV2` format in `world/elevation-format.js` (24-byte header as before; body = per-cell plane-predictor residuals, zig-zag varints, runs of zero residual collapsed). `bake-elevation.mjs` defaults to a 24 world m cell (about 96 real m; the source DEM is about 49 m), 1/4 world m per step, 2172 x 1608 = 3.49 M cells, max 152.5 world m (610 real m). Wire size: `elevation.bin` 1.50 MB raw, 0.60 MB gzipped (target was about 3 MB). `sampleElevation` API unchanged, decode is synchronous (about 3.5 M cells), sea floor clamped to 0.
+- Docs: `scripts/bake-roads/README.md`, `_docs/road-system.md` and `README.md` updated for 1:4, no lens and the ELV2 format.
+
+Bake result (`node scripts/bake-roads/bake.mjs`, 13 s, exit 0, deterministic; 63 files, 59 road tiles):
+- 30,091 nodes, 39,272 edges (identical to the Phase 2 1:4 scratch row). Per class, edges / world km: M 42 / 22.4, dual 877 / 98.5, A 3,984 / 478.6, B 7,739 / 1,040.2, street 6,533 / 195.1, lane 20,097 / 3,349.6. Junctions: through 4,060, end 6,114, giveway 18,739, signals 396, roundabout 782, priority 7,191.
+- Era connectivity: 1 component in 1919, 1930, 1950, 1970, 1990 and 2024 (all 58 towns connected each year).
+- Sizes (raw / gzip): main.json 2.17 / 0.58 MB, coast.json 0.39 / 0.14, rivers.json 0.41 / 0.13, elevation.bin 1.50 / 0.60; total 4.80 MB raw, 1.49 MiB gzip over all 63 files (budget 10 MiB). The baked folder on disk is 4.8 MB (was about 5.8 MB at 1:13 with the 2.7 MB elevation).
+
+Tests: `npm test` 345 tests, 345 pass, 0 fail (344 before, lens test replaced by 2 projection tests and 1 elevation round-trip test added; the Phase 3 verification files `delivery-driver.bake.test.mjs` and `delivery-driver.era.test.mjs` pass, 21 tests). Existing tests updated for 1:4 (none deleted except the lens test): Dartmoor top is now checked against 621 m x `WORLD_SCALE` (148.95 vs 155.25); the 100 m sustained-grade check allows `+1e-4` (119 lane edges sit exactly at the 12% lane limit over 100 world m because 100 world m is now only 400 real m, so the old float-exact `> 0.12` failed); the tree-instance test searches 4500 m instead of 900 m for a dense chunk (a chunk now covers 1/3 of the real land); the all-edges road mesh time budget is 3000 ms x `LEGACY_DISTANCE` (9.75 s; it measured 3.3 s because the same edges are 3.25x longer in world metres).
+
+Key decisions and things the next agent needs:
+- Stop-gap economy range fix: at 1:4, offer ranges tuned in world metres no longer found special cargo (2 economy/fleet tests failed). `game/reputation.js` `TIERS[].range`, `game/contracts.js` default tier range, default `maxRoute` (6000) and the special-cargo 250 m minimum are now multiplied by `LEGACY_DISTANCE` so jobs span the same real distances as at 1:13. This is deliberately minimal; Phase 6 owns the real economy/timing rebalance and should replace `LEGACY_DISTANCE` (pay per mile, fuel per mile and windows are NOT rebalanced yet, so income per minute is about 3.25x lower right now).
+- Not touched yet (Phase 5): `ui/menus.js` map view range 2200, town pads and radii-dependent placements in `terrain.js`/`roadgraph.js`/`generator.js`, camera/fog/far plane, minimaps, yard placement. The game loads but is expected to look rough.
+- Start-up cost: building the world in Node (`createWorld(seedWithBaked())`) took about 23 s in this run (Phase 5 item 4 measures and budgets this against the 2.4 s / 143 MB browser baseline; the full test suite also now takes about 190 s). Treat start-up time as a Phase 5 priority.
+- Validator state is unchanged from Phase 2 (it still fails `--strict` on `overlap-same-layer` etc. by design until Phase 4).
+- `.cache/measure-scale/` scratch bakes are stale (they pre-date the lens removal) but gitignored and safe to delete.
+
+### Verification Results
+- `node scripts/bake-roads/bake.mjs` exit 0; per-year connectivity passes (6 sample years, 1 component each); gzip total 1.49 MiB (< 10 MiB); `elevation.bin` 1.50 MB raw / 0.60 MB gzip (<= ~3 MB)
+- `node --test tests/js/delivery-driver.bake.test.mjs tests/js/delivery-driver.era.test.mjs`: 21 pass, 0 fail
+- `npm test`: 345 pass, 0 fail
 
 ## Phase 4: Bake generalisation and layer data
 Status: Not started

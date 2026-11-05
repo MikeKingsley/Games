@@ -1,6 +1,6 @@
 // Region data: the hand-written seed JSON (towns, industry sites, moors, relief, ferries, rivers) plus the baked
 // OpenStreetMap data (road graph, coastline, era events; world/baked-loader.js) projected into world metres through
-// the shared town-lens projection (world/projection.js). Several regions can be registered by id.
+// the shared plain projection (world/projection.js). Several regions can be registered by id.
 import { WORLD_SCALE } from '../config.js';
 import { createProjection, TOWN_RADIUS } from './projection.js';
 import { fetchBaked, splitCoast } from './baked-loader.js';
@@ -14,7 +14,7 @@ const regions = new Map();
 export function buildRegion(json) {
     const baked = json.baked;
     if (!baked) throw new Error('buildRegion: the seed needs baked road data (json.baked, see world/baked-loader.js)');
-    const proj = createProjection(json, { lens: baked.lens });
+    const proj = createProjection(json);
     const origin = json.origin;
     const project = (lat, lon) => proj.project(lat, lon);
     const towns = json.towns.map(t => ({ ...t, ...project(t.lat, t.lon), radius: TOWN_RADIUS[t.size] ?? 100 }));

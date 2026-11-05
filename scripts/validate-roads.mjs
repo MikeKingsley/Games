@@ -450,7 +450,7 @@ export async function loadBakedWorld(dir = `${GAME}/world/seed/baked`) {
     }
     graph.index = createSegmentIndex(graph);
     const json = JSON.parse(readFileSync(`${GAME}/world/seed/sw-england.json`, 'utf8'));
-    const proj = createProjection(json, { lens: manifest.projection.lens, scale: manifest.projection.worldScale });
+    const proj = createProjection(json, { scale: manifest.projection.worldScale });
     const rings = decodeLines(JSON.parse(readFileSync(`${dir}/${manifest.coast}`, 'utf8')).rings);
     // one flat even-odd polygon: every ring is entered from and left back to a shared anchor point, so the
     // connecting segments are each traversed twice and cancel out

@@ -1,7 +1,7 @@
 // Bakes the cached raw OpenStreetMap data (.cache/osm/, see fetch-osm.mjs) into the game's road graph tiles under
 // Games.Client/wwwroot/games/delivery-driver/world/seed/baked/.
 //
-//   node scripts/bake-roads/bake.mjs [--no-lens] [--out DIR] [--quiet]
+//   node scripts/bake-roads/bake.mjs [--out DIR] [--quiet]
 //
 // Pipeline (pure functions below, exported for tests; topology work is in real metres, the rest in world metres):
 //   1 parse     raw elements -> highway ways (filtered, OSM classes mapped to game classes), signals, coast, rivers
@@ -22,7 +22,7 @@ import { applyEra, checkEraConnectivity, parseStartYear, buildEvents, SAMPLE_YEA
 
 const GAME = resolve(ROOT, 'Games.Client/wwwroot/games/delivery-driver');
 const game = p => import(pathToFileURL(`${GAME}/${p}`).href);
-const { createProjection, latLonToReal, footprintM } = await game('world/projection.js');
+const { createProjection, latLonToReal, townFootprint } = await game('world/projection.js');
 const { encodeTile, encodeLines, encodePoints, LICENCE, BAKE_FORMAT, QUANT } = await game('world/baked-format.js');
 const { ROAD_CLASS } = await game('world/roadgraph.js');
 
@@ -1286,13 +1286,15 @@ const ringArea = pts => { let a = 0; for (let i = 0, j = pts.length - 2; i < pts
 // ---- The whole bake ----------------------------------------------------------------------------------------------
 
 /**
- * Runs every stage on raw elements. `seed` = {origin, bounds, towns}; `lens` toggles the town lenses.
+ * Runs every stage on raw elements. `seed` = {origin, bounds, towns}; 
  * Returns {graph (world metres), coast, rivers, tidal, stats}.
  */
-export function bake(elements, seed, { lens = true, scale, tolScale = 1, log = () => {}, probe = null, history = null } = {}) {
-    // `scale` (default WORLD_SCALE) and `tolScale` (multiplier on the world-metre clean-up tolerances below; the
-    // plan 0009 measurement passes scale * 13 so they stay the same in real metres) exist for scripts/bake-roads/measure-scale.mjs
-    const proj = createProjection(seed, scale ? { lens, scale } : { lens });
+export function bake(elements, seed, { scale, tolScale = 1, log = () => {}, probe = null, history = null } = {}) {
+    // `scale` (default WORLD_SCALE) and `tolScale` (multiplier on the clean-up tolerances below) exist for
+    // scripts/bake-roads/measure-scale.mjs. The tolerances are written in REAL metres and converted by the scale, so
+    // geometry fidelity is the same in real terms at any scale (they were tuned as 3.5 world m at 1:13 = 45.5 real m).
+    const proj = createProjection(seed, scale ? { scale } : {});
+    const toWorld_ = m => m * proj.worldScale * tolScale;
     const ctx = { origin: seed.origin };
     const stats = {};
     const parsed = parseOsm(elements, ctx);
@@ -1302,7 +1304,7 @@ export function bake(elements, seed, { lens = true, scale, tolScale = 1, log = (
     stats.topology = { ...topo, nodes: g.nodes.size, edges: g.edges.size };
     log('topology', stats.topology);
     const nw = latLonToReal(seed.bounds.north, seed.bounds.west, seed.origin), se = latLonToReal(seed.bounds.south, seed.bounds.east, seed.origin);
-    const towns = seed.towns.map(t => ({ id: t.id, ...latLonToReal(t.lat, t.lon, seed.origin), r: footprintM(t) }));
+    const towns = seed.towns.map(t => ({ id: t.id, ...latLonToReal(t.lat, t.lon, seed.origin), r: townFootprint(t) }));
     stats.clip = clipToRegion(g, { box: { minX: nw.x, minY: nw.y, maxX: se.x, maxY: se.y }, towns });
     probe?.('clip', g);
     stats.prune = pruneSpurs(g);
@@ -1324,9 +1326,9 @@ export function bake(elements, seed, { lens = true, scale, tolScale = 1, log = (
     stats.merge1 = mergeDegree2(g);
     probe?.('merge1', g);
     projectGraph(g, proj);
-    stats.merge1b = mergeDegree2(g, { shortLen: 3.5 * tolScale });
+    stats.merge1b = mergeDegree2(g, { shortLen: toWorld_(45.5) });
     probe?.('merge1b', g);
-    stats.contract = contractShort(g, 3.5 * tolScale);
+    stats.contract = contractShort(g, toWorld_(45.5));
     probe?.('contract', g);
     stats.prune2 = pruneSpurs(g, { serviceSpur: 0 });
     probe?.('prune2', g);
@@ -1337,12 +1339,12 @@ export function bake(elements, seed, { lens = true, scale, tolScale = 1, log = (
     stats.merge2 = mergeDegree2(g);
     probe?.('merge2', g);
     log('merge', stats.merge1, 'contract', stats.contract, 'overlaps', stats.overlaps, stats.components2, 'merge', stats.merge2);
-    stats.simplify = simplifyGuarded(g, e => (e.town ? 1.5 : 4) * tolScale);
+    stats.simplify = simplifyGuarded(g, e => (e.town ? toWorld_(19.5) : toWorld_(52)));
     probe?.('simplify', g);
-    stats.trim = trimOvershoots(g, { reach: 8 * tolScale, gap: 1 * tolScale });
+    stats.trim = trimOvershoots(g, { reach: toWorld_(104), gap: toWorld_(13) });
     probe?.('trim', g);
     quantiseGraph(g);
-    stats.crossings = repairCrossings(g, { straightenBelow: 40 * tolScale });
+    stats.crossings = repairCrossings(g, { straightenBelow: toWorld_(520) });
     stats.stubs = pruneArtificialEnds(g);
     quantiseGraph(g);
     stats.crossings.final = findCrossings(g).length;
@@ -1458,7 +1460,7 @@ export function writeBaked(res, seed, outDir, history) {
     const manifest = {
         format: BAKE_FORMAT, licence: LICENCE, attribution: 'Map data © OpenStreetMap contributors (ODbL)',
         region: seed.id, quant: QUANT,
-        projection: { origin: seed.origin, worldScale: res.proj.worldScale, lens: res.proj.lens, module: 'world/projection.js' },
+        projection: { origin: seed.origin, worldScale: res.proj.worldScale, module: 'world/projection.js' },
         tiles: tiles.map(t => ({ id: t.id, file: `${t.id === 'main' ? 'main' : 'town-' + t.id}.json`, town: t.id === 'main' ? null : t.id, nodeStart: t.nodeStart, nodeCount: t.nodeCount, edgeCount: t.edgeCount })),
         coast: 'coast.json', rivers: 'rivers.json',
         events: buildEvents(history),
@@ -1479,7 +1481,7 @@ async function main() {
     const { elements, files } = loadElements();
     console.log(`read ${files} cached tiles, ${elements.length} elements`);
     const history = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'history.json'), 'utf8'));
-    const res = bake(elements, seed, { lens: !args.includes('--no-lens'), history, log: quiet ? () => {} : (...a) => console.log(' ', ...a.map(x => (typeof x === 'string' ? x : JSON.stringify(x)))) });
+    const res = bake(elements, seed, { history, log: quiet ? () => {} : (...a) => console.log(' ', ...a.map(x => (typeof x === 'string' ? x : JSON.stringify(x)))) });
     const { graph: g } = res;
     if (res.eraCheck.problems.length) {
         console.error('FAIL: era connectivity check');
@@ -1493,7 +1495,8 @@ async function main() {
     if (existsSync(resolve(CACHE, 'elevation', 'grid.f32'))) {
         const { bakeElevation } = await import('./bake-elevation.mjs');
         const dem = await bakeElevation(seed, { outDir, log: quiet ? () => {} : console.log });
-        files_.push({ name: 'elevation.bin', bytes: dem.width * dem.height * 2, gzip: gzipSync(readFileSync(resolve(outDir, 'elevation.bin')), { level: 9 }).length });
+        const demBytes = readFileSync(resolve(outDir, 'elevation.bin'));
+        files_.push({ name: 'elevation.bin', bytes: demBytes.length, gzip: gzipSync(demBytes, { level: 9 }).length });
     }
 
     const gz = files_.reduce((a, f) => a + f.gzip, 0), raw = files_.reduce((a, f) => a + f.bytes, 0);

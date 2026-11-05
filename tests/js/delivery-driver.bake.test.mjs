@@ -6,12 +6,12 @@ import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
 const game = p => import(pathToFileURL(resolve(`Games.Client/wwwroot/games/delivery-driver/${p}`)).href);
-const { realToLatLon, createProjection, createLens, TOWN_RADIUS, footprintM } = await game('world/projection.js');
+const { realToLatLon, createProjection, TOWN_RADIUS, TOWN_FOOTPRINT, townFootprint } = await game('world/projection.js');
 const { decodeTiles } = await game('world/baked-format.js');
 const { bake, toTiles, findCrossings } = await import(pathToFileURL(resolve('scripts/bake-roads/bake.mjs')).href);
 
 const SEED = { id: 'fixture', origin: { lat: 50.5, lon: -4.5 }, bounds: { north: 50.6, south: 50.4, west: -4.7, east: -4.3 }, towns: [] };
-const SCALE = 1 / 13; // world metres per real metre without town lenses
+const { WORLD_SCALE: SCALE } = await game('config.js'); // world metres per real metre (1:4)
 
 /** OSM-like elements from real-metre polylines (+x east, +y south of the origin); equal points share a node. */
 function osm() {
@@ -23,7 +23,7 @@ function osm() {
         node([x, y], tags) { const p = realToLatLon(x, y, SEED.origin); elements.push({ type: 'node', id: id++, lat: p.lat, lon: p.lon, tags }); },
     };
 }
-const run = elements => bake(elements, SEED, { lens: false }).graph;
+const run = elements => bake(elements, SEED).graph;
 const edges = g => [...g.edges.values()];
 const nodes = g => [...g.nodes.values()];
 const nearest = (g, x, y) => nodes(g).reduce((b, n) => (Math.hypot(n.x - x * SCALE, n.y - y * SCALE) < Math.hypot(b.x - x * SCALE, b.y - y * SCALE) ? n : b));
@@ -136,22 +136,43 @@ test('one-way tags are carried through, including oneway=-1', () => {
     assert.equal(edges(run(o.elements))[0].oneway, false);
 });
 
-test('town lenses are smooth, invertible and map the street footprint to the game radius', () => {
-    const lens = createLens(0, 0, footprintM({ size: 'city' }) * SCALE, TOWN_RADIUS.city);
-    const out = { x: 0, y: 0 };
-    let prev = 0;
-    for (let r = 1; r < lens.rOut + 20; r += 1) {
-        lens.forward(r, 0, out);
-        assert.ok(out.x > prev, 'monotonic');
-        prev = out.x;
-    }
-    lens.forward(footprintM({ size: 'city' }) * SCALE, 0, out);
-    assert.ok(Math.abs(out.x - TOWN_RADIUS.city) < 0.5);
+test('the projection is plain equirectangular at WORLD_SCALE and invertible (no town lens)', () => {
     const seed = { origin: { lat: 50.5, lon: -4.5 }, towns: [{ id: 'a', lat: 50.5, lon: -4.5, size: 'city' }, { id: 'b', lat: 50.52, lon: -4.45, size: 'village' }] };
     const proj = createProjection(seed);
+    assert.equal(proj.worldScale, SCALE);
     for (const [lat, lon] of [[50.5, -4.5], [50.505, -4.49], [50.52, -4.45], [50.6, -4.2]]) {
         const p = proj.project(lat, lon), back = proj.unproject(p.x, p.y);
         assert.ok(Math.abs(back.lat - lat) < 1e-7 && Math.abs(back.lon - lon) < 1e-7);
     }
-    assert.ok(Math.abs(proj.localScale(0, 0) - lens.magnification * SCALE) < 0.01, 'magnified at the centre');
+    // 1000 real metres east is exactly 1000 * scale world metres anywhere: the same scale at a town centre and far away
+    for (const [x, y] of [[0, 0], [20000, -9000]]) {
+        const a = proj.fromReal(x, y), b = proj.fromReal(x + 1000, y);
+        assert.ok(Math.abs(b.x - a.x - 1000 * SCALE) < 1e-9 && Math.abs(b.y - a.y) < 1e-9);
+        assert.equal(proj.localScale(a.x, a.y), SCALE);
+    }
+});
+
+test('town game radius is the baked street footprint times the world scale', () => {
+    for (const size of Object.keys(TOWN_FOOTPRINT)) {
+        assert.ok(Math.abs(TOWN_RADIUS[size] - TOWN_FOOTPRINT[size] * SCALE) < 1e-9, size);
+        assert.equal(townFootprint({ size }), TOWN_FOOTPRINT[size]);
+    }
+    assert.ok(TOWN_FOOTPRINT.city > TOWN_FOOTPRINT.town && TOWN_FOOTPRINT.town > TOWN_FOOTPRINT.small && TOWN_FOOTPRINT.small > TOWN_FOOTPRINT.village);
+});
+
+test('elevation.bin round-trips: predicted residuals, varints and zero runs decode to the same grid', async () => {
+    const { encodeElevation, decodeElevation, sampleElevation } = await game('world/elevation-format.js');
+    const width = 41, height = 29;
+    const data = new Int16Array(width * height);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        // sea (0) on the left third, a ridge with a steep step (multi-byte residual) and a long flat top
+        data[y * width + x] = x < 14 ? 0 : x === 20 && y % 2 ? 7000 : Math.round(300 + 200 * Math.sin(x / 3) * Math.cos(y / 4));
+    }
+    const buf = encodeElevation({ width, height, minX: -100, minY: 50, cell: 24, unit: 0.25, data });
+    const dem = decodeElevation(buf);
+    assert.deepEqual([dem.width, dem.height, dem.minX, dem.minY, dem.cell, dem.unit], [width, height, -100, 50, 24, 0.25]);
+    assert.deepEqual([...dem.data], [...data]);
+    assert.ok(buf.byteLength < 24 + width * height * 2, 'smaller than raw Int16');
+    // bilinear sampling at a cell centre returns the stored height in world metres
+    assert.equal(sampleElevation(dem, -100 + 20 * 24, 50 + 5 * 24), data[5 * width + 20] * 0.25);
 });

@@ -16,7 +16,7 @@ import { decodeElevation } from './elevation-format.js';
 export function decodeBaked(manifest, tiles, coast, elevationBuf = null) {
     const { nodes, edges } = decodeTiles(tiles);
     const coastRings = decodeLines(coast.rings);
-    return { manifest, nodes, edges, coastRings, events: manifest.events ?? [], elevation: elevationBuf ? decodeElevation(elevationBuf) : null, lens: manifest.projection?.lens !== false };
+    return { manifest, nodes, edges, coastRings, events: manifest.events ?? [], elevation: elevationBuf ? decodeElevation(elevationBuf) : null };
 }
 
 /**

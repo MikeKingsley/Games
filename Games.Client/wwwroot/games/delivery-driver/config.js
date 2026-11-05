@@ -1,7 +1,9 @@
 // Tuning constants shared by the logic and the renderer. Pure data: safe to import from Node tests.
 
-/** Real metres to world metres. Devon + Cornwall is compressed ~1:13 so Exeter-Penzance is ~10 real minutes at 50 mph. */
-export const WORLD_SCALE = 1 / 13;
+/** Real metres to world metres: the map is 1:4 (plan 0009). Vehicle speeds stay real mph, so Exeter-Penzance takes ~3x longer than at the old 1:13. */
+export const WORLD_SCALE = 1 / 4;
+/** Multiplier for world distances that were tuned at the old 1:13 map (offer ranges and route limits): same real distance at 1:4. */
+export const LEGACY_DISTANCE = WORLD_SCALE * 13;
 /** Game minutes per real minute: 1 real minute = 15 game minutes. */
 export const TIME_SCALE = 15;
 /** Reference latitude for the equirectangular projection. */

@@ -4,7 +4,7 @@
 import { seededRng, hashSeed, pick, intRange, range, chance } from '../engine/rng.js';
 import { findRoute } from '../world/pathfind.js';
 import { hourIndex, GAME_MINUTES_PER_SECOND } from './calendar.js';
-import { worldToMiles } from '../config.js';
+import { worldToMiles, LEGACY_DISTANCE } from '../config.js';
 
 const SURNAMES = ['Trelawny', 'Penrose', 'Hext', 'Chudleigh', 'Pascoe', 'Tremayne', 'Coombe', 'Ashford', 'Luxton', 'Vosper', 'Nankivell', 'Polglase', 'Kingdon', 'Snell', 'Widdicombe', 'Endacott', 'Rowe', 'Jago', 'Trethewey', 'Hosking', 'Bartlett', 'Pengelly', 'Hockin', 'Yeo', 'Westaway', 'Northcott', 'Babb', 'Coaker', 'Lethbridge', 'Symons'];
 const TRADES = ['Grocers', 'Drapers', 'Ironmongers', 'Bakery', 'Butchers', 'Chemist', 'Stationers', 'Tobacconist', 'Outfitters', 'Hardware', 'Fishmonger', 'Saddlers', 'Cycle Shop', 'Tea Rooms'];
@@ -106,7 +106,7 @@ const goodsYardName = (world, y) => (y.type === 'depot' ? `${world.region.townBy
  */
 export function generateOffers(ctx) {
     const { world, depot, minutes, year, payload = 1000, vmax = 11, refresh = 0 } = ctx;
-    const tier = ctx.tierInfo ?? { range: 3000, haulage: false, special: false };
+    const tier = ctx.tierInfo ?? { range: 3000 * LEGACY_DISTANCE, haulage: false, special: false };
     const fleet = ctx.fleet ?? [{ tags: ['van'], capacity: payload }];
     const capacityFor = tag => Math.max(0, ...fleet.filter(f => f.tags.includes(tag)).map(f => f.capacity));
     const generalCap = Math.max(0, ...GENERAL_TAGS.map(capacityFor));
@@ -133,7 +133,7 @@ export function generateOffers(ctx) {
         const legs = c.stops.map(s => ({ x: s.x, y: s.y }));
         const climb = ctx.climb ? { ...ctx.climb, mass: ctx.climb.mass + c.weight } : undefined;
         const route = routeStats(world, [depot.yard.marker, ...legs], year, vmax, climb);
-        const limit = kind === 'multidrop' || kind === 'collection' ? (ctx.maxRoute ?? 6000) : tier.range * 2.2;
+        const limit = kind === 'multidrop' || kind === 'collection' ? (ctx.maxRoute ?? 6000 * LEGACY_DISTANCE) : tier.range * 2.2;
         if (route === null || route.length > limit) continue; // skip places that are a long way round by road
         const len = route.length;
         const driveSeconds = (len / (vmax * 0.65)) * route.hill + c.stops.reduce((t, s) => t + workSeconds(s.weight), 0);
@@ -171,7 +171,7 @@ function special(rng, world, depot, reach, sp, capacityFor) {
     const sources = sp.from.flatMap(sel => yardsMatching(world, sel)).filter(y => Math.hypot(y.x - depot.x, y.y - depot.y) < reach * 0.7);
     if (!sources.length) return null;
     const from = pick(rng, sources);
-    const dests = sp.to.flatMap(sel => yardsMatching(world, sel)).filter(y => y !== from && Math.hypot(y.x - from.x, y.y - from.y) < reach && Math.hypot(y.x - from.x, y.y - from.y) > 250);
+    const dests = sp.to.flatMap(sel => yardsMatching(world, sel)).filter(y => y !== from && Math.hypot(y.x - from.x, y.y - from.y) < reach && Math.hypot(y.x - from.x, y.y - from.y) > 250 * LEGACY_DISTANCE);
     if (!dests.length) return null;
     const to = pick(rng, dests);
     const weight = Math.round(Math.min(capacityFor(sp.needs), range(rng, sp.kg[0], sp.kg[1])) / 100) * 100;

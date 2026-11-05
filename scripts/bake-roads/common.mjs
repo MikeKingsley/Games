@@ -17,12 +17,12 @@ export const M_PER_LAT = 111320;
 export const mPerLon = lat => 111320 * Math.cos((lat * Math.PI) / 180);
 
 /** Town footprint (real m) where real streets are baked; shared with the game projection (world/projection.js). */
-export { TOWN_RADIUS, footprintM } from '../../Games.Client/wwwroot/games/delivery-driver/world/projection.js';
-import { footprintM } from '../../Games.Client/wwwroot/games/delivery-driver/world/projection.js';
+export { TOWN_RADIUS, TOWN_FOOTPRINT, townFootprint } from '../../Games.Client/wwwroot/games/delivery-driver/world/projection.js';
+import { townFootprint } from '../../Games.Client/wwwroot/games/delivery-driver/world/projection.js';
 
 export function townBoxes(seed) {
     return seed.towns.map(t => {
-        const r = footprintM(t);
+        const r = townFootprint(t);
         const dLat = r / M_PER_LAT, dLon = r / mPerLon(t.lat);
         return { id: t.id, south: t.lat - dLat, north: t.lat + dLat, west: t.lon - dLon, east: t.lon + dLon };
     });
