@@ -1,85 +1,14 @@
-// Deterministic world generation from the region seed: town street lattices, yards (depots, farms, industry
+// Deterministic world generation from the region seed: yards (depots, farms, industry
 // sites), town buildings along the streets, and per-chunk ground detail (fields, hedges, trees, tors).
 // Same seed + same inputs always give the same output, whatever order things are generated in.
 import { seededRng, hashSeed, range, intRange, pick, chance, valueNoise } from '../engine/rng.js';
-import { waterAt, moorAt, crossesWater, nearestTown } from './region.js';
+import { waterAt, moorAt, nearestTown } from './region.js';
 import { pointAt } from './geom.js';
-import { ROAD_CLASS, clearOfRoads } from './roadgraph.js';
+import { ROAD_CLASS, clearOfRoads, alwaysOpen } from './roadgraph.js';
 import { obb, sat, createSpatialHash } from '../sim/collision.js';
 import { torSite } from './terrain.js';
+import { chunkFurniture, maxHalfWidth, mouthRadius } from './furniture.js';
 import { CHUNK_SIZE } from '../config.js';
-
-const SPACING = { city: 62, town: 56, small: 50, village: 42 };
-
-// ---- Town streets ------------------------------------------------------------------------------------------
-
-/**
- * A jittered, rotated street lattice clipped to the town's (noisy) circle, to land, and to nodes that are closer
- * to this town than to any other and not across wide water from its centre. Every node kept is connected:
- * a random spanning tree plus a share of the remaining lattice links.
- */
-export function generateTownStreets(region, town) {
-    const rng = seededRng(hashSeed(region.seed, 'streets', town.id));
-    const s = SPACING[town.size] ?? 50;
-    const organic = town.streets === 'organic' || (town.size !== 'city' && town.streets !== 'grid');
-    const jitter = s * (organic ? 0.22 : 0.08);
-    const angle = rng() * Math.PI / 2;
-    const c = Math.cos(angle), sn = Math.sin(angle);
-    const n = Math.ceil(town.radius / s) + 1;
-    const grid = new Map();
-    const nodes = [];
-    const wobble = range(rng, 0, Math.PI * 2);
-    for (let i = -n; i <= n; i++) {
-        for (let j = -n; j <= n; j++) {
-            const u = i * s + range(rng, -jitter, jitter), v = j * s + range(rng, -jitter, jitter);
-            const x = town.x + u * c - v * sn, y = town.y + u * sn + v * c;
-            const a = Math.atan2(y - town.y, x - town.x);
-            const limit = town.radius * (0.86 + 0.16 * Math.sin(a * 3 + wobble));
-            if (Math.hypot(x - town.x, y - town.y) > limit) continue;
-            if (waterAt(region, x, y)) continue;
-            if (nearestTown(region, x, y).town !== town) continue;
-            if (crossesWater(region, town.x, town.y, x, y, 30)) continue;
-            grid.set(`${i},${j}`, nodes.length);
-            nodes.push({ x, y, i, j });
-        }
-    }
-    // candidate links between lattice neighbours that don't cross wide water
-    const links = [];
-    for (const nd of nodes) {
-        for (const [di, dj] of [[1, 0], [0, 1]]) {
-            const k = grid.get(`${nd.i + di},${nd.j + dj}`);
-            if (k === undefined) continue;
-            const o = nodes[k];
-            if (crossesWater(region, nd.x, nd.y, o.x, o.y, 30)) continue;
-            links.push([grid.get(`${nd.i},${nd.j}`), k, crossesWater(region, nd.x, nd.y, o.x, o.y, 1)]);
-        }
-    }
-    if (!nodes.length) return { nodes: [], edges: [], centre: -1 };
-    // the component around the centre: random spanning tree first, then extra links
-    let centre = 0;
-    nodes.forEach((nd, k) => { if (Math.hypot(nd.x - town.x, nd.y - town.y) < Math.hypot(nodes[centre].x - town.x, nodes[centre].y - town.y)) centre = k; });
-    const adj = nodes.map(() => []);
-    links.forEach((l, k) => { adj[l[0]].push(k); adj[l[1]].push(k); });
-    const seen = new Set([centre]);
-    const used = new Set();
-    const frontier = [...adj[centre]];
-    while (frontier.length) {
-        const k = frontier.splice(Math.floor(rng() * frontier.length), 1)[0];
-        const [a, b] = links[k];
-        const next = seen.has(a) ? b : a;
-        if (seen.has(next)) continue;
-        seen.add(next);
-        used.add(k);
-        frontier.push(...adj[next]);
-    }
-    const keep = organic ? 0.62 : 0.85;
-    links.forEach((l, k) => { if (!used.has(k) && seen.has(l[0]) && seen.has(l[1]) && chance(rng, keep)) used.add(k); });
-    const remap = new Map();
-    const outNodes = [];
-    for (const k of seen) { remap.set(k, outNodes.length); outNodes.push({ x: nodes[k].x, y: nodes[k].y }); }
-    const edges = [...used].sort((a, b) => a - b).map(k => [remap.get(links[k][0]), remap.get(links[k][1]), links[k][2]]);
-    return { nodes: outNodes, edges, centre: remap.get(centre) };
-}
 
 // ---- Yards: depots, farms, industry sites ----------------------------------------------------------------------
 
@@ -159,13 +88,18 @@ function shade(hex) {
     return `#${f(n >> 16)}${f((n >> 8) & 255)}${f(n & 255)}`;
 }
 
+/** Clearance (m) between a yard mouth and the nearest junction along a street (the junction's kerb returns). */
+const MOUTH = 6;
+
 /**
  * Finds a spot on one of a town's streets for a yard (depot or in-town site): the street side with room for the
  * yard and its shed, clear of roads and of yards already placed. Returns {edge, along, side, entry, ux, uy} or null.
  */
 export function findStreetYardSpot(world, town, rng, placed, depth = 28, width = 34) {
     const { graph, region } = world;
-    const edges = graph.edges.filter(e => e.town === town.id && e.cls === 'street' && e.len > width + 6);
+    // real streets only: not one-way streets, slip roads or dual carriageways (a yard mouth needs two-way frontage)
+    const edges = graph.edges.filter(e => e.town === town.id && (e.cls === 'street' || e.cls === 'B') && !e.oneway && !e.link && !e.dual
+        && alwaysOpen(e) && !e.bridge && !e.tunnel && e.len > width + 2 * MOUTH);
     // try streets near the middle of the town first, then further out
     const scored = edges.map(e => {
         const m = pointAt(e.pts, e.len / 2);
@@ -173,18 +107,25 @@ export function findStreetYardSpot(world, town, rng, placed, depth = 28, width =
         return { e, score: Math.abs(q - 0.45) + rng() * 0.25 };
     }).sort((a, b) => a.score - b.score);
     for (const { e } of scored) {
-        for (const side of [1, -1]) {
-            const p = pointAt(e.pts, e.len / 2);
-            const ux = -Math.sin(p.angle) * side, uy = Math.cos(p.angle) * side;
-            const half = (ROAD_CLASS[e.cls].width) / 2;
-            const entry = { x: p.x + ux * (half + 0.5), y: p.y + uy * (half + 0.5) };
-            const total = depth + 14;
-            // the reservation starts behind the pavement (the yard's mouth itself opens onto the street)
-            const box = obb(entry.x + ux * (total / 2 + 1.6), entry.y + uy * (total / 2 + 1.6), total, width + 6, Math.atan2(uy, ux));
-            if (!landBox(region, box) || !clearOfRoads(graph, box, 1.5)) continue;
-            if (placed.some(o => sat(o, box))) continue;
-            if (nearestTown(region, box.x, box.y).town !== town) continue;
-            return { edge: e, along: e.len / 2, side, entry, ux, uy, box };
+        // a few positions along the street, clear of its ends (the junction mouths), on either side
+        for (const f of [0.5, 0.3, 0.7, 0.4, 0.6, 0.2, 0.8]) {
+            const at = e.len * f;
+            if (at < width / 2 + MOUTH || at > e.len - width / 2 - MOUTH) continue;
+            for (const side of [1, -1]) {
+                const p = pointAt(e.pts, at);
+                const ux = -Math.sin(p.angle) * side, uy = Math.cos(p.angle) * side;
+                const half = (ROAD_CLASS[e.cls].width) / 2;
+                const entry = { x: p.x + ux * (half + 0.5), y: p.y + uy * (half + 0.5) };
+                const total = depth + 14;
+                // the reservation starts behind the pavement (the yard's mouth itself opens onto the street)
+                const box = obb(entry.x + ux * (total / 2 + 1.6), entry.y + uy * (total / 2 + 1.6), total, width + 6, Math.atan2(uy, ux));
+                if (!landBox(region, box) || !clearOfRoads(graph, box, 1.5, e.id)) continue;
+                // the yard itself must not run over any road, including a bend of its own street
+                if (!clearOfRoads(graph, obb(entry.x + ux * depth / 2, entry.y + uy * depth / 2, depth, width, Math.atan2(uy, ux)), 0)) continue;
+                if (placed.some(o => sat(o, box))) continue;
+                if (nearestTown(region, box.x, box.y).town !== town) continue;
+                return { edge: e, along: at, side, entry, ux, uy, box };
+            }
         }
     }
     return null;
@@ -234,7 +175,8 @@ export function generateTownBuildings(world, town) {
         return true;
     };
     const add = b => { hash.insert(b); out.push(b); };
-    const edges = graph.edges.filter(e => e.town === town.id && e.cls !== 'access').sort((a, b) => a.id - b.id);
+    // frontages: two-way town streets, B and A roads (not lanes, slip roads, bridges, dual carriageways or yard accesses)
+    const edges = graph.edges.filter(e => e.town === town.id && (e.cls === 'street' || e.cls === 'B' || e.cls === 'A') && !e.link && !e.bridge && !e.tunnel && !e.dual && e.len > 12).sort((a, b) => a.id - b.id);
 
     // a church near the centre
     let churchDone = false;
@@ -249,14 +191,17 @@ export function generateTownBuildings(world, town) {
     }
 
     for (const e of edges) {
-        const half = (ROAD_CLASS[e.cls]?.width ?? 7) / 2;
+        // building fronts stand 2 m beyond the widest carriageway the road ever has; plots start beyond the junction
+        // mouths (so the first plot at each end is a corner plot) and keep the pavement and lamps free
+        const half = maxHalfWidth(e);
+        const from = mouthRadius(graph, graph.nodes[e.a]) + 1, to = e.len - mouthRadius(graph, graph.nodes[e.b]) - 1;
         for (const side of [1, -1]) {
-            let d = range(rng, 3, 8);
-            while (d < e.len - 4) {
+            let d = from + range(rng, 0, 3);
+            while (d < to) {
                 const m = pointAt(e.pts, d);
                 const q = Math.hypot(m.x - town.x, m.y - town.y) / town.radius;
                 const spec = choosePlot(rng, town, q, walls, cornish);
-                if (d + spec.len > e.len - 3) break;
+                if (d + spec.len > to) break;
                 const b = plot(e, d + spec.len / 2, side, spec.len, spec.dep, spec.h, spec.type, spec.extra, half);
                 if (fits(b)) { add(b); d += spec.len + spec.gap; } else d += 3;
             }
@@ -265,7 +210,7 @@ export function generateTownBuildings(world, town) {
     out.forEach((b, k) => { b.id = `${town.id}-${k}`; b.town = town.id; });
     return out;
 
-    function plot(e, along, side, len, dep, h, type, extra, half = (ROAD_CLASS[e.cls]?.width ?? 7) / 2) {
+    function plot(e, along, side, len, dep, h, type, extra, half = maxHalfWidth(e)) {
         const p = pointAt(e.pts, along);
         const nx = -Math.sin(p.angle) * side, ny = Math.cos(p.angle) * side;
         const set = half + 2 + dep / 2;
@@ -289,7 +234,7 @@ function choosePlot(rng, town, q, walls, cornish) {
     }
     if (q < 0.78 && !village) {
         const n = intRange(rng, 3, 6);
-        return { type: 'terrace', len: n * 5.5, dep: 8, h: range(rng, 6, 8), gap: range(rng, 2, 5), extra: { wall, roofCol, homes: n } };
+        return { type: 'terrace', len: n * 5.5, dep: 8, h: range(rng, 6, 8), gap: range(rng, 0, 0.4), extra: { wall, roofCol, homes: n } };
     }
     return { type: 'house', len: range(rng, 8, 11), dep: range(rng, 7, 9), h: range(rng, 5.5, 7), gap: range(rng, 5, 12), extra: { wall, roofCol } };
 }
@@ -376,32 +321,8 @@ export function generateChunk(world, i, j) {
         }
     }
 
-    // street lamps along town streets (every ~32 m, alternating sides) and signposts at country junctions
-    const lamps = [];
-    const signs = [];
-    const inChunk = (x, y) => x >= x0 && x < x0 + S && y >= y0 && y < y0 + S;
-    for (const id of graph.index.edgesIn(x0, y0, x0 + S, y0 + S)) {
-        const e = graph.edges[id];
-        if (e.cls !== 'street') continue;
-        for (let d = 10, k = 0; d < e.len - 6; d += 32, k++) {
-            const p = pointAt(e.pts, d);
-            const side = (k + e.id) % 2 ? 1 : -1;
-            const off = (ROAD_CLASS.street.width / 2 + 1.1) * side;
-            const x = p.x - Math.sin(p.angle) * off, y = p.y + Math.cos(p.angle) * off;
-            if (inChunk(x, y) && !waterAt(region, x, y)) lamps.push({ x, y, angle: p.angle + (side > 0 ? -Math.PI / 2 : Math.PI / 2) });
-        }
-    }
-    for (const n of graph.nodes) {
-        if (n.edges.length < 3 || n.town || !inChunk(n.x, n.y)) continue;
-        const ranks = n.edges.map(id => ROAD_CLASS[graph.edges[id].cls]?.rank ?? 1);
-        if (Math.max(...ranks) < 3) continue;
-        // on the corner between the first two roads, clear of both
-        const a0 = pointAt(graph.edges[n.edges[0]].pts, graph.edges[n.edges[0]].a === n.id ? 6 : graph.edges[n.edges[0]].len - 6);
-        const a1 = pointAt(graph.edges[n.edges[1]].pts, graph.edges[n.edges[1]].a === n.id ? 6 : graph.edges[n.edges[1]].len - 6);
-        const mx = (a0.x + a1.x) / 2 - n.x, my = (a0.y + a1.y) / 2 - n.y;
-        const ml = Math.hypot(mx, my) || 1;
-        signs.push({ x: n.x + (mx / ml) * 9, y: n.y + (my / ml) * 9, angle: Math.atan2(my, mx), node: n.id });
-    }
+    // street furniture by rule (world/furniture.js): lamps, signs, signal poles; clear of roads, buildings, yards and trees
+    const { lamps, signs, signals } = chunkFurniture(world, x0, y0, S, { boxes: blockers, trees });
 
     const colliders = [
         ...buildings.map(b => ({ box: b.box, kind: 'building', ref: b })),
@@ -410,7 +331,7 @@ export function generateChunk(world, i, j) {
     ];
     return {
         i, j, x0, y0, moor: !!moor, town: inTown ? near.town.id : null,
-        buildings, fields, hedges, trees, rocks, patches, lamps, signs, colliders,
+        buildings, fields, hedges, trees, rocks, patches, lamps, signs, signals, colliders,
         edges: [...graph.index.edgesIn(x0, y0, x0 + S, y0 + S)].sort((a, b) => a - b),
     };
 }

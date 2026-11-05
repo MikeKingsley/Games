@@ -1,9 +1,10 @@
 // The road network: nodes at junctions and ends, edges carrying a centreline polyline. Traffic drives on the LEFT
-// of each edge's centreline; lanes are offsets from it. Built once per region from the seed roads plus the
-// generated town streets, farm lanes and site access roads (all deterministic from the region seed).
-import { polyLength, pointAt, closestOnPoly, splitPoly, smooth, bbox } from './geom.js';
+// of each edge's centreline; lanes are offsets from it. Built once per region from the baked OpenStreetMap network
+// (world/baked-loader.js) plus the farm lanes and site access roads (deterministic from the region seed).
+import { polyLength, pointAt, closestOnPoly, splitPoly, bbox } from './geom.js';
 import { crossesWater, waterAt, moorAt, nearestTown } from './region.js';
 import { seededRng, hashSeed, range, chance } from '../engine/rng.js';
+import { obb } from '../sim/collision.js';
 import { MPH } from '../config.js';
 
 /** Road classes: carriageway width (m), lanes per direction, and a priority rank at junctions. */
@@ -29,6 +30,55 @@ export function cruiseSpeed(cls, year) {
     return Math.max(4, mph) * MPH;
 }
 
+/**
+ * Cruising speed (m/s) on an edge in a year: the class's typical speed, held down by the edge's baked `maxspeed` (mph)
+ * where a limit applies: 30 mph and under from 1935 (the first built-up limit), higher limits from 1965.
+ */
+export function edgeSpeed(edge, year) {
+    const base = cruiseSpeed(edgeClass(edge, year), year);
+    const limit = edge.maxspeed > 0 && year >= (edge.maxspeed <= 30 ? 1935 : 1965) ? edge.maxspeed * MPH : Infinity;
+    return Math.max(4 * MPH, Math.min(base, limit));
+}
+
+/**
+ * The nodes of the main strongly connected component of the roads that exist for the whole game, honouring one-way
+ * streets (a Uint8Array flag per node, cached on the graph; call `g._core = null` after changing the graph). Vehicles
+ * that start or end in a one-way pocket outside it could never leave (or be reached).
+ */
+export function coreNodes(g) {
+    if (g._core && g._core.length === g.nodes.length) return g._core;
+    const N = g.nodes.length, out = Array.from({ length: N }, () => []), inn = Array.from({ length: N }, () => []);
+    for (const e of g.edges) {
+        if (e.cls === 'ferry' || !alwaysOpen(e)) continue;
+        out[e.a].push(e.b); inn[e.b].push(e.a);
+        if (!e.oneway) { out[e.b].push(e.a); inn[e.a].push(e.b); }
+    }
+    const seen = new Uint8Array(N), order = [];
+    for (let s = 0; s < N; s++) {
+        if (seen[s]) continue;
+        seen[s] = 1;
+        const st = [[s, 0]];
+        while (st.length) {
+            const t = st[st.length - 1];
+            if (t[1] < out[t[0]].length) { const u = out[t[0]][t[1]++]; if (!seen[u]) { seen[u] = 1; st.push([u, 0]); } } else { order.push(t[0]); st.pop(); }
+        }
+    }
+    const comp = new Int32Array(N).fill(-1);
+    let best = -1, bestN = 0, c = 0;
+    for (let k = order.length - 1; k >= 0; k--) {
+        const s = order[k];
+        if (comp[s] >= 0) continue;
+        comp[s] = c;
+        let n = 0;
+        const st = [s];
+        while (st.length) { const v = st.pop(); n++; for (const u of inn[v]) if (comp[u] < 0) { comp[u] = c; st.push(u); } }
+        if (n > bestN) { bestN = n; best = c; }
+        c++;
+    }
+    g._core = Uint8Array.from(comp, x => (x === best ? 1 : 0));
+    return g._core;
+}
+
 /** An edge's class in a year (upgrades such as dualling apply from their year). */
 export function edgeClass(edge, year) {
     let cls = edge.cls;
@@ -36,6 +86,8 @@ export function edgeClass(edge, year) {
     return cls;
 }
 
+/** True for a road that exists for the whole game (yards and farms only attach to these, so they never float). */
+export const alwaysOpen = edge => !edge.opened && !(edge.closed < Infinity);
 export const edgeOpen = (edge, year) => year >= (edge.opened ?? 0) && year < (edge.closed ?? Infinity);
 export const edgeWidth = (edge, year) => ROAD_CLASS[edgeClass(edge, year)]?.width ?? 7;
 
@@ -61,7 +113,7 @@ export function createGraph() {
             if (along <= 0.5) return g.nodes[edge.a];
             if (along >= edge.len - 0.5) return g.nodes[edge.b];
             const [p1, p2] = splitPoly(edge.pts, along);
-            const mid = g.addNode(p1[p1.length - 2], p1[p1.length - 1], { town: edge.town });
+            const mid = g.addNode(p1[p1.length - 2], p1[p1.length - 1], { town: edge.town, junction: 'through' });
             const bNode = g.nodes[edge.b];
             bNode.edges = bNode.edges.filter(id => id !== edge.id);
             const rest = g.addEdge(mid, bNode, p2, { ...pick(edge) });
@@ -76,8 +128,8 @@ export function createGraph() {
 }
 
 function pick(edge) {
-    const { cls, name, road, opened, closed, upgrades, ferry, bridge, town } = edge;
-    return { cls, name, road, opened, closed, upgrades, ferry, bridge, town };
+    const { cls, name, ref, road, opened, closed, upgrades, ferry, bridge, tunnel, town, oneway, link, lit, dual, maxspeed, tag } = edge;
+    return { cls, name, ref, road, opened, closed, upgrades, ferry, bridge, tunnel, town, oneway, link, lit, dual, maxspeed, tag };
 }
 
 /** Spatial index of edge segments on a coarse grid, for nearest-road and clearance queries. */
@@ -189,63 +241,57 @@ export function segBoxDistance(ax, ay, bx, by, box, c = Math.cos(box.angle), s =
 // ---- Building the region network -------------------------------------------------------------------------------
 
 /**
- * Builds the whole network for a region: seed roads (split at shared points, trimmed at town edges and joined to
- * the town streets), town streets (from the generator), farm lanes and industry site access roads.
- * `streetsFor(town)` returns {nodes: [{x, y}], edges: [[i, j, bridge]]} for a town.
+ * Builds the whole network for a region: the baked OpenStreetMap graph (nodes and edges as written by the bake, split
+ * into the main network and town street tiles), then farm lanes and industry site access roads.
  */
-export function buildRoadGraph(region, streetsFor) {
+export function buildRoadGraph(region) {
     const g = createGraph();
     const rng = seededRng(hashSeed(region.seed, 'roads'));
 
-    // 1. town streets
-    const townNodes = new Map();
+    // 1. the baked network (global node ids are the graph's node ids)
+    const { nodes, edges } = region.baked;
+    for (const n of nodes) {
+        g.addNode(n.x, n.y, {
+            junction: n.junction, end: n.end, priority: n.priority, mini: n.mini, town: n.town ?? undefined,
+            signalsFrom: n.signalsFrom, roundaboutFrom: n.roundaboutFrom, kind: n.junction === 'end' ? 'end' : 'junction',
+        });
+    }
+    for (const e of edges) {
+        const { a, b, pts, ...props } = e;
+        // a "bridge" a few metres long (a culvert or kerb-high span in OSM) is just road: only real spans lift the deck
+        if (props.bridge && (props.spans ?? []).filter(sp => sp.type === 'bridge').reduce((t, sp) => t + sp.to - sp.from, 0) < 4) props.bridge = false;
+        g.addEdge(g.nodes[a], g.nodes[b], pts, { ...props, town: props.town ?? undefined, road: props.tag ?? undefined }); // road = the curated history tag
+    }
+    for (const n of g.nodes) setPriority(g, n);
+    // each town's centre: the nearest junction (or street end) inside the town, for routing and the minimap
     for (const town of region.towns) {
-        const plan = streetsFor(town);
-        const nodes = plan.nodes.map(p => g.addNode(p.x, p.y, { town: town.id, kind: 'street' }));
-        for (const [i, j, bridge] of plan.edges) g.addEdge(nodes[i], nodes[j], [nodes[i].x, nodes[i].y, nodes[j].x, nodes[j].y], { cls: 'street', town: town.id, bridge: !!bridge });
-        townNodes.set(town.id, nodes);
-        town.centreNode = plan.centre >= 0 ? nodes[plan.centre].id : null;
+        town.centreNode = nearestTownNode(g, town);
+        // a seed point that is off the real streets (Penzance and Torquay's lie by or in the sea) moves onto the town's
+        // real centre junction: the town's buildings, pad and map marker then sit on its streets
+        const c = town.centreNode !== null ? g.nodes[town.centreNode] : null;
+        if (c && Math.hypot(c.x - town.x, c.y - town.y) > 40) { town.seedX = town.x; town.seedY = town.y; town.x = c.x; town.y = c.y; }
     }
+    g._core = null; // yards, farms and splits change the graph below
 
-    // 2. seed roads: split at towns and shared waypoints, smooth, trim at town edges, then join to the streets
-    const keyUse = new Map();
-    for (const r of region.roads) r.pts.forEach((p, i) => {
-        if (!p.key) return;
-        keyUse.set(p.key, (keyUse.get(p.key) ?? 0) + (i === 0 || i === r.pts.length - 1 ? 2 : 1));
-    });
-    const junctions = new Map();
-    const junctionAt = p => {
-        let n = junctions.get(p.key);
-        if (!n) junctions.set(p.key, (n = g.addNode(p.x, p.y, { kind: 'junction' })));
-        return n;
-    };
-    for (const road of region.roads) {
-        const pieces = [];
-        let cur = [road.pts[0]];
-        for (let i = 1; i < road.pts.length; i++) {
-            const p = road.pts[i];
-            cur.push(p);
-            const isBreak = i < road.pts.length - 1 && (p.town || (p.key && keyUse.get(p.key) >= 2));
-            if (isBreak) { pieces.push(cur); cur = [p]; }
-        }
-        pieces.push(cur);
-        for (const piece of pieces) addSeedPiece(g, region, road, piece, townNodes, junctionAt);
-    }
+    // 2. ferries: the seed's slips and crossings, attached to the nearest real roads at each shore
+    for (const f of region.seedRoads.filter(r => r.cls === 'ferry')) addFerry(g, region, f);
 
     g.index = createSegmentIndex(g);
 
-    // 3. farms along the main roads (outside towns), each with a lane to its yard
+    // 3. farms on the real minor-road frontages outside towns (rural lanes and B roads), each with a short drive to its
+    // yard that leaves the road at a right angle
     const farms = [];
-    const mainEdges = g.edges.filter(e => e.cls === 'A' || e.cls === 'B');
-    for (const edge of mainEdges) {
-        for (let d = range(rng, 60, 200); d < edge.len - 60; d += range(rng, 220, 380)) {
-            if (!chance(rng, 0.6)) continue;
+    const farmRoads = g.edges.filter(e => (e.cls === 'lane' || e.cls === 'B') && !e.oneway && !e.link && alwaysOpen(e) && !e.bridge && !e.tunnel && !e.town && e.len > 60);
+    for (const edge of farmRoads) {
+        if (farms.length >= MAX_FARMS) break;
+        for (let d = range(rng, 25, 120); d < edge.len - 25; d += range(rng, 200, 380)) {
+            if (!chance(rng, 0.15)) continue;
             const side = chance(rng, 0.5) ? 1 : -1;
             const p = pointAt(edge.pts, d);
-            const off = range(rng, 55, 95);
+            const off = range(rng, 34, 52);
             const nx = -Math.sin(p.angle) * side, ny = Math.cos(p.angle) * side;
             const fx = p.x + nx * off, fy = p.y + ny * off;
-            if (!farmSiteOk(region, g, farms, fx, fy, p, edge)) continue;
+            if (!farmSiteOk(region, g, farms, fx, fy, p, edge, nx, ny, off)) continue;
             farms.push({ x: fx, y: fy, off, roadX: p.x, roadY: p.y, edgeId: edge.id, along: d, ux: nx, uy: ny, moor: !!moorAt(region, fx, fy), seed: hashSeed(region.seed, 'farm', farms.length) });
         }
     }
@@ -263,175 +309,169 @@ export function buildRoadGraph(region, streetsFor) {
         }
     }
 
-    // 4. industry sites with their own position: an access road from the nearest main road
+    // 4. industry sites with their own position: an access road from the nearest real road (minor roads count), leaving
+    // it at a right angle (the nearest point is the foot of the perpendicular), clear of junctions and other roads
     const sites = [];
     for (const s of region.sites) {
         if (s.x === undefined) continue; // in-town sites are placed by the building generator
-        const near = nearestEdge(g, s.x, s.y, 600, 2100, e => e.cls === 'A' || e.cls === 'B' || e.cls === 'street');
-        if (!near) continue;
-        const dx = s.x - near.x, dy = s.y - near.y;
-        const len = Math.hypot(dx, dy) || 1;
-        const ux = dx / len, uy = dy / len;
-        const entry = g.splitEdge(near.edge, near.along);
-        const yardLen = Math.max(30, len);
-        const yard = g.addNode(entry.x + ux * yardLen, entry.y + uy * yardLen, { kind: 'site' });
-        const access = g.addEdge(entry, yard, [entry.x, entry.y, yard.x, yard.y], { cls: 'access', name: s.name });
-        g.index.add(access);
-        sites.push({ ...s, node: yard.id, entryNode: entry.id, access: access.id, x: yard.x, y: yard.y, ux, uy });
+        const skip = new Set();
+        let placed = false;
+        for (let attempt = 0; attempt < 14 && !placed; attempt++) {
+            const near = nearestEdge(g, s.x, s.y, 700, 1919, e => !skip.has(e.id) && (e.cls === 'A' || e.cls === 'B' || e.cls === 'street' || e.cls === 'lane')
+                && !e.oneway && !e.link && !e.dual && alwaysOpen(e) && !e.bridge && !e.tunnel && e.len >= 14);
+            if (!near) break;
+            skip.add(near.edge.id);
+            // keep the mouth clear of the junctions at the ends of short edges
+            const along = Math.max(7, Math.min(near.edge.len - 7, near.along));
+            const p = pointAt(near.edge.pts, along);
+            const half = ROAD_CLASS[near.edge.cls].width / 2;
+            const sideOfSeed = (s.x - p.x) * -Math.sin(p.angle) + (s.y - p.y) * Math.cos(p.angle) >= 0 ? 1 : -1;
+            // the side the seed point is on first (when it is on the road itself, either side), leaving at a right angle
+            for (const side of [sideOfSeed, -sideOfSeed]) {
+                const ux = -Math.sin(p.angle) * side, uy = Math.cos(p.angle) * side;
+                const yardLen = Math.max(30, Math.hypot(s.x - p.x, s.y - p.y));
+                const ex = p.x + ux * yardLen, ey = p.y + uy * yardLen;
+                if (waterAt(region, ex, ey) || crossesWater(region, p.x, p.y, ex, ey, 1)) continue;
+                const ang = Math.atan2(uy, ux);
+                const driveLen = yardLen - half - 4;
+                // the drive must not cross another road, and the yard (28 x 34 m, plus its shed) must sit clear of the roads
+                if (driveLen > 4 && !clearOfRoads(g, obb(p.x + ux * (half + 2 + driveLen / 2), p.y + uy * (half + 2 + driveLen / 2), driveLen, 3, ang), 0.5, near.edge.id)) continue;
+                if (!clearOfRoads(g, obb(ex + ux * 20, ey + uy * 20, 40, 40, ang), 1)) continue; // (the road it leaves can bend back past the yard too)
+                const entry = g.splitEdge(near.edge, along);
+                const yard = g.addNode(ex, ey, { kind: 'site' });
+                const access = g.addEdge(entry, yard, [entry.x, entry.y, yard.x, yard.y], { cls: 'access', name: s.name });
+                g.index.add(access);
+                sites.push({ ...s, node: yard.id, entryNode: entry.id, access: access.id, x: yard.x, y: yard.y, ux, uy });
+                placed = true;
+                break;
+            }
+        }
     }
 
-    classifyJunctions(g, region);
+    // shoreline roads count as dry land for waterAt (bridges, tunnels and ferries are the exceptions: they cross water)
+    region.dryRoad = (x, y) => {
+        for (const s of g.index.near(x, y, 4)) {
+            const e = g.edges[s.edge];
+            if (e.cls === 'ferry') continue;
+            const ax = e.pts[2 * s.seg], ay = e.pts[2 * s.seg + 1], bx = e.pts[2 * s.seg + 2], by = e.pts[2 * s.seg + 3];
+            const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+            const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+            if (e.spans?.length) {
+                // along the edge only the bridge and tunnel spans cross water (a few metres of margin either side)
+                let along = Math.sqrt(l2) * t;
+                for (let k = 0; k < s.seg; k++) along += Math.hypot(e.pts[2 * k + 2] - e.pts[2 * k], e.pts[2 * k + 3] - e.pts[2 * k + 1]);
+                if (e.spans.some(sp => along > sp.from - 3 && along < sp.to + 3)) continue;
+            }
+            if (Math.hypot(x - ax - dx * t, y - ay - dy * t) < (ROAD_CLASS[e.cls]?.width ?? 7) / 2 + 3) return true;
+        }
+        return false;
+    };
+    region.waterCache.clear();
+    for (const n of g.nodes) if (n.baseDegree === undefined || n.edges.length !== n.baseDegree) refreshJunction(g, n);
     return { graph: g, farms, sites };
 }
 
-function addSeedPiece(g, region, road, piece, townNodes, junctionAt) {
-    const props = { cls: road.cls, name: road.name, road: road.id, opened: road.opened, closed: road.closed, upgrades: road.upgrades, ferry: road.ferry, bridge: road.bridge };
-    if (road.cls === 'ferry') return addFerryPiece(g, region, props, piece, townNodes, junctionAt);
-    let pts = smooth(piece.flatMap(p => [p.x, p.y]), 22);
-    let startNode = null, endNode = null;
-    const first = piece[0], last = piece[piece.length - 1];
-    // trim the ends that sit in a town at the town's edge, and join them to the nearest street node
-    // a piece lying wholly inside a town (e.g. the last few metres into a village): its outer end joins the streets
-    for (const [end, other, fromEnd] of [[first, last, false], [last, first, true]]) {
-        if (!end.town || other.town) continue;
-        const t = region.townById.get(end.town);
-        if (!trimInside(pts, t, fromEnd)) {
-            const outer = junctionAt(other);
-            const street = nearestStreetNode(region, t, townNodes, outer.x, outer.y);
-            if (street) g.addEdge(outer, street, [outer.x, outer.y, street.x, street.y], { ...props, cls: props.cls === 'ferry' ? 'A' : props.cls, town: t.id, ferry: null });
-            return;
-        }
-    }
-    if (first.town) {
-        const t = region.townById.get(first.town);
-        const cut = trimInside(pts, t, false);
-        if (!cut) return; // both ends in towns and the piece is inside one: the streets cover it
-        pts = cut;
-        startNode = joinTown(g, region, t, townNodes, pts[0], pts[1], props);
-    }
-    if (last.town) {
-        const t = region.townById.get(last.town);
-        const cut = trimInside(pts, t, true);
-        if (!cut) return;
-        pts = cut;
-        endNode = joinTown(g, region, t, townNodes, pts[pts.length - 2], pts[pts.length - 1], props);
-    }
-    startNode ??= junctionAt(first);
-    endNode ??= junctionAt(last);
-    if (startNode === endNode) return;
-    pts[0] = startNode.x; pts[1] = startNode.y;
-    pts[pts.length - 2] = endNode.x; pts[pts.length - 1] = endNode.y;
-    g.addEdge(startNode, endNode, pts, props);
-}
-
 /**
- * Ferries are not trimmed at towns (they usually cross right by the town centre): the crossing runs between the
- * piece's waypoints (the slipways), and a town at either end joins its nearest street to the slipway.
+ * Adds one seed ferry. The seed gives the two shores as latitude/longitude points (hand-placed, so they do not line
+ * up exactly with the real coast); the crossing is the shortest straight line between a real road node near one
+ * shore point and a real road node near the other that goes over open sea or tidal water. The end nodes are on
+ * streets, B or A roads that exist for the whole game, so the ferry never floats. Dates, fee and wait come from
+ * the seed.
  */
-function addFerryPiece(g, region, props, piece, townNodes, junctionAt) {
-    const way = piece.filter(p => !p.town);
-    if (!way.length) return;
-    const start = junctionAt(way[0]);
-    const end = junctionAt(way[way.length - 1]);
-    if (start !== end) g.addEdge(start, end, way.flatMap(p => [p.x, p.y]), props);
-    const link = { ...props, cls: 'A', ferry: null, upgrades: [] };
-    for (const [ref, node] of [[piece[0], start], [piece[piece.length - 1], end]]) {
-        if (!ref.town) continue;
-        const t = region.townById.get(ref.town);
-        const street = nearestStreetNode(region, t, townNodes, node.x, node.y);
-        if (street) g.addEdge(node, street, [node.x, node.y, street.x, street.y], { ...link, town: t.id });
+function addFerry(g, region, f) {
+    const line = f.pts.filter(p => p.key);
+    if (line.length < 2) return null;
+    const ok = n => n.edges.some(id => { const e = g.edges[id]; return (e.cls === 'street' || e.cls === 'B' || e.cls === 'A') && alwaysOpen(e) && !e.oneway && !e.link && !e.dual && !e.bridge && !e.tunnel; });
+    const near = p => g.nodes.filter(n => Math.hypot(n.x - p.x, n.y - p.y) < 350 && ok(n))
+        .sort((m, n) => Math.hypot(m.x - p.x, m.y - p.y) - Math.hypot(n.x - p.x, n.y - p.y)).slice(0, 70);
+    const starts = near(line[0]), ends = near(line[line.length - 1]);
+    // try for a real crossing (12 m of water, then 5 m); where the baked water does not cover the gap (the Dart is not
+    // in the coastline) fall back to the two road nodes nearest the seed's shore points
+    let best = null;
+    for (const minWet of [12, 5, -1]) {
+        for (const a of starts) {
+            for (const b of ends) {
+                if (a === b) continue;
+                const len = Math.hypot(b.x - a.x, b.y - a.y);
+                if (len < (minWet < 0 ? 30 : 16) || len > 600) continue;
+                let wet = 0;
+                if (minWet >= 0) {
+                    const n = Math.max(2, Math.ceil(len / 3));
+                    for (let i = 1; i < n; i++) if (waterAt(region, a.x + ((b.x - a.x) * i) / n, a.y + ((b.y - a.y) * i) / n)) wet += len / n;
+                    if (wet < minWet) continue;
+                }
+                // the dry part is the approach on land and costs extra
+                const cost = len + 4 * (len - wet) + (minWet < 0 ? Math.hypot(a.x - line[0].x, a.y - line[0].y) + Math.hypot(b.x - line.at(-1).x, b.y - line.at(-1).y) : 0);
+                if (!best || cost < best.cost) best = { a, b, cost };
+            }
+        }
+        if (best) break;
     }
+    if (!best) return null;
+    const { a, b } = best;
+    return g.addEdge(a, b, [a.x, a.y, b.x, b.y], { cls: 'ferry', name: f.name, road: f.id, tag: f.id, opened: f.opened, closed: f.closed, ferry: f.ferry });
 }
 
-/** Cuts a polyline where it leaves a town's circle (at 80% radius). fromEnd trims the end instead of the start. */
-function trimInside(pts, town, fromEnd) {
-    const r = town.radius * 0.8;
-    const n = pts.length / 2;
-    const idx = i => (fromEnd ? n - 1 - i : i);
-    const inside = i => Math.hypot(pts[2 * idx(i)] - town.x, pts[2 * idx(i) + 1] - town.y) < r;
-    let k = 0;
-    while (k < n && inside(k)) k++;
-    if (k >= n - 1) return null;
-    if (k === 0) return pts;
-    // interpolate the crossing between k-1 (inside) and k (outside)
-    const ax = pts[2 * idx(k - 1)], ay = pts[2 * idx(k - 1) + 1], bx = pts[2 * idx(k)], by = pts[2 * idx(k) + 1];
-    let lo = 0, hi = 1;
-    for (let it = 0; it < 20; it++) {
-        const m = (lo + hi) / 2;
-        if (Math.hypot(ax + (bx - ax) * m - town.x, ay + (by - ay) * m - town.y) < r) lo = m; else hi = m;
-    }
-    const cx = ax + (bx - ax) * hi, cy = ay + (by - ay) * hi;
-    const kept = [];
-    for (let i = k; i < n; i++) kept.push(pts[2 * idx(i)], pts[2 * idx(i) + 1]);
-    const out = [cx, cy, ...kept];
-    return fromEnd ? reverseFlat(out) : out;
-}
+/** Farms per region at most (the real lane network would otherwise give thousands). */
+const MAX_FARMS = 110;
 
-function reverseFlat(pts) {
-    const out = [];
-    for (let i = pts.length - 2; i >= 0; i -= 2) out.push(pts[i], pts[i + 1]);
-    return out;
-}
-
-/** A node where a main road meets a town: a connector to the nearest street node that isn't across wide water. */
-/** The town's nearest street node not across wide water (or simply the nearest, as a bridge, if none is). */
-function nearestStreetNode(region, town, townNodes, x, y) {
-    const nodes = townNodes.get(town.id) ?? [];
-    let best = null, bestD = Infinity, any = null, anyD = Infinity;
-    for (const n of nodes) {
-        const d = Math.hypot(n.x - x, n.y - y);
-        if (d < anyD) { any = n; anyD = d; }
-        if (d < bestD && !crossesWater(region, x, y, n.x, n.y, 30)) { best = n; bestD = d; }
-    }
-    return best ?? any;
-}
-
-function joinTown(g, region, town, townNodes, x, y, props) {
-    const best = nearestStreetNode(region, town, townNodes, x, y);
-    const gate = g.addNode(x, y, { kind: 'junction', town: town.id });
-    if (best) g.addEdge(gate, best, [x, y, best.x, best.y], { ...props, cls: props.cls === 'M' || props.cls === 'ferry' ? 'A' : props.cls, town: town.id, opened: props.opened, closed: props.closed, ferry: null });
-    return gate;
-}
-
-function farmSiteOk(region, g, farms, fx, fy, roadPoint, edge) {
+function farmSiteOk(region, g, farms, fx, fy, roadPoint, edge, nx, ny, off) {
     if (waterAt(region, fx, fy) || waterAt(region, roadPoint.x, roadPoint.y)) return false;
     if (crossesWater(region, roadPoint.x, roadPoint.y, fx, fy, 1)) return false;
     const { town, ratio } = nearestTown(region, fx, fy);
     if (town && Math.hypot(town.x - fx, town.y - fy) < town.radius + 80 && ratio < 2) return false;
     if (moorAt(region, fx, fy) && (Math.floor(fx * 7 + fy * 3) & 3) !== 0) return false; // few farms up on the moor
-    for (const f of farms) if (Math.hypot(f.x - fx, f.y - fy) < 150) return false;
-    // the farm (yard + buildings ~ 60 m across) must keep clear of every other road
-    for (const s of g.index.near(fx, fy, 70)) {
-        if (s.edge === edge.id) continue;
-        const e = g.edges[s.edge];
-        const ax = e.pts[2 * s.seg], ay = e.pts[2 * s.seg + 1], bx = e.pts[2 * s.seg + 2], by = e.pts[2 * s.seg + 3];
-        const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy || 1;
-        const t = Math.max(0, Math.min(1, ((fx - ax) * dx + (fy - ay) * dy) / len2));
-        if (Math.hypot(fx - ax - dx * t, fy - ay - dy * t) < 55) return false;
-    }
-    // and its lane must not run along/over the main road (check the road itself stays > 30 m from the yard)
-    const own = closestOnPoly(edge.pts, fx, fy);
-    return own.d > 45;
+    for (const f of farms) if (Math.hypot(f.x - fx, f.y - fy) < 400) return false;
+    // the farm (drive, yard and buildings ~ 60 m deep) must keep clear of every other road and of the road it opens onto
+    const half = (ROAD_CLASS[edge.cls]?.width ?? 7) / 2;
+    const depth = off - half + 48;
+    const box = obb(roadPoint.x + nx * (half + depth / 2), roadPoint.y + ny * (half + depth / 2), depth, 50, Math.atan2(ny, nx));
+    if (!clearOfRoads(g, box, 2, edge.id)) return false;
+    // and the yard and sheds (from the yard entrance on) clear of every road, the one it leaves included (it can bend back)
+    const yardFrom = off - 18;
+    return clearOfRoads(g, obb(roadPoint.x + nx * (yardFrom + 28), roadPoint.y + ny * (yardFrom + 28), 56, 44, Math.atan2(ny, nx)), 1);
 }
 
-/** Junction types: give way to the higher-ranked road; signals in city centres (1930s+); roundabouts on A-road junctions (1960s+). */
-function classifyJunctions(g, region) {
+/** Sets `majorRank` (the highest class rank meeting at the node) and `priority` for a node with 3+ roads. */
+function setPriority(g, n) {
+    n.baseDegree = n.edges.length;
+    if (n.edges.length < 3) return;
+    const ranks = n.edges.map(id => ROAD_CLASS[g.edges[id].cls]?.rank ?? 1);
+    n.majorRank = Math.max(...ranks);
+    if (n.priority === undefined) n.priority = ranks.filter(r => r === n.majorRank).length === 1;
+}
+
+/**
+ * Re-types a node after roads were attached to it (a yard access or farm lane joining a street): dead ends and
+ * through nodes that became junctions give way to the higher-ranked road; signals and roundabouts are kept.
+ */
+export function refreshJunction(g, n) {
+    const deg = n.edges.length;
+    if (deg <= 1) n.junction = 'end';
+    else if (deg === 2) { if (n.junction !== 'signals' && n.junction !== 'roundabout') n.junction = 'through'; }
+    else if (n.junction === undefined || n.junction === 'end' || n.junction === 'through') n.junction = 'giveway';
+    n.priority = undefined;
+    setPriority(g, n);
+    n.baseDegree = deg;
+}
+
+/**
+ * The town's centre node: the nearest real junction of a street or main road within the town footprint, else the
+ * nearest node tagged with the town. Only nodes touching a road that exists from the start of the game qualify, so
+ * the centre is reachable in every year.
+ */
+function nearestTownNode(g, town) {
+    const old = id => !g.edges[id].opened && !(g.edges[id].closed < Infinity);
+    const urban = id => ['street', 'B', 'A', 'dual', 'M'].includes(g.edges[id].cls) && old(id);
+    let best = null, bestD = Infinity, any = null, anyD = Infinity;
+    const core = coreNodes(g);
     for (const n of g.nodes) {
-        const deg = n.edges.length;
-        n.junction = deg <= 1 ? 'end' : deg === 2 ? 'through' : 'giveway';
-        if (deg >= 3) {
-            const ranks = n.edges.map(id => ROAD_CLASS[g.edges[id].cls]?.rank ?? 1);
-            n.majorRank = Math.max(...ranks);
-            const town = n.town ? region.townById.get(n.town) : null;
-            if (town && town.size === 'city' && deg >= 4 && Math.hypot(n.x - town.x, n.y - town.y) < town.radius * 0.45) {
-                n.junction = 'signals';
-                n.signalsFrom = 1932;
-            } else if (!n.town && deg >= 3 && ranks.filter(r => r >= 4).length >= 3) {
-                n.junction = 'roundabout';
-                n.roundaboutFrom = 1960;
-            }
-        }
+        if (n.town !== town.id || !n.edges.some(old) || !core[n.id]) continue; // not in a one-way pocket
+        const d = Math.hypot(n.x - town.x, n.y - town.y);
+        if (d < anyD) { any = n; anyD = d; }
+        if (n.edges.length >= 3 && d <= town.radius && n.edges.some(urban) && d < bestD) { best = n; bestD = d; }
     }
+    return (best ?? any)?.id ?? null;
 }
 
 /** Signals and roundabouts only exist from their year; before that a junction is a plain give-way. */

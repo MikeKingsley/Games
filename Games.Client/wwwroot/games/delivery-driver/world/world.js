@@ -1,8 +1,8 @@
 // The world: a region's road network, yards (depots, farms, industry sites), lazily generated town buildings
 // and the chunk cache. Everything derives from the region seed, so only player changes need saving.
 import { buildRegion, waterAt } from './region.js';
-import { buildRoadGraph, clearOfRoads, nearestEdge } from './roadgraph.js';
-import { generateTownStreets, generateTownBuildings, layoutFarm, layoutSite, findStreetYardSpot } from './generator.js';
+import { buildRoadGraph, clearOfRoads, nearestEdge, refreshJunction, alwaysOpen, ROAD_CLASS } from './roadgraph.js';
+import { generateTownBuildings, layoutFarm, layoutSite, findStreetYardSpot } from './generator.js';
 import { createChunks } from './chunks.js';
 import { gradeRoads } from './terrain.js';
 import { createSpatialHash, sat, obb } from '../sim/collision.js';
@@ -10,7 +10,7 @@ import { seededRng, hashSeed } from '../engine/rng.js';
 
 export function createWorld(regionOrJson, { chunkCap = 160 } = {}) {
     const region = regionOrJson.towns?.[0]?.radius !== undefined ? regionOrJson : buildRegion(regionOrJson);
-    const { graph, farms, sites: outSites } = buildRoadGraph(region, t => generateTownStreets(region, t));
+    const { graph, farms, sites: outSites } = buildRoadGraph(region);
 
     const world = {
         region, graph,
@@ -51,13 +51,14 @@ export function createWorld(regionOrJson, { chunkCap = 160 } = {}) {
             const [depth, width] = site.small ? [16, 22] : [28, 34];
             const spot = findStreetYardSpot(world, town, rng, placedBoxes, depth, width);
             if (!spot) {
-                if (site.type !== 'depot' && site.type !== 'garage' && placeEdgeOfTown(site, town)) world.sites.push(site);
+                if (placeEdgeOfTown(site, town)) (site.type === 'depot' ? world.depots : site.type === 'garage' ? world.garages : world.sites).push(site);
                 continue;
             }
             const street = graph.splitEdge(spot.edge, spot.along);
             const yardNode = graph.addNode(spot.entry.x, spot.entry.y, { kind: site.type === 'depot' ? 'depot' : 'site', town: town.id });
             const access = graph.addEdge(street, yardNode, [street.x, street.y, yardNode.x, yardNode.y], { cls: 'access', name: site.name, town: town.id });
             graph.index.add(access);
+            refreshJunction(graph, street);
             Object.assign(site, { node: yardNode.id, x: spot.entry.x, y: spot.entry.y });
             layoutSite(site, spot.entry, spot.ux, spot.uy, depth, width);
             addYard(site);
@@ -66,21 +67,23 @@ export function createWorld(regionOrJson, { chunkCap = 160 } = {}) {
     }
     /** Fallback for a site with no room on its town's streets: a yard just outside town, off the nearest road. */
     function placeEdgeOfTown(site, town) {
-        for (let k = 0; k < 16; k++) {
-            const a = (k / 16) * Math.PI * 2;
-            const px = town.x + Math.cos(a) * (town.radius + 45), py = town.y + Math.sin(a) * (town.radius + 45);
+        for (let k = 0; k < 144; k++) {
+            const a = ((k % 24) / 24) * Math.PI * 2, ring = town.radius + 45 + Math.floor(k / 24) * 60;
+            const px = town.x + Math.cos(a) * ring, py = town.y + Math.sin(a) * ring;
             if (waterAt(region, px, py)) continue;
-            const near = nearestEdge(graph, px, py, 120, 2100, e => e.cls !== 'lane' && e.cls !== 'access' && e.cls !== 'ferry');
-            if (!near || near.d < 12) continue;
+            const near = nearestEdge(graph, px, py, 120, 1919, e => e.cls !== 'lane' && e.cls !== 'access' && e.cls !== 'ferry' && !e.oneway && !e.link && !e.dual && alwaysOpen(e) && !e.bridge && !e.tunnel);
+            // the yard mouth keeps clear of the junctions at the ends of the road it opens onto
+            if (!near || near.d < 12 || near.along < 10 || near.edge.len - near.along < 10) continue;
             const ux = (px - near.x) / near.d, uy = (py - near.y) / near.d;
-            const half = 5;
+            const half = ROAD_CLASS[near.edge.cls].width / 2 + 0.5; // the yard mouth opens at the kerb
             const entry = { x: near.x + ux * half, y: near.y + uy * half };
             const test = layoutSite({ ...site }, entry, ux, uy);
             const all = [test.yard.zone, ...test.buildings.map(b => b.box)];
-            if (all.some(b => !clearOfRoads(graph, b, 1, near.edge.id) || !landOk(b) || placedBoxes.some(o => sat(o, b)))) continue;
+            if (!clearOfRoads(graph, test.yard.zone, 0) || all.some(b => !clearOfRoads(graph, b, 1, near.edge.id) || !landOk(b) || placedBoxes.some(o => sat(o, b)))) continue;
             const street = graph.splitEdge(near.edge, near.along);
             const yardNode = graph.addNode(entry.x, entry.y, { kind: 'site', town: town.id });
             graph.index.add(graph.addEdge(street, yardNode, [street.x, street.y, entry.x, entry.y], { cls: 'access', name: site.name }));
+            refreshJunction(graph, street);
             Object.assign(site, { node: yardNode.id, x: entry.x, y: entry.y });
             layoutSite(site, entry, ux, uy);
             addYard(site);

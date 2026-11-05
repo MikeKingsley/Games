@@ -1,20 +1,29 @@
-// Region data: a hand-written seed JSON (real towns, roads, coast, moors, rivers) projected into world metres.
-// Several regions can be registered by id, so other parts of the UK can be added later as more seed files.
-import { latLonToWorld, WORLD_SCALE } from '../config.js';
+// Region data: the hand-written seed JSON (towns, industry sites, moors, relief, ferries, rivers) plus the baked
+// OpenStreetMap data (road graph, coastline, era events; world/baked-loader.js) projected into world metres through
+// the shared town-lens projection (world/projection.js). Several regions can be registered by id.
+import { WORLD_SCALE } from '../config.js';
+import { createProjection, TOWN_RADIUS } from './projection.js';
+import { fetchBaked, splitCoast } from './baked-loader.js';
 
-const TOWN_RADIUS = { city: 320, town: 220, small: 160, village: 85 };
 const regions = new Map();
 
-/** Projects a seed JSON into world space. Pure: usable from Node tests (read the JSON with fs). */
+/**
+ * Projects a seed JSON into world space. `json.baked` (the decoded baked data) is required: the coast and the road
+ * graph come from it. Pure: usable from Node tests (read the JSON with fs and attach `baked`).
+ */
 export function buildRegion(json) {
+    const baked = json.baked;
+    if (!baked) throw new Error('buildRegion: the seed needs baked road data (json.baked, see world/baked-loader.js)');
+    const proj = createProjection(json, { lens: baked.lens });
     const origin = json.origin;
-    const project = (lat, lon) => latLonToWorld(lat, lon, origin);
+    const project = (lat, lon) => proj.project(lat, lon);
     const towns = json.towns.map(t => ({ ...t, ...project(t.lat, t.lon), radius: TOWN_RADIUS[t.size] ?? 100 }));
     const townById = new Map(towns.map(t => [t.id, t]));
     const point = p => (typeof p === 'string'
         ? { ...pos(townById.get(p), p), town: p }
         : { ...project(p[0], p[1]), key: `${p[0]},${p[1]}` });
-    const roads = json.roads.map(r => ({
+    // the seed's hand-written roads are only kept for the ferries and bridges the baker does not produce (Phase 7)
+    const seedRoads = json.roads.map(r => ({
         id: r.id, name: r.name, cls: r.class,
         pts: r.points.map(point),
         opened: r.opened ?? 0, closed: r.closed ?? Infinity,
@@ -22,13 +31,13 @@ export function buildRegion(json) {
     }));
     const sites = json.sites.map(s => ({ ...s, ...(s.lat !== undefined ? project(s.lat, s.lon) : {}) }));
     const flat = list => list.flatMap(([lat, lon]) => { const w = project(lat, lon); return [w.x, w.y]; });
-    const coast = flat(json.coast);
+    const { mainland, islands } = splitCoast(baked.coastRings);
     // terrain data (world/terrain.js): heights and radii are real metres in the seed, scaled like positions
     const moors = json.moors.map(m => ({ id: m.id, name: m.name, pts: flat(m.points), height: m.height !== undefined ? m.height * WORLD_SCALE : undefined }));
-    const rivers = json.rivers.map(r => ({
-        id: r.id, name: r.name,
-        pts: r.points.map(([lat, lon, w]) => ({ ...project(lat, lon), w })),
-    }));
+    // The seed's hand-drawn rivers do not line up with the real roads (a real road crosses the real Exe on a bridge the
+    // baker flagged; a hand-drawn line would put it through the water), so inland rivers are off until the real
+    // elevation arrives (Phase 8). Tidal rivers and estuaries are already water: the baked coastline follows them.
+    const rivers = [];
     const relief = (json.relief ?? []).map(r => ({
         name: r.name, ...project(r.lat, r.lon), height: r.height * WORLD_SCALE, radius: r.radius * WORLD_SCALE, cliff: !!r.cliff,
     }));
@@ -36,8 +45,12 @@ export function buildRegion(json) {
     const region = {
         id: json.id, name: json.name, seed: json.seed, origin,
         bounds: { minX: nw.x, minY: nw.y, maxX: se.x, maxY: se.y },
-        towns, townById, sites, roads, coast, moors, rivers, relief,
+        towns, townById, sites, roads: [], seedRoads, coast: mainland, islands, moors, rivers, relief,
         maxGrade: { ...json.maxGrade },
+        events: baked.events,
+        elevation: baked.elevation ?? null, // real heights (world/elevation-format.js); null = procedural terrain
+        baked,
+        projection: proj,
         project,
         waterCache: new Map(),
     };
@@ -52,11 +65,14 @@ function pos(t, id) {
 
 export const getRegion = id => regions.get(id);
 
-/** Browser: fetches and builds a region's seed file (world/seed/<id>.json). */
+/** Browser: fetches and builds a region (the seed file world/seed/<id>.json plus the baked data under seed/baked/). */
 export async function loadRegion(id) {
     if (regions.has(id)) return regions.get(id);
-    const res = await fetch(new URL(`./seed/${id}.json`, import.meta.url));
-    return buildRegion(await res.json());
+    const [res, baked] = await Promise.all([
+        fetch(new URL(`./seed/${id}.json`, import.meta.url)),
+        fetchBaked(new URL('./seed/baked/', import.meta.url)),
+    ]);
+    return buildRegion({ ...(await res.json()), baked });
 }
 
 /** Point in polygon (flat [x0, y0, x1, y1, ...]), even-odd rule. */
@@ -105,7 +121,43 @@ function riverBox(r) {
     };
 }
 
-export const isLand = (region, x, y) => inPolygon(region.coast, x, y) || x > region.bounds.maxX - 1;
+/**
+ * Even-odd point-in-polygon for big rings (the baked coast has ~20,000 vertices): edges are bucketed by the rows
+ * (ROW m tall) they span, so a test only walks the edges of one row.
+ */
+const ROW = 64;
+function indexPolygon(pts) {
+    const rows = new Map();
+    for (let i = 0, j = pts.length - 2; i < pts.length; j = i, i += 2) {
+        const y0 = Math.min(pts[i + 1], pts[j + 1]), y1 = Math.max(pts[i + 1], pts[j + 1]);
+        for (let r = Math.floor(y0 / ROW); r <= Math.floor(y1 / ROW); r++) {
+            let list = rows.get(r);
+            if (!list) rows.set(r, (list = []));
+            list.push(i);
+        }
+    }
+    return { pts, rows };
+}
+function inIndexed(ix, x, y) {
+    const list = ix.rows.get(Math.floor(y / ROW));
+    if (!list) return false;
+    const pts = ix.pts;
+    let inside = false;
+    for (const i of list) {
+        const j = i === 0 ? pts.length - 2 : i - 2;
+        const xi = pts[i], yi = pts[i + 1], xj = pts[j], yj = pts[j + 1];
+        if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+}
+
+/** Land: inside the mainland ring or an island ring, or on the open eastern edge ("up country"). */
+export function isLand(region, x, y) {
+    const ix = (region._landIndex ??= [region.coast, ...(region.islands ?? [])].map(indexPolygon));
+    if (x > region.bounds.maxX - 1) return true;
+    for (const p of ix) if (inIndexed(p, x, y)) return true;
+    return false;
+}
 
 /**
  * Water test, cached on a 4 m grid. Returns 0 for land, otherwise the water's width class:
@@ -117,6 +169,8 @@ export function waterAt(region, x, y) {
     if (v === undefined) {
         const cx = (Math.floor(x / 4) + 0.5) * 4, cy = (Math.floor(y / 4) + 0.5) * 4;
         v = !isLand(region, cx, cy) ? Infinity : riverAt(region, cx, cy);
+        // a road on dry land is dry: shoreline roads (quays, sea walls) lie within a metre or two of the baked coastline
+        if (v > 0 && region.dryRoad?.(cx, cy)) v = 0;
         if (region.waterCache.size > 400000) region.waterCache.clear();
         region.waterCache.set(key, v);
     }

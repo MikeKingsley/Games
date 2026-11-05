@@ -11,6 +11,7 @@ import { ROAD_CLASS } from './roadgraph.js';
 import { sat } from '../sim/collision.js';
 import { seededRng, hashSeed, range, smoothNoise } from '../engine/rng.js';
 import { CHUNK_SIZE } from '../config.js';
+import { sampleElevation } from './elevation-format.js';
 
 // ---- Tuning (world metres) ---------------------------------------------------------------------------------------
 
@@ -28,6 +29,8 @@ const MOOR_H = 14, MOOR_IN = 520, MOOR_OUT = 160;
 const TOR_H = 3.2, TOR_R = 52, TOR_CHANCE = 0.35;
 /** Coast: land within SHORE of the coastline stays at 0, then ramps up over a beach, a cliff or (in towns) a quay. */
 const SHORE = 4, BEACH = 90, CLIFF = 12, QUAY = 2;
+/** With real elevation the coast already has its real shape: a short ramp, and little extra relief on top of it. */
+const DEM_BEACH = 20, DEM_DETAIL = 0.5, DEM_TOR_H = 1;
 /** Sea floor: depth gained per metre out to sea, and its limit. */
 const SEA_SLOPE = 0.06, SEA_DEPTH = 12;
 /**
@@ -84,6 +87,54 @@ function nearestSq(segs, x, y) {
     return best;
 }
 
+const GRID = 128;
+/**
+ * A grid over a segment list (the baked coast has ~20,000 segments): cells hold the segments passing within `reach`
+ * of them, so a nearest query only looks in the rings around the point.
+ */
+function gridSegments(segs) {
+    const cells = new Map();
+    for (let k = 0; k < segs.length; k += 5) {
+        const ax = segs[k], ay = segs[k + 1], bx = ax + segs[k + 2], by = ay + segs[k + 3];
+        const i0 = Math.floor(Math.min(ax, bx) / GRID), i1 = Math.floor(Math.max(ax, bx) / GRID);
+        const j0 = Math.floor(Math.min(ay, by) / GRID), j1 = Math.floor(Math.max(ay, by) / GRID);
+        for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+            const key = i * 100003 + j;
+            let list = cells.get(key);
+            if (!list) cells.set(key, (list = []));
+            list.push(k);
+        }
+    }
+    return { segs, cells };
+}
+
+/** Squared distance to the nearest grid segment, or the cap (4 km squared) when none is within that. */
+function nearestGridSq(g, x, y, cap = 4000) {
+    const segs = g.segs, ci = Math.floor(x / GRID), cj = Math.floor(y / GRID);
+    let best = cap * cap;
+    const maxR = Math.ceil(cap / GRID);
+    for (let r = 0; r <= maxR; r++) {
+        // everything in ring r is at least (r - 1) * GRID away
+        if (r > 0 && (r - 1) * GRID > Math.sqrt(best)) break;
+        for (let i = ci - r; i <= ci + r; i++) {
+            for (let j = cj - r; j <= cj + r; j++) {
+                if (Math.max(Math.abs(i - ci), Math.abs(j - cj)) !== r) continue;
+                const list = g.cells.get(i * 100003 + j);
+                if (!list) continue;
+                for (const k of list) {
+                    const ax = segs[k], ay = segs[k + 1], dx = segs[k + 2], dy = segs[k + 3];
+                    let u = ((x - ax) * dx + (y - ay) * dy) * segs[k + 4];
+                    u = u < 0 ? 0 : u > 1 ? 1 : u;
+                    const ex = ax + dx * u - x, ey = ay + dy * u - y;
+                    const d2 = ex * ex + ey * ey;
+                    if (d2 < best) best = d2;
+                }
+            }
+        }
+    }
+    return best;
+}
+
 function boxOf(pts, pad) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (let i = 0; i < pts.length; i += 2) {
@@ -113,18 +164,25 @@ function prep(region) {
 }
 
 function build(region) {
-    const east = region.bounds.maxX - 1;
+    const east = region.bounds.maxX - 1, north = region.bounds.minY + 1;
+    const onBoundsEdge = (ax, ay, bx, by) => (ax >= east && bx >= east) || (ay <= north && by <= north);
     const relief = region.relief ?? [];
     const t = {
         region,
         seed: hashSeed(region.seed, 'terrain'),
-        // the coast polygon closes along the region's east edge ("up country"), which is not a real coastline
-        coast: segments(region.coast, true, (ax, ay, bx, by) => ax >= east && bx >= east),
-        moors: region.moors.map(m => ({ pts: m.pts, h: m.height ?? MOOR_H, segs: segments(m.pts, true), box: boxOf(m.pts, MOOR_OUT) })),
-        relief: relief.filter(r => !r.cliff),
-        cliffs: relief.filter(r => r.cliff),
+        // the coast rings close along the region's east and north edges, which are not real coastlines ("up country")
+        coast: gridSegments(Float64Array.from([
+            ...segments(region.coast, true, onBoundsEdge),
+            ...(region.islands ?? []).flatMap(r => [...segments(r, true, onBoundsEdge)]),
+        ])),
+        moors: region.elevation ? [] : region.moors.map(m => ({ pts: m.pts, h: m.height ?? MOOR_H, segs: segments(m.pts, true), box: boxOf(m.pts, MOOR_OUT) })),
+        dem: region.elevation ?? null,
+        beach: region.elevation ? DEM_BEACH : BEACH,
+        relief: region.elevation ? [] : relief.filter(r => !r.cliff),
+        cliffs: region.elevation ? [] : relief.filter(r => r.cliff),
         torBox: region.moors.length ? boxOf(region.moors.flatMap(m => m.pts), CHUNK_SIZE) : null,
         tors: new Map(),
+        coastLattice: new Map(),
         towns: [],
         rivers: [],
         // scratch state for one terrainHeight call (it never re-enters)
@@ -147,8 +205,27 @@ function build(region) {
 
 /** Signed distance to the coastline: positive inland, negative out at sea. */
 function coastDistance(t, x, y) {
-    const d = Math.sqrt(nearestSq(t.coast, x, y));
+    // far inland the distance only shapes the land very gently (and the coast ramp is long over), so it is
+    // interpolated from a lazily filled 24 m lattice of exact values; within COARSE_NEAR of the coast it is exact
+    const fx = x / COARSE_CELL, fy = y / COARSE_CELL, i = Math.floor(fx), j = Math.floor(fy);
+    const c00 = coastLattice(t, i, j), c10 = coastLattice(t, i + 1, j), c01 = coastLattice(t, i, j + 1), c11 = coastLattice(t, i + 1, j + 1);
+    if (Math.min(c00, c10, c01, c11) > COARSE_NEAR) {
+        const tx = fx - i, ty = fy - j;
+        return (c00 * (1 - tx) + c10 * tx) * (1 - ty) + (c01 * (1 - tx) + c11 * tx) * ty;
+    }
+    return exactCoastDistance(t, x, y);
+}
+
+const COARSE_CELL = 24, COARSE_NEAR = 120;
+function exactCoastDistance(t, x, y) {
+    const d = Math.sqrt(nearestGridSq(t.coast, x, y));
     return isLand(t.region, x, y) ? d : -d;
+}
+function coastLattice(t, i, j) {
+    const key = (i + 32768) * 65536 + (j + 32768);
+    let v = t.coastLattice.get(key);
+    if (v === undefined) { v = exactCoastDistance(t, i * COARSE_CELL, j * COARSE_CELL); t.coastLattice.set(key, v); }
+    return v;
 }
 
 const seaFloor = dc => -Math.min(SEA_DEPTH, SEA_SLOPE * -dc);
@@ -169,9 +246,9 @@ function cliffAt(t, x, y, out) {
 }
 
 /** Width of the ramp from the shore up to the land: a beach, steeper at cliffs, a quay wall in towns. */
-function coastRamp(dc, cliffW, townW) {
-    if (dc >= SHORE + BEACH) return 1;
-    const width = (BEACH + (CLIFF - BEACH) * cliffW) * (1 - townW) + QUAY * townW;
+function coastRamp(dc, cliffW, townW, beach = BEACH) {
+    if (dc >= SHORE + beach) return 1;
+    const width = (beach + (CLIFF - beach) * cliffW) * (1 - townW) + QUAY * townW;
     return smoothstep(SHORE, SHORE + width, dc);
 }
 
@@ -184,6 +261,12 @@ function fbm(seed, set, x, y) {
 
 /** The land before rivers, towns and the coast ramp: inland rise x broad noise, hills, moors, relief, tors, cliffs. */
 function landShape(t, x, y, dc, cliff) {
+    if (t.dem) {
+        // real elevation, plus fine detail growing inland (the grid is 12 world m per cell), plus the tor knolls
+        let h = sampleElevation(t.dem, x, y) + DEM_DETAIL * (1 - Math.exp(-dc / HILL_D)) * (2 * fbm(t.seed, HILLS, x, y) - 1);
+        if (t.torBox && inBox(t.torBox, x, y)) h += torLift(t, x, y);
+        return smax(h, 0.4, 0.8);
+    }
     const n = fbm(t.seed, BROAD, x, y);
     let h = INLAND_H * (1 - Math.exp(-dc / INLAND_D)) * (0.4 + 0.9 * n)
         + HILL_H * (1 - Math.exp(-dc / HILL_D)) * (2 * fbm(t.seed, HILLS, x, y) - 1);
@@ -207,7 +290,7 @@ function landHeight(t, x, y) {
     const dc = coastDistance(t, x, y);
     if (dc <= 0) return seaFloor(dc);
     const cliff = cliffAt(t, x, y, { w: 0, h: 0 });
-    return landShape(t, x, y, dc, cliff) * coastRamp(dc, cliff.w, 0);
+    return landShape(t, x, y, dc, cliff) * coastRamp(dc, cliff.w, 0, t.beach);
 }
 
 // ---- Tors ----------------------------------------------------------------------------------------------------------
@@ -235,7 +318,7 @@ function torLift(t, x, y) {
             if (s === undefined) t.tors.set(key, (s = torSite(t.region, i, j)));
             if (!s) continue;
             const dx = x - s.x, dy = y - s.y, q = (dx * dx + dy * dy) / (TOR_R * TOR_R);
-            if (q < 1) h += TOR_H * (1 - q) * (1 - q);
+            if (q < 1) h += (t.dem ? DEM_TOR_H : TOR_H) * (1 - q) * (1 - q);
         }
     }
     return h;
@@ -427,7 +510,7 @@ export function terrainHeight(region, x, y) {
         const c = channelZ(q.d, q.w, q.level, bankW);
         if (c < h) h = c;
     }
-    return h * coastRamp(dc, cliff.w, pad.w);
+    return h * coastRamp(dc, cliff.w, pad.w, t.beach);
 }
 
 /**
@@ -837,6 +920,15 @@ export function gradeRoads(world) {
         return { g, la, lb, linear, w: NODE_SLACK * g * Math.max(0, e.len - la - lb - town) + TOWN_SWELL * town };
     });
     const target = nodes.map(n => nodeTarget(region, n.x, n.y));
+    // a bridge over water has a straight deck between its two end nodes, so both must stand clear of the water
+    for (const e of edges) {
+        if (!e.bridge || e.cls === 'ferry') continue;
+        const n = Math.max(1, Math.ceil(e.len / 2)), xs = new Float64Array(n + 1), ys = new Float64Array(n + 1);
+        samplePolyline(e.pts, e.len, n, xs, ys);
+        let lvl = -Infinity;
+        for (let i = 0; i <= n; i++) if (waterAt(region, xs[i], ys[i]) > 0) lvl = Math.max(lvl, waterLevel(region, xs[i], ys[i]) ?? 0);
+        if (lvl > -Infinity) for (const id of [e.a, e.b]) target[id] = Math.max(target[id], lvl + DECK_CLEARANCE);
+    }
     const adj = nodes.map(n => n.edges.map(id => [graph.other(edges[id], n.id), info[id].w]));
     // yards whose pads touch are tied together so neither is left tilting into the other
     const { pads, links } = padShapes(world);

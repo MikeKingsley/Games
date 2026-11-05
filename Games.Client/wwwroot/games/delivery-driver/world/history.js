@@ -11,8 +11,7 @@ import { GAME_MINUTES_PER_SECOND } from '../game/calendar.js';
 /**
  * Every dated change in the region, oldest first: {year, kind: 'opened'|'closed'|'upgraded', name, road, cls}.
  * With the baked road data the events are the curated ones (scripts/bake-roads/history.json), carried in the baked
- * manifest as `region.events`; `road` is the curated tag also stored on the affected edges (`edge.tag`). A world
- * built from the seed's hand-written roads (tests, old data) falls back to the dates on `region.roads`.
+ * manifest as `region.events`; `road` is the curated tag also stored on the affected edges (`edge.tag`).
  */
 export function roadEvents(world) {
     if (world._roadEvents) return world._roadEvents;
@@ -24,14 +23,7 @@ export function roadEvents(world) {
         seen.add(key);
         out.push({ year: e.year, kind: e.kind, name: e.name, road: e.road, cls: e.cls });
     };
-    if (Array.isArray(world.region.events)) for (const e of world.region.events) push(e);
-    else {
-        for (const r of world.region.roads) {
-            if (r.opened > 0) push({ year: r.opened, kind: 'opened', name: r.name, road: r.id, cls: r.cls });
-            if (r.closed < Infinity) push({ year: r.closed, kind: 'closed', name: r.name, road: r.id, cls: r.cls });
-            for (const u of r.upgrades) push({ year: u.year, kind: 'upgraded', name: r.name, road: r.id, cls: u.class });
-        }
-    }
+    for (const e of world.region.events ?? []) push(e);
     out.sort((a, b) => a.year - b.year || a.name.localeCompare(b.name));
     world._roadEvents = out;
     return out;
@@ -66,7 +58,7 @@ export function ferrySlips(world) {
             const p = pointAt(e.pts, k * step);
             if (waterAt(world.region, p.x, p.y) >= 15) { if (first < 0) first = k; last = k; }
         }
-        if (first < 0) continue;
+        if (first < 0) { first = 0; last = n; } // the baked water does not cover this crossing (the Dart): slip to slip along the edge
         const a = pointAt(e.pts, Math.max(0, (first - 2) * step), {});
         const b = pointAt(e.pts, Math.min(e.len, (last + 2) * step), {});
         const crossing = (last - first + 4) * step;
