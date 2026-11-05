@@ -47,15 +47,15 @@ test('a save loads back to the same state', () => {
     assert.ok(Math.abs(t.player.x - (depot.x + 40)) < 1e-9);
 });
 
-test('saves are version 4 and older saves are dropped: no save, with a notice, until overwritten', () => {
-    assert.equal(SAVE_VERSION, 4);
+test('saves are version 5 and older saves are dropped: no save, with a notice, until overwritten', () => {
+    assert.equal(SAVE_VERSION, 5);
     const s = session();
     const current = makeSave(s);
-    assert.equal(current.version, 4);
+    assert.equal(current.version, 5);
     assert.equal(migrate(current).career.company, 'Tamar Valley Haulage');
     const storage = memoryStorage();
     const store = createSaveStore(storage);
-    for (const version of [1, 2, 3]) {
+    for (const version of [1, 2, 3, 4]) {
         const old = { ...structuredClone(current), version };
         assert.throws(() => migrate(old), /earlier version/);
         storage.setItem('games.dd.slot1', JSON.stringify(old));
@@ -63,7 +63,7 @@ test('saves are version 4 and older saves are dropped: no save, with a notice, u
         assert.deepEqual(store.list()[0], { slot: 1, empty: true, outdated: true });
         assert.throws(() => store.importJson(2, JSON.stringify(old)), /earlier version/);
     }
-    assert.throws(() => migrate({ version: 5, career: {} }), /Not a Delivery Driver save/);
+    assert.throws(() => migrate({ version: 6, career: {} }), /Not a Delivery Driver save/);
     assert.deepEqual(store.list()[1], { slot: 2, empty: true }, 'a plain empty slot has no notice');
     store.write(1, current); // a new game in the slot replaces the old save
     assert.equal(store.list()[0].company, 'Tamar Valley Haulage');

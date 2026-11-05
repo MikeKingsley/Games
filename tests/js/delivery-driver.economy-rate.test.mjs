@@ -31,7 +31,7 @@ function atOldScale(r, weight, stops) {
 }
 
 test('TRIP_RATE is the ratio of the new to the 1:13 scale', () => {
-    assert.ok(Math.abs(TRIP_RATE - 3.25) < 1e-12 && LEGACY_SCALE === 1 / 13);
+    assert.ok(Math.abs(TRIP_RATE - 13 * WORLD_SCALE) < 1e-12 && LEGACY_SCALE === 1 / 13); // 3.25 at 1:4, 6.5 at 1:2
 });
 
 test('pay and fuel per minute of driving are within 5% of the 1:13 game for the same job', () => {

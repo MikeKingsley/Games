@@ -1,11 +1,12 @@
 // Save games: three slots in localStorage (games.dd.slot1-3), with a small index of them in the shell's progress
 // store (games.progress.delivery-driver). The world is rebuilt from the region seed, so a save only holds what the
 // player changed: the career (money, calendar, fleet, trailers, drivers, loans, depots, reputation, the job) and
-// where things stand. Versioned: version 4 (real OpenStreetMap roads, real elevation, plan 0008) dropped older saves
-// with no migration (the game is still in early development; town, yard and road ids moved); they read as an empty
-// slot with a notice. Version 3 was the terrain and slope physics (plan 0007).
+// where things stand. Versioned: version 5 (the 1:4 map with no town lens, layered roads and junction layouts, plan
+// 0009) dropped older saves with no migration (the game is still in early development; every world coordinate,
+// town, yard and road id moved); they read as an empty slot with a notice. Version 4 was the real OpenStreetMap
+// roads and elevation (plan 0008), version 3 the terrain and slope physics (plan 0007).
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 export const SLOTS = [1, 2, 3];
 export const MAX_BYTES = 500 * 1024;
 const key = slot => `games.dd.slot${slot}`;

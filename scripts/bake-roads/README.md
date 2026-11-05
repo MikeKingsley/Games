@@ -47,7 +47,8 @@ so the stitcher replaces any pixel more than 60 m from the mean of its neighbour
 ## Bake
 
 ```
-node scripts/bake-roads/bake.mjs                  # .cache/osm -> world/seed/baked/ (about 13 s)
+node scripts/bake-roads/bake.mjs                  # .cache/osm -> world/seed/baked/ (about 25 s)
+node scripts/bake-roads/measure-scale.mjs         # scratch bakes at other scales (.cache/measure-scale/ only), prints overlap tables
 node scripts/validate-roads.mjs --baked --area all  # check the result
 ```
 
@@ -60,19 +61,19 @@ per town, `coast.json` and `rivers.json` (format in `world/baked-format.js`). It
 
 ### Generalisation (plan 0009 phase 4)
 
-At 1:4 life-size roads still overlap in dense grids and interchanges, so `bake()` runs, after the simplify/trim/crossing
+At the current `WORLD_SCALE` (1:4) life-size roads still overlap in dense grids and interchanges, so `bake()` runs, after the simplify/trim/crossing
 steps and before junction typing and the era pass: `consolidateJunctions` (two or three junctions closer than their
 footprints become one), `absorbIntoRoundabouts` (a junction inside a roundabout's ring joins the roundabout; ring =
-island 7.2 m + widest arm), then up to three rounds of `generaliseSeparation` + `repairCrossings`. Separation finds
+the layout's ring: class island plus ring width), then up to three rounds of `generaliseSeparation` + `repairCrossings`. Separation finds
 same-level strip overlaps (`findStripOverlaps`: carriageway/2 + 2 m pavement per road, ignoring the patch around a
 junction node of either road, 30 m either side of a bridge or tunnel = its approach ramp) and resolves each by dropping
 the lower-ranked road if the network and the M5/A30/A38 chain stay connected, else joining a nearby end node onto the
-other road, contracting a short link, or nudging the road sideways. Bridge and tunnel stretches are never edited.
+other road, contracting a short link, or nudging the road sideways. Bridge and tunnel stretches are never edited. The game then lifts decks to clear the road below (`gradeRoads`, `_docs/road-system.md`).
 Spans carry a `level` (OSM `layer`, else +1 bridge / -1 tunnel); roundabout nodes carry `ringRadius` (world metres).
 `bake` logs the counts (`separation {...}`) and `validate-roads.mjs --baked --area all --strict` must exit 0.
 
 Coordinates are world metres from `world/projection.js`: a plain equirectangular projection at `WORLD_SCALE` in
-`config.js` (1:4 since plan 0009; there is no town lens any more). Clean-up tolerances in `bake()` are written in real
+`config.js` (1:4 when this was written; there is no town lens any more). Clean-up tolerances in `bake()` are written in real
 metres and converted by the scale. Town street footprints are real-metre radii per size (`TOWN_FOOTPRINT` in
 `world/projection.js`: city 1210, town 910, small 730, village 505, exactly what the OSM cache covers); the game's
 `TOWN_RADIUS` is that times the scale. Enlarging them needs a fresh `fetch-osm.mjs` run (it reads `townBoxes`).
@@ -102,4 +103,7 @@ node scripts/validate-roads.mjs --area all --check-yards --furniture --strict   
 node scripts/validate-roads.mjs --baked --area all                               # the baked graph alone
 node scripts/terrain-stats.mjs                                                  # land heights and road grades
 node scripts/traffic-soak.mjs --town exeter --steps 10000                        # seeded traffic soak
+node scripts/junction-layout-stats.mjs --years 1919,1965,2024                    # junction layout counts
+node --expose-gc scripts/perf-corridor.mjs --route a30 --minutes 5               # chunk build, GC and heap along a route (no GPU)
+node scripts/perf-browser.mjs --route a30 --seconds 60                           # frame times in Edge against the dev server on port 5210
 ```
