@@ -8,7 +8,8 @@ import { edgeClass, edgeOpen, edgeWidth, ROAD_CLASS, LANE_WIDTH } from '../../wo
 import { layoutJunction, junctionSignature, trimFor } from '../../world/junction-layout.js';
 import { roadHeightAt, groundZ } from '../../world/terrain.js';
 import { waterAt } from '../../world/region.js';
-import { pointAt, closestOnPoly } from '../../world/geom.js';
+import { closestOnPoly } from '../../world/geom.js';
+import { createSpline, sampleEven, sampleAdaptive } from '../../world/road-spline.js';
 import { roadStyle, offsetPolyline } from '../draw-road.js';
 import { BRIDGE, addDeck, addTunnel, deckRuns, tunnelRuns } from './structure-mesh.js';
 
@@ -39,17 +40,37 @@ export function roadColours(year, wet = false) {
 /** What an edge looks like in a year: its class and width, plus whether it exists. Rebuild its mesh when this changes. */
 export const roadKey = (edge, year) => (edgeOpen(edge, year) ? `${edgeClass(edge, year)}:${edgeWidth(edge, year)}` : 'closed');
 
-/** Points along an edge's graded centreline every ~STEP m: [{x, y, z}], from the `a` end to the `b` end. */
-export function edgeSamples(edge, step = STEP) {
-    const n = Math.max(1, Math.ceil(edge.len / step));
-    const out = [];
-    const tmp = { x: 0, y: 0, angle: 0 };
-    for (let i = 0; i <= n; i++) {
-        const d = (edge.len * i) / n;
-        pointAt(edge.pts, d, tmp);
-        out.push({ x: tmp.x, y: tmp.y, z: roadHeightAt(edge, d), d });
+/** The edge's centripetal spline through its baked points (arc length, tangent and normal at any distance), built once. */
+function splineOf(edge) {
+    if (edge._spl !== undefined) return edge._spl;
+    const pts = [];
+    for (let i = 0; i < edge.pts.length; i += 2) {
+        const p = pts[pts.length - 1];
+        if (!p || Math.hypot(edge.pts[i] - p.x, edge.pts[i + 1] - p.y) > 0.01) pts.push({ x: edge.pts[i], y: edge.pts[i + 1] });
     }
-    return out;
+    // the junction layouts at either end assume the road leaves along its first and last chord: a point 1 m in pins the
+    // spline's end tangent to that chord (the spline's own end extrapolation would swing it on a short edge with a corner)
+    if (pts.length >= 3) {
+        const pin = (a, c) => { const l = Math.hypot(c.x - a.x, c.y - a.y), k = Math.min(1, l / 3) / l; return { x: a.x + (c.x - a.x) * k, y: a.y + (c.y - a.y) * k }; };
+        const n = pts.length;
+        pts.splice(n - 1, 0, pin(pts[n - 1], pts[n - 2]));
+        pts.splice(1, 0, pin(pts[0], pts[1]));
+    }
+    return (edge._spl = pts.length >= 2 ? createSpline(pts) : null);
+}
+
+/**
+ * Points along an edge's graded centreline, from the `a` end to the `b` end: [{x, y, z, d, tx, ty}]. The line is a spline
+ * through the edge's points (not their chords) and `tx, ty` its unit tangent, so strips offset along the spline normal
+ * and bends stay smooth. Without a `step` the spacing is adaptive (about 1 m on bends up to STEP m on straights, chord error 0.02 m so a bend turns under 5 degrees per sample down to a 30 m radius); with
+ * one it is even. `d` is the distance along the edge's own polyline (what `roadHeightAt`, trims and windows use).
+ */
+export function edgeSamples(edge, step, { minStep = 1, maxStep = STEP, tol = 0.02 } = {}) {
+    const spl = splineOf(edge);
+    if (!spl) return [];
+    const raw = step ? sampleEven(spl, step) : sampleAdaptive(spl, { minStep, maxStep, tol });
+    const k = edge.len / (spl.length || 1);
+    return raw.map(p => { const d = Math.min(edge.len, p.s * k); return { x: p.x, y: p.y, z: roadHeightAt(edge, d), d, tx: p.tx, ty: p.ty }; });
 }
 
 /** The edge's samples, computed once (the grading is final by the time anything is drawn). */
@@ -63,26 +84,29 @@ const samplesOf = edge => (edge._smp ??= edgeSamples(edge));
 export const DETAIL = { coarse: 0, basic: 1, full: 2 };
 const levelOf = detail => (detail === true || detail === undefined ? DETAIL.full : detail === false ? DETAIL.coarse : detail);
 
-/** Every second sample of the edge's (a bend of 8 m instead of 4 m), keeping both ends: the coarse variant. */
-const coarseSamplesOf = edge => (edge._smpC ??= (() => {
-    const s = samplesOf(edge), out = [];
-    for (let i = 0; i < s.length; i += 2) out.push(s[i]);
-    if ((s.length - 1) % 2) out.push(s[s.length - 1]);
-    return out;
-})());
+/** The coarse variant: the spline sampled at 2 to 8 m (a looser chord tolerance), keeping both ends. */
+const coarseSamplesOf = edge => (edge._smpC ??= edgeSamples(edge, 0, { minStep: 2, maxStep: 2 * STEP, tol: 0.15 }));
 
+/** The samples moved `off` m to the right of travel along the spline normal (not per chord); the tangent carries over. */
 const offsetSamples = (pts, off) => {
-    const flat = [];
-    for (const p of pts) flat.push(p.x, p.y);
-    const o = offsetPolyline(flat, off);
-    return pts.map((p, i) => ({ x: o[2 * i], y: o[2 * i + 1], z: p.z }));
+    if (pts.some(p => p.tx === undefined)) {
+        const flat = [];
+        for (const p of pts) flat.push(p.x, p.y);
+        const o = offsetPolyline(flat, off);
+        return pts.map((p, i) => ({ x: o[2 * i], y: o[2 * i + 1], z: p.z }));
+    }
+    return pts.map(p => ({ x: p.x + p.ty * off, y: p.y - p.tx * off, z: p.z, tx: p.tx, ty: p.ty }));
 };
 
 /** Samples of [d0, d1] only, with interpolated end points (fewer than two when the range is empty). */
 function trimSamples(samples, d0, d1) {
     if (d1 - d0 < 1) return [];
     const out = [];
-    const at = (a, c, d) => { const f = (d - a.d) / (c.d - a.d || 1); return { x: a.x + (c.x - a.x) * f, y: a.y + (c.y - a.y) * f, z: a.z + (c.z - a.z) * f, d }; };
+    const at = (a, c, d) => {
+        const f = (d - a.d) / (c.d - a.d || 1), out = { x: a.x + (c.x - a.x) * f, y: a.y + (c.y - a.y) * f, z: a.z + (c.z - a.z) * f, d };
+        if (a.tx !== undefined) { const tx = a.tx + (c.tx - a.tx) * f, ty = a.ty + (c.ty - a.ty) * f, l = Math.hypot(tx, ty) || 1; out.tx = tx / l; out.ty = ty / l; }
+        return out;
+    };
     for (let i = 0; i < samples.length - 1; i++) {
         const a = samples[i], c = samples[i + 1];
         if (c.d <= d0 || a.d >= d1) continue;
@@ -114,10 +138,15 @@ function wetRuns(samples, region, minWater) {
     return runs;
 }
 
-/** Dashes of `dash` m every `dash + gap` m along sample points, as short strips into a builder. */
+/** Dashes of `dash` m every `dash + gap` m (metres along the spline samples), as short strips into a builder. */
 function dashes(b, pts, width, colour, bias, dash = 3, gap = 6) {
     let carry = 0, on = true;
     let run = [pts[0]];
+    const lerp = (a, c, f) => {
+        const o = { x: a.x + (c.x - a.x) * f, y: a.y + (c.y - a.y) * f, z: a.z + (c.z - a.z) * f };
+        if (a.tx !== undefined && c.tx !== undefined) { const tx = a.tx + (c.tx - a.tx) * f, ty = a.ty + (c.ty - a.ty) * f, l = Math.hypot(tx, ty) || 1; o.tx = tx / l; o.ty = ty / l; }
+        return o;
+    };
     const flush = () => { if (run.length >= 2) addStrip(b, run, width, undefined, colour, { bias }); run = []; };
     for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1], c = pts[i];
@@ -127,8 +156,8 @@ function dashes(b, pts, width, colour, bias, dash = 3, gap = 6) {
             const room = (on ? dash : gap) - carry, take = Math.min(room, len - t);
             const f1 = (t + take) / len;
             if (on) {
-                if (!run.length) { const f0 = t / len; run.push({ x: a.x + (c.x - a.x) * f0, y: a.y + (c.y - a.y) * f0, z: a.z + (c.z - a.z) * f0 }); }
-                run.push({ x: a.x + (c.x - a.x) * f1, y: a.y + (c.y - a.y) * f1, z: a.z + (c.z - a.z) * f1 });
+                if (!run.length) { const f0 = t / len; run.push(lerp(a, c, f0)); }
+                run.push(lerp(a, c, f1));
             }
             t += take;
             carry += take;
@@ -228,7 +257,7 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
 
 /**
  * The centre line: dashes on straights; on the bends of A and B roads from 1960 a solid double white line (no
- * overtaking). A bend is a run of samples whose heading turns more than BEND rad per sample.
+ * overtaking). A bend is a run of samples whose heading turns more than BEND rad per STEP m.
  */
 const BEND = 0.1;
 function centreLine(b, ms, cls, year, col) {
@@ -236,7 +265,9 @@ function centreLine(b, ms, cls, year, col) {
     const turn = i => {
         if (i <= 0 || i >= ms.length - 1) return 0;
         const a1 = Math.atan2(ms[i].y - ms[i - 1].y, ms[i].x - ms[i - 1].x), a2 = Math.atan2(ms[i + 1].y - ms[i].y, ms[i + 1].x - ms[i].x);
-        return Math.abs(Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1)));
+        // the turn per STEP m (samples are 1 to 4 m apart on the spline), so the threshold keeps its meaning in metres
+        const chord = (Math.hypot(ms[i].x - ms[i - 1].x, ms[i].y - ms[i - 1].y) + Math.hypot(ms[i + 1].x - ms[i].x, ms[i + 1].y - ms[i].y)) / 2;
+        return Math.abs(Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1))) * (STEP / Math.max(chord, 0.5));
     };
     const bend = ms.map((_, i) => turn(i) > BEND || turn(i - 1) > BEND || turn(i + 1) > BEND);
     let i = 0;
@@ -259,8 +290,10 @@ function addZebra(b, edge, width, window, tA, tB) {
     const d = edge.len / 2;
     if (d < tA + 5 || d > edge.len - tB - 5) return;
     if (window && !(d >= window[0] && d < window[1])) return;
-    const p = pointAt(edge.pts, d, { x: 0, y: 0, angle: 0 });
-    const z = roadHeightAt(edge, d), nx = Math.sin(p.angle), ny = -Math.cos(p.angle), tx = Math.cos(p.angle), ty = Math.sin(p.angle);
+    const spl = splineOf(edge);
+    if (!spl) return;
+    const p = spl.at(Math.min(spl.length, (d * spl.length) / edge.len)); // (the spline's own point and tangent, so the bars follow a bend)
+    const z = roadHeightAt(edge, d), nx = p.ty, ny = -p.tx, tx = p.tx, ty = p.ty;
     const half = width / 2 - 0.4, white = hex('#f4f4f0');
     for (let k = -4; k < 4; k++) {
         const c = { x: p.x + tx * (k + 0.5) * 1.0, y: p.y + ty * (k + 0.5) * 1.0 };

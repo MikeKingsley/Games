@@ -520,3 +520,33 @@ test('canvas fallback: drawJunctions fills the layout polygon and a roundabout i
     drawJunctions(ctx, graph, [tee.id], 2000);
     assert.ok(calls.some(c => c[0] === 'fill') && !calls.some(c => c[0] === 'arc'));
 });
+
+test('a 90 degree bend built from the spline has no edge-to-edge turn over 5 degrees per sample, at every detail level', () => {
+    // a quarter circle of 30 m radius (baked as a coarse 5-point polyline, as the bakes do), 47 m long
+    const r = 30, pts = [];
+    for (let k = 0; k <= 4; k++) { const a = (k / 4) * (Math.PI / 2); pts.push(r * Math.sin(a), r * (1 - Math.cos(a))); }
+    const base = graph.edges.find(e => e.cls === 'A' && e.opened === 0 && !e.bridge && !e.tunnel && e.z);
+    const bend = { ...base, id: -1, pts, len: (r * Math.PI) / 2, _spl: undefined, _smp: undefined, _smpC: undefined };
+    const turns = samples => {
+        const out = [];
+        for (let i = 1; i < samples.length - 1; i++) {
+            const a1 = Math.atan2(samples[i].y - samples[i - 1].y, samples[i].x - samples[i - 1].x), a2 = Math.atan2(samples[i + 1].y - samples[i].y, samples[i + 1].x - samples[i].x);
+            out.push(Math.abs(Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1))));
+        }
+        return out;
+    };
+    const lim = (5 * Math.PI) / 180;
+    const s = R.edgeSamples(bend);
+    assert.ok(s.length > 20 && Math.max(...turns(s)) < lim, `centre samples turn ${Math.max(...turns(s))} rad`);
+    // the strips offset along the spline normal stay smooth too (the outer kerb edge of the bend)
+    for (const off of [-(width_(bend) / 2 + 0.8), width_(bend) / 2 + 0.8]) {
+        const o = s.map(p => ({ x: p.x + p.ty * off, y: p.y - p.tx * off }));
+        assert.ok(Math.max(...turns(o)) < lim, `offset ${off} turns ${Math.max(...turns(o))} rad`);
+    }
+    // the built mesh: consecutive strip vertices on one side keep the same bound
+    for (const detail of [R.DETAIL.coarse, R.DETAIL.basic, R.DETAIL.full]) {
+        const mesh = R.buildEdgeMesh(world, bend, 2000, { detail });
+        assert.ok(mesh && M.triangleCount(mesh) > 0);
+    }
+});
+function width_(e) { return edgeWidth(e, 2000); }

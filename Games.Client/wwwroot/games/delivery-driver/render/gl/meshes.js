@@ -300,6 +300,8 @@ export function addStrip(b, points, width, heightProfile = 0, color = [0.3, 0.3,
         let tx = next.x - prev.x, ty = next.y - prev.y;
         const tl = Math.hypot(tx, ty) || 1;
         tx /= tl; ty /= tl;
+        // spline samples carry their own unit tangent: offset along the true normal, not the chord direction
+        if (points[i].tx !== undefined) { tx = points[i].tx; ty = points[i].ty; }
         // Left of travel in a +y-south frame: (ty, -tx) is the side towards "left" when looking along +x with y down.
         const lx = ty, ly = -tx, half = widthAt(i) / 2, z = zAt(i) + bias;
         // grade along the strip for the shading normal
