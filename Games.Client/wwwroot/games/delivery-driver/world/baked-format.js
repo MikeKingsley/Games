@@ -3,20 +3,25 @@
 //
 // manifest.json  {format, licence, attribution, projection, quant, tiles: [{id, file, town?, nodeStart, nodeCount,
 //                 edgeCount}], coast, rivers, stats}
-// <tile>.json    {licence, id, nodeStart, strings, nodes, nodeInfo, nodeEra, edges}
+// <tile>.json    {licence, id, nodeStart, strings, nodes, nodeInfo, nodeEra, nodeRing, edges}
 //   nodes     [x0, y0, dx1, dy1, ...]  quantised, delta from the previous node of the tile (first from 0, 0)
 //   nodeInfo  [junction, end, flags, town, ...] four ints per node (indices into JUNCTIONS / ENDS / strings)
 //   edges     [[a, b, cls, flags, ref, name, maxspeed, town, pts, spans], ...]
 //             a, b global node ids; cls index into CLASSES; ref/name/town string indices (-1 none); maxspeed mph (0
 //             unknown); pts = interior vertices as quantised deltas, starting from node a; spans = flat
-//             [i0, i1, type, ...] vertex-index ranges (0 = node a) of bridges (1) and tunnels (2); then, only on edges
+//             [i0, i1, level, ...] vertex-index ranges (0 = node a) of bridges (level >= 1, from the OSM layer tag, else
+//             1) and tunnels (level <= -1, else -1); every stretch outside a span is on the ground (level 0). Roads only
+//             share a node at the same level, so a node never joins a span's interior to anything. Then, only on edges
 //             with era data: opened (year, 0 = always), closed (year, 0 = never), upgrades flat [year, cls, ...] (cls
 //             index into CLASSES; `cls` above is the class before any upgrade), tag (string index of the curated
 //             history tag, -1 none). Era rules: scripts/bake-roads/era.mjs.
 //   nodeEra   [nodeIndexInTile, signalsFrom, roundaboutFrom, ...] for signal and roundabout nodes (0 = none)
+//   nodeRing  [nodeIndexInTile, ringRadius, ...] for roundabouts collapsed from an OSM ring: the mean distance of the
+//             ring's vertices from its centre in world metres, times QUANT (a hint for the Phase 8 junction layout)
+// Format 3 (plan 0009) replaced the span type code (1 bridge, 2 tunnel) with the level, and added nodeRing.
 // coast.json     {licence, land: [ring, ...], rings: delta-encoded closed rings of the land polygon (even-odd)}
 // rivers.json    {licence, rivers: [{name, width, pts}], tidal: [ring, ...]}
-export const BAKE_FORMAT = 2;
+export const BAKE_FORMAT = 3;
 export const QUANT = 10;
 export const CLASSES = ['M', 'dual', 'A', 'B', 'street', 'lane', 'access', 'ferry'];
 export const JUNCTIONS = ['through', 'end', 'giveway', 'signals', 'roundabout'];
@@ -27,6 +32,8 @@ export const NODE_FLAG = { priority: 1, mini: 2 };
 export const LICENCE = 'Map data (c) OpenStreetMap contributors, licensed under the Open Database Licence (ODbL) 1.0: https://www.openstreetmap.org/copyright';
 
 const q = v => Math.round(v * QUANT);
+/** A span's level: its explicit `level`, else +1 for a bridge and -1 for a tunnel. */
+export const spanLevel = s => (Number.isInteger(s.level) && s.level !== 0 ? s.level : s.type === 'tunnel' ? -1 : 1);
 
 /** Delta-encodes a flat [x, y, ...] list of world metres (relative to a start point). */
 export function encodePoints(pts, sx = 0, sy = 0) {
@@ -61,8 +68,9 @@ export function encodeTile(id, nodeStart, nodes, edges, nodePos) {
         if (!sIdx.has(s)) { sIdx.set(s, strings.length); strings.push(s); }
         return sIdx.get(s);
     };
-    const flat = [], info = [], nodeEra = [];
+    const flat = [], info = [], nodeEra = [], nodeRing = [];
     nodes.forEach((n, k) => { if (n.signalsFrom || n.roundaboutFrom) nodeEra.push(k, n.signalsFrom ?? 0, n.roundaboutFrom ?? 0); });
+    nodes.forEach((n, k) => { if (n.ringRadius > 0) nodeRing.push(k, q(n.ringRadius)); });
     for (const n of nodes) {
         flat.push(n.x, n.y);
         info.push(JUNCTIONS.indexOf(n.junction ?? 'through'), Math.max(0, ENDS.indexOf(n.end ?? null)), (n.priority ? NODE_FLAG.priority : 0) | (n.mini ? NODE_FLAG.mini : 0), str(n.town));
@@ -73,7 +81,7 @@ export function encodeTile(id, nodeStart, nodes, edges, nodePos) {
         const interior = e.pts.slice(2, -2);
         const flags = (e.oneway ? EDGE_FLAG.oneway : 0) | (e.link ? EDGE_FLAG.link : 0) | (e.lit ? EDGE_FLAG.lit : 0)
             | (e.bridge ? EDGE_FLAG.bridge : 0) | (e.tunnel ? EDGE_FLAG.tunnel : 0) | (e.dual ? EDGE_FLAG.dual : 0);
-        const spans = (e.spans ?? []).flatMap(s => [s.i0, s.i1, s.type === 'tunnel' ? 2 : 1]);
+        const spans = (e.spans ?? []).flatMap(s => [s.i0, s.i1, spanLevel(s)]);
         const row = [e.a, e.b, CLASSES.indexOf(e.cls), flags, str(e.ref), str(e.name), e.maxspeed ?? 0, str(e.town), encodePoints(interior, a.x, a.y), spans];
         const closed = Number.isFinite(e.closed) ? e.closed : 0;
         if (e.opened || closed || e.upgrades?.length || e.tag) {
@@ -81,7 +89,7 @@ export function encodeTile(id, nodeStart, nodes, edges, nodePos) {
         }
         out.push(row);
     }
-    return { licence: LICENCE, format: BAKE_FORMAT, id, nodeStart, strings, nodes: encodePoints(flat), nodeInfo: info, nodeEra, edges: out };
+    return { licence: LICENCE, format: BAKE_FORMAT, id, nodeStart, strings, nodes: encodePoints(flat), nodeInfo: info, nodeEra, nodeRing, edges: out };
 }
 
 /**
@@ -101,6 +109,8 @@ export function decodeTiles(tiles) {
                 town: t.nodeInfo[i + 3] >= 0 ? t.strings[t.nodeInfo[i + 3]] : null,
             };
         }
+        const nr = t.nodeRing ?? [];
+        for (let i = 0; i < nr.length; i += 2) nodes[t.nodeStart + nr[i]].ringRadius = nr[i + 1] / QUANT;
         const ne = t.nodeEra ?? [];
         for (let i = 0; i < ne.length; i += 3) {
             const n = nodes[t.nodeStart + ne[i]];
@@ -117,7 +127,7 @@ export function decodeTiles(tiles) {
             const along = [0];
             for (let i = 2; i < pts.length; i += 2) along.push(along[along.length - 1] + Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]));
             const sp = [];
-            for (let i = 0; i < spans.length; i += 3) sp.push({ from: along[spans[i]], to: along[spans[i + 1]], type: spans[i + 2] === 2 ? 'tunnel' : 'bridge' });
+            for (let i = 0; i < spans.length; i += 3) sp.push({ from: along[spans[i]], to: along[spans[i + 1]], type: spans[i + 2] < 0 ? 'tunnel' : 'bridge', level: spans[i + 2] });
             edges.push({
                 a, b, pts, cls: CLASSES[cls], ref: s(ref), name: s(name), maxspeed: maxspeed || null, town: s(town),
                 oneway: !!(flags & EDGE_FLAG.oneway), link: !!(flags & EDGE_FLAG.link), lit: !!(flags & EDGE_FLAG.lit),

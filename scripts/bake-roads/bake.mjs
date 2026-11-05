@@ -168,6 +168,7 @@ export function createBakeGraph() {
             keep.boundary ||= drop.boundary;
             keep.cut ||= drop.cut;
             keep.mini ||= drop.mini;
+            if (drop.ringRadius && !keep.ringRadius) keep.ringRadius = drop.ringRadius;
             if (drop.junction === 'roundabout') keep.junction = 'roundabout';
             g.nodes.delete(drop.id);
             return keep;
@@ -744,7 +745,9 @@ export function mergeDegree2(g, { shortLen = 0 } = {}) {
         const pts = ePts.concat(fPts.slice(2)), segs = eSegs.concat(fSegs);
         const lit = (e.lit ? e.len : 0) + (f.lit ? f.len : 0) >= (e.len + f.len) / 2;
         const name = e.len >= f.len ? e.name ?? f.name : f.name ?? e.name;
-        const props = { ...(e.len >= f.len ? e : f), lit, name };
+        // the structure's level survives the merge: the layer with the larger magnitude (a bridge on layer 2 stays level 2)
+        const layer = Math.abs(e.layer ?? 0) >= Math.abs(f.layer ?? 0) ? e.layer ?? 0 : f.layer ?? 0;
+        const props = { ...(e.len >= f.len ? e : f), lit, name, layer };
         delete props.id; delete props.a; delete props.b; delete props.pts; delete props.segs; delete props.len;
         // keep e's direction for one-way roads (ea -> fb); two-way roads go from ea too
         g.removeEdge(e); g.removeEdge(f);
@@ -943,7 +946,7 @@ export function dropOverlaps(g, { share = 0.7, slack = 0.9, step = 2 } = {}) {
 }
 
 /** True if e's two nodes stay connected without e (searching at most `limit` nodes). */
-function connectedWithout(g, e, limit) {
+export function connectedWithout(g, e, limit) {
     const seen = new Set([e.a]), queue = [e.a];
     while (queue.length && seen.size < limit) {
         const id = queue.shift();
@@ -1283,6 +1286,634 @@ function simplifyLine(pts, tol) {
 }
 const ringArea = pts => { let a = 0; for (let i = 0, j = pts.length - 2; i < pts.length; j = i, i += 2) a += pts[j] * pts[i + 1] - pts[i] * pts[j + 1]; return Math.abs(a) / 2; };
 
+// ---- Stage 6c: separation and junction consolidation -------------------------------------------------------------
+
+/**
+ * Plan 0009 phase 4. At 1:4 real streets sit 2-3 times further apart than at 1:13 but dense town grids and parallel
+ * roads (an old road beside its bypass, slips beside a trunk road) still put one road's carriageway plus pavement on
+ * another's. `generaliseSeparation` finds those pairs (same level, no shared node) and drops the lower-ranked road when
+ * the network stays connected. The strip model is the one scripts/validate-roads.mjs checks (`overlap-same-layer`):
+ * half width = carriageway / 2 + PAVEMENT; the overlap next to a shared node is the junction's, not an overlap.
+ */
+export const PAVEMENT = 2.0;       // metres of pavement beyond the carriageway (mesh pavement strip; validate-roads.mjs)
+export const RING_ISLAND = 7.2;    // road-mesh.js ROUNDABOUT.island: the fixed island radius until phase 8's junction layout
+const OVERLAP_TOLERANCE = 0.05;    // metres of strip overlap that still counts as clear: stricter than validate-roads.mjs (0.25) so what the bake clears survives quantisation
+const RAMP_MARGIN = 30;            // a stretch this close (along the road) to a bridge or tunnel counts as on it: its approach ramp, which phase 7 raises off the ground
+const widthOf = e => ROAD_CLASS[e.cls]?.width ?? 7;
+const rankOf = e => ROAD_CLASS[e.cls]?.rank ?? 1;
+const stripHalf = e => widthOf(e) / 2 + PAVEMENT;
+const TRUNK_REFS = new Set(['M5', 'A30', 'A38']);
+const isTrunk = e => [...refSet(e.ref)].some(r => TRUNK_REFS.has(r));
+
+/** Footprint radius of a junction node (what the 3D mesh paints around it; mirrors road-mesh.js junctionRadius). */
+export function nodeFootprint(g, n) {
+    if (n.edges.size < 3) return 0;
+    let w = 0;
+    for (const id of n.edges) w = Math.max(w, widthOf(g.edges.get(id)));
+    return n.junction === 'roundabout' ? RING_ISLAND + w + 1 : w / 2 + 2;
+}
+
+/** Per-segment level of an edge (0 on the ground, bridge >= 1, tunnel <= -1), or null when it has no structure. */
+function segLevels(e, margin = RAMP_MARGIN) {
+    if (!e.segs.some(Boolean)) return null;
+    const along = [0];
+    for (let i = 2; i < e.pts.length; i += 2) along.push(along[along.length - 1] + Math.hypot(e.pts[i] - e.pts[i - 2], e.pts[i + 1] - e.pts[i - 1]));
+    const spans = [];
+    for (let s = 0; s < e.segs.length; s++) {
+        if (!e.segs[s]) continue;
+        const last = spans[spans.length - 1];
+        if (last && last.i1 === s && last.flag === e.segs[s]) { last.i1 = s + 1; last.to = along[s + 1]; }
+        else spans.push({ i1: s + 1, flag: e.segs[s], from: along[s], to: along[s + 1], level: spanLevelOf(e, e.segs[s]) });
+    }
+    const out = new Int8Array(e.segs.length);
+    for (let s = 0; s < out.length; s++) {
+        const mid = (along[s] + along[s + 1]) / 2;
+        for (const sp of spans) if (mid >= sp.from - margin && mid <= sp.to + margin) { out[s] = sp.level; break; }
+    }
+    return out;
+}
+
+/** Bridge and tunnel stretches of an edge by along-distance ({along, spans: [{from, to, level}]}), or null without any. */
+function structureOf(e) {
+    if (!e.segs.some(Boolean)) return null;
+    const along = [0];
+    for (let i = 2; i < e.pts.length; i += 2) along.push(along[along.length - 1] + Math.hypot(e.pts[i] - e.pts[i - 2], e.pts[i + 1] - e.pts[i - 1]));
+    const spans = [];
+    for (let s = 0; s < e.segs.length; s++) {
+        if (!e.segs[s]) continue;
+        const last = spans[spans.length - 1];
+        if (last && last.i1 === s && last.flag === e.segs[s]) { last.i1 = s + 1; last.to = along[s + 1]; }
+        else spans.push({ i1: s + 1, flag: e.segs[s], from: along[s], to: along[s + 1], level: spanLevelOf(e, e.segs[s]) });
+    }
+    return { along, spans };
+}
+
+/** Middle of the stretch of segment a-b that lies alongside segment c-d (the closest point when they do not run alongside). */
+function overlapMid(ax, ay, bx, by, cx, cy, dx, dy, near) {
+    const ex = bx - ax, ey = by - ay, l2 = ex * ex + ey * ey;
+    if (!l2) return near;
+    const tc = ((cx - ax) * ex + (cy - ay) * ey) / l2, td = ((dx - ax) * ex + (dy - ay) * ey) / l2;
+    const lo = Math.max(0, Math.min(tc, td)), hi = Math.min(1, Math.max(tc, td));
+    if (hi <= lo) return near;
+    const t = (lo + hi) / 2;
+    return { x: ax + ex * t, y: ay + ey * t };
+}
+
+/** Level (with the approach-ramp margin) at the point of segment `s` nearest (x, y). */
+function levelNear(st, e, s, x, y, margin = RAMP_MARGIN) {
+    if (!st) return 0;
+    const ax = e.pts[2 * s], ay = e.pts[2 * s + 1], dx = e.pts[2 * s + 2] - ax, dy = e.pts[2 * s + 3] - ay, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+    const pos = st.along[s] + t * (st.along[s + 1] - st.along[s]);
+    for (const sp of st.spans) if (pos >= sp.from - margin && pos <= sp.to + margin) return sp.level;
+    return 0;
+}
+
+function segCrossing(ax, ay, bx, by, cx, cy, dx, dy) {
+    const r1x = bx - ax, r1y = by - ay, r2x = dx - cx, r2y = dy - cy;
+    const den = r1x * r2y - r1y * r2x;
+    if (Math.abs(den) < 1e-9) return false;
+    const t = ((cx - ax) * r2y - (cy - ay) * r2x) / den, u = ((cx - ax) * r1y - (cy - ay) * r1x) / den;
+    return !(t <= 1e-6 || t >= 1 - 1e-6 || u <= 1e-6 || u >= 1 - 1e-6);
+}
+
+/** Closest approach of segments a-b and c-d (not crossing): {d, x, y}, (x, y) midway between the closest pair. */
+function segClosest(ax, ay, bx, by, cx, cy, dx, dy) {
+    let best = { d: Infinity, x: 0, y: 0 };
+    const consider = (px, py, sx, sy, tx, ty) => {
+        const ex = tx - sx, ey = ty - sy, l2 = ex * ex + ey * ey;
+        const u = l2 ? Math.max(0, Math.min(1, ((px - sx) * ex + (py - sy) * ey) / l2)) : 0;
+        const qx = sx + ex * u, qy = sy + ey * u, dist = Math.hypot(px - qx, py - qy);
+        if (dist < best.d) best = { d: dist, x: (px + qx) / 2, y: (py + qy) / 2 };
+    };
+    consider(ax, ay, cx, cy, dx, dy); consider(bx, by, cx, cy, dx, dy); consider(cx, cy, ax, ay, bx, by); consider(dx, dy, ax, ay, bx, by);
+    return best;
+}
+
+/** True if `near` lies within the junction/bend allowance of a node edges e and f share (validate-roads.mjs nearSharedNode). */
+function nearShared(g, e, f, near, he, hf, foot) {
+    for (const id of [e.a, e.b]) {
+        if (id !== f.a && id !== f.b) continue;
+        const n = g.nodes.get(id);
+        const bearing = h => {
+            const p = pointOn(h.pts, h.a === id ? Math.min(8, h.len / 2) : Math.max(h.len - 8, h.len / 2));
+            return Math.atan2(p.y - n.y, p.x - n.x);
+        };
+        let th = Math.abs(bearing(e) - bearing(f)) % (2 * Math.PI);
+        if (th > Math.PI) th = 2 * Math.PI - th;
+        const reach = Math.min(60, (he + hf) / (2 * Math.sin(Math.max(th, 0.14) / 2)));
+        if (Math.hypot(near.x - n.x, near.y - n.y) <= Math.max(reach, foot(n)) + 0.5) return true;
+    }
+    // beside a junction of either road (not shared): the junction's own patch covers the overlap
+    for (const id of [e.a, e.b, f.a, f.b]) {
+        const n = g.nodes.get(id), r = foot(n);
+        if (r && Math.hypot(near.x - n.x, near.y - n.y) <= r + 0.5) return true;
+    }
+    return false;
+}
+
+/**
+ * True if the overlap of two segments is the junction's own: their closest approach lies within the allowance of a node
+ * (see nearShared) and, when they run roughly alongside each other (within ~14 degrees), so does the middle of the
+ * stretch they share (a long parallel run that merely starts at a junction is not).
+ */
+function exemptNearJunction(g, e, f, near, mid, ax, ay, bx, by, cx, cy, dx, dy, he, hf, foot) {
+    if (!nearShared(g, e, f, near, he, hf, foot)) return false;
+    const cross = Math.abs((bx - ax) * (dy - cy) - (by - ay) * (dx - cx));
+    const alongside = cross < 0.25 * Math.hypot(bx - ax, by - ay) * Math.hypot(dx - cx, dy - cy);
+    return !alongside || nearShared(g, e, f, mid, he, hf, foot);
+}
+
+/**
+ * Pairs of edges at the same level whose carriageway-plus-pavement strips overlap away from a shared node.
+ * Returns [{e, f, lenE, lenF, depth, x, y}] (lenE/lenF = length of each edge's own segments involved).
+ */
+export function findStripOverlaps(g, { index = overlapIndex(g), only = null } = {}) {
+    const { cell, key, cells, levels, foot, maxHalf, stale } = index;
+    const list = only ? [...only].map(id => g.edges.get(id)).filter(Boolean) : g.edges.values();
+    if (only) for (const e of list) levels.set(e.id, structureOf(e));
+    const pairs = new Map();
+    for (const e of list) {
+        const he = stripHalf(e), le = levels.get(e.id);
+        for (let s = 0; s < e.pts.length / 2 - 1; s++) {
+            const ax = e.pts[2 * s], ay = e.pts[2 * s + 1], bx = e.pts[2 * s + 2], by = e.pts[2 * s + 3];
+            const sl = Math.hypot(bx - ax, by - ay), r = he + maxHalf;
+            const seen = new Set();
+            for (let i = Math.floor((Math.min(ax, bx) - r) / cell); i <= Math.floor((Math.max(ax, bx) + r) / cell); i++) {
+                for (let j = Math.floor((Math.min(ay, by) - r) / cell); j <= Math.floor((Math.max(ay, by) + r) / cell); j++) {
+                    for (const o of cells.get(key(i, j)) ?? []) {
+                        const f = o.e;
+                        if (f === e || (!only && f.id < e.id) || seen.has(o) || stale.has(f.id)) continue;
+                        seen.add(o);
+                        const cx = f.pts[2 * o.s], cy = f.pts[2 * o.s + 1], dx = f.pts[2 * o.s + 2], dy = f.pts[2 * o.s + 3];
+                        if (segCrossing(ax, ay, bx, by, cx, cy, dx, dy)) continue; // a crossing is not a strip overlap
+                        const hf = stripHalf(f), near = segClosest(ax, ay, bx, by, cx, cy, dx, dy);
+                        // (judged from both roads' point of view, so the answer does not depend on which one is scanned first)
+                        const mid = overlapMid(ax, ay, bx, by, cx, cy, dx, dy, near), midF = overlapMid(cx, cy, dx, dy, ax, ay, bx, by, near);
+                        const lvE = levelNear(le, e, s, mid.x, mid.y), lf = levels.get(f.id);
+                        if (lvE !== levelNear(lf, f, o.s, mid.x, mid.y) || levelNear(le, e, s, midF.x, midF.y) !== levelNear(lf, f, o.s, midF.x, midF.y)) continue;
+                        const depth = he + hf - near.d;
+                        if (depth <= OVERLAP_TOLERANCE || (exemptNearJunction(g, e, f, near, mid, ax, ay, bx, by, cx, cy, dx, dy, he, hf, foot) && exemptNearJunction(g, f, e, near, midF, cx, cy, dx, dy, ax, ay, bx, by, hf, he, foot))) continue;
+                        const k = e.id * 10000019 + f.id;
+                        let p = pairs.get(k);
+                        if (!p) pairs.set(k, (p = { e, f, segsE: new Set(), segsF: new Set(), lenE: 0, lenF: 0, depth: 0, x: near.x, y: near.y, level: lvE }));
+                        if (!p.segsE.has(s)) { p.segsE.add(s); p.lenE += sl; }
+                        if (!p.segsF.has(o.s)) { p.segsF.add(o.s); p.lenF += Math.hypot(dx - cx, dy - cy); }
+                        if (depth > p.depth) { p.depth = depth; p.x = near.x; p.y = near.y; }
+                    }
+                }
+            }
+        }
+    }
+    return [...pairs.values()];
+}
+
+/** Spatial index of every edge segment for findStripOverlaps (rebuild after the graph changes; `stale` = edges moved since). */
+export function overlapIndex(g) {
+    const cell = 32, key = (i, j) => i * 1000003 + j;
+    const cells = new Map(), levels = new Map(), footCache = new Map();
+    const foot = n => { let v = footCache.get(n.id); if (v === undefined) footCache.set(n.id, (v = nodeFootprint(g, n))); return v; };
+    let maxHalf = 0;
+    for (const e of g.edges.values()) {
+        levels.set(e.id, structureOf(e));
+        maxHalf = Math.max(maxHalf, stripHalf(e));
+        for (let s = 0; s < e.pts.length / 2 - 1; s++) {
+            const ax = e.pts[2 * s], ay = e.pts[2 * s + 1], bx = e.pts[2 * s + 2], by = e.pts[2 * s + 3];
+            const o = { e, s };
+            for (let i = Math.floor(Math.min(ax, bx) / cell); i <= Math.floor(Math.max(ax, bx) / cell); i++) {
+                for (let j = Math.floor(Math.min(ay, by) / cell); j <= Math.floor(Math.max(ay, by) / cell); j++) {
+                    const k = key(i, j);
+                    (cells.get(k) ?? cells.set(k, []).get(k)).push(o);
+                }
+            }
+        }
+    }
+    return { cell, key, cells, levels, foot, maxHalf, stale: new Set() };
+}
+
+/**
+ * Junction-cluster consolidation: two junction nodes joined by a short edge whose footprints would overlap (a
+ * staggered crossroads, a side road splitting a dual carriageway twice) become one node when the cluster is 2-3 nodes;
+ * the survivor is the more important node (`nodeWeight`) and keeps its position. Bigger clusters, roundabouts and
+ * anything on a bridge or tunnel are left alone (phase 8's layout trims the arms; mini-roundabouts stay single nodes).
+ * Returns {clusters, merged, left}: `left` = junction pairs still closer than their footprints (the soft
+ * `junction-cluster` validator check, for the summary).
+ */
+export function consolidateJunctions(g, { maxCluster = 3, minGap = 0 } = {}) {
+    const foot = n => nodeFootprint(g, n);
+    const pairs = () => {
+        const out = [];
+        for (const e of g.edges.values()) {
+            if (e.a === e.b) continue;
+            const na = g.nodes.get(e.a), nb = g.nodes.get(e.b);
+            const fa = foot(na), fb = foot(nb);
+            if (!fa || !fb) continue;
+            if (Math.hypot(na.x - nb.x, na.y - nb.y) < fa + fb + minGap) out.push({ e, na, nb });
+        }
+        return out;
+    };
+    let clusters = 0, merged = 0;
+    for (let pass = 0; pass < 4; pass++) {
+        const cand = pairs();
+        if (!cand.length) break;
+        // union-find over the junction nodes that are too close
+        const parent = new Map();
+        const find = x => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+        for (const { na, nb } of cand) { for (const n of [na, nb]) if (!parent.has(n.id)) parent.set(n.id, n.id); parent.set(find(na.id), find(nb.id)); }
+        const size = new Map();
+        for (const id of parent.keys()) size.set(find(id), (size.get(find(id)) ?? 0) + 1);
+        let changed = 0;
+        if (pass === 0) clusters = new Set([...parent.keys()].map(find)).size;
+        for (const { e, na, nb } of cand.sort((p, q) => p.e.len - q.e.len)) {
+            if (!g.edges.has(e.id) || !g.nodes.has(na.id) || !g.nodes.has(nb.id)) continue;
+            if (size.get(find(na.id)) > maxCluster) continue;
+            if (e.segs.some(Boolean) || na.junction === 'roundabout' || nb.junction === 'roundabout' || na.mini || nb.mini) continue;
+            if (na.boundary || nb.boundary || na.edges.size < 3 || nb.edges.size < 3) continue;
+            // a neighbour on a structure keeps its node: do not drag a bridge's end
+            if ([...na.edges, ...nb.edges].some(id => g.edges.get(id).segs.some(Boolean))) continue;
+            const [keep, drop] = nodeWeight(g, na) >= nodeWeight(g, nb) ? [na, nb] : [nb, na];
+            g.removeEdge(e);
+            keep.signals ||= drop.signals;
+            g.mergeNodes(keep, drop);
+            merged++; changed++;
+        }
+        // near-duplicate parallel edges now joining the same pair of nodes, and loops
+        if (changed) contractShort(g, 0.001);
+        if (!changed) break;
+    }
+    return { clusters, merged, left: pairs().length };
+}
+
+/**
+ * A roundabout's arms must reach its ring: at 1:4 the 3D ring (island 7.2 m plus the widest arm) is bigger than the
+ * scaled OSM ring, so a junction closer than that to the centre would sit inside it. Such a neighbour is absorbed into
+ * the roundabout (its other roads then join the roundabout node), repeatedly, unless the arm is on a bridge or tunnel
+ * or the neighbour is on the map edge. Phase 8's layout sizes the ring from the OSM radius and replaces the fixed
+ * island; until then this keeps the baked graph consistent with the ring the mesh draws.
+ * Returns {absorbed, merged, stubs, left}: `left` = arms still shorter than their ring.
+ */
+export function absorbIntoRoundabouts(g, { passes = 12 } = {}) {
+    const ringOf = n => {
+        let w = 0;
+        for (const id of n.edges) w = Math.max(w, widthOf(g.edges.get(id)));
+        return RING_ISLAND + w;
+    };
+    let absorbed = 0, merged = 0, stubs = 0;
+    for (let pass = 0; pass < passes; pass++) {
+        let changed = 0;
+        for (const R of [...g.nodes.values()]) {
+            if (!g.nodes.has(R.id) || R.junction !== 'roundabout' || R.mini || R.edges.size < 3) continue;
+            for (const id of [...R.edges]) {
+                const e = g.edges.get(id);
+                if (!e || e.a === e.b || e.len >= ringOf(R) - 0.4 || e.segs.some(Boolean)) continue;
+                const o = g.nodes.get(e.a === R.id ? e.b : e.a);
+                if (!o || o.boundary) continue;
+                if (o.edges.size === 1) { g.removeEdge(e); g.nodes.delete(o.id); R.osmEnd ||= false; stubs++; changed++; continue; } // a stub ending inside the ring
+                if ([...o.edges].some(oid => { const f = g.edges.get(oid); return f.segs[f.a === o.id ? 0 : f.segs.length - 1]; })) continue; // a structure starts at o
+                const [keep, drop] = o.junction === 'roundabout' && !o.mini && o.edges.size > R.edges.size ? [o, R] : [R, o];
+                g.removeEdge(e);
+                keep.signals ||= drop.signals;
+                g.mergeNodes(keep, drop);
+                keep.junction = 'roundabout';
+                if (drop.junction === 'roundabout' && drop.ringRadius > (keep.ringRadius ?? 0)) keep.ringRadius = drop.ringRadius;
+                o.junction === 'roundabout' ? merged++ : absorbed++;
+                changed++;
+                if (keep !== R) break; // R is gone
+            }
+        }
+        if (changed) contractShort(g, 0.001);
+        if (!changed) break;
+    }
+    let left = 0;
+    for (const R of g.nodes.values()) {
+        if (R.junction !== 'roundabout' || R.mini || R.edges.size < 3) continue;
+        const ring = ringOf(R);
+        for (const id of R.edges) { const e = g.edges.get(id); if (!e.segs.some(Boolean) && e.len < ring - 0.5) left++; }
+    }
+    return { absorbed, merged, stubs, left };
+}
+
+/** How much an edge deserves to stay: higher class first, then numbered roads, then the longer one, then the lower id. */
+const keepScore = e => rankOf(e) * 1e9 + (e.ref ? 1e8 : 0) + Math.min(e.len, 9e7) - e.id * 1e-6;
+
+/** Longest bridge or tunnel stretch (m, per edge) a minor road may carry and still be dropped whole by generalisation. */
+const DROPPABLE_STRUCTURE = 80;
+
+/** An edge generalisation may remove: no long bridge or tunnel (a culvert or footbridge-sized span is fine), not a dual centreline, not at the map edge. */
+function removable(g, e) {
+    if (e.dual) return false;
+    if (e.segs.some(Boolean)) {
+        let structure = 0;
+        for (let s = 0; s < e.segs.length; s++) if (e.segs[s]) structure += Math.hypot(e.pts[2 * s + 2] - e.pts[2 * s], e.pts[2 * s + 3] - e.pts[2 * s + 1]);
+        // a slip road or link (one-way, short) may go with its bridge; a through route of A class or above may not
+        if (structure > (e.link ? 3 * DROPPABLE_STRUCTURE : DROPPABLE_STRUCTURE) || (rankOf(e) >= ROAD_CLASS.A.rank && !e.link)) return false;
+    }
+    return !g.nodes.get(e.a).boundary && !g.nodes.get(e.b).boundary;
+}
+
+/**
+ * True if removing `e` cuts off only a tiny dead-end branch (at most `maxNodes` nodes and `maxLen` m of road, none of it
+ * on the map edge, in a town or on a trunk road): dropping the edge then just drops that stub, like pruneSpurs.
+ */
+function tinyBranch(g, e, { maxNodes = 12, maxLen = 600 } = {}) {
+    for (const start of [e.a, e.b]) {
+        const seen = new Set([start]), queue = [start], roads = new Set();
+        let ok = true;
+        while (queue.length && ok) {
+            const id = queue.pop();
+            const n = g.nodes.get(id);
+            if (n.boundary || n.town) { ok = false; break; }
+            for (const eid of n.edges) {
+                if (eid === e.id) continue;
+                const f = g.edges.get(eid);
+                if (isTrunk(f)) { ok = false; break; }
+                roads.add(eid);
+                const o = g.other(f, id);
+                if (!seen.has(o)) { seen.add(o); queue.push(o); }
+            }
+            if (seen.size > maxNodes) ok = false;
+        }
+        if (ok && [...roads].reduce((a, id) => a + g.edges.get(id).len, 0) <= maxLen) return true;
+    }
+    return false;
+}
+
+/** True if the M5/A30/A38 chain edges still join e's two nodes without e (a numbered trunk edge may go only if redundant). */
+function trunkConnectedWithout(g, e) {
+    const seen = new Set([e.a]), queue = [e.a];
+    while (queue.length) {
+        const id = queue.shift();
+        for (const eid of g.nodes.get(id).edges) {
+            const f = g.edges.get(eid);
+            if (f === e || !isTrunk(f)) continue;
+            const o = g.other(f, id);
+            if (o === e.b) return true;
+            if (!seen.has(o)) { seen.add(o); queue.push(o); }
+        }
+    }
+    return false;
+}
+
+/** True if the edge has a bridge or tunnel stretch within `margin` m (along) of `along`. */
+function nearStructure(e, along, margin = 12) {
+    if (!e.segs.some(Boolean)) return false;
+    let acc = 0;
+    for (let s = 0; s < e.segs.length; s++) {
+        const l = Math.hypot(e.pts[2 * s + 2] - e.pts[2 * s], e.pts[2 * s + 3] - e.pts[2 * s + 1]);
+        if (e.segs[s] && acc - margin <= along && acc + l + margin >= along) return true;
+        acc += l;
+    }
+    return false;
+}
+
+/**
+ * For an overlap next to an end node of the lower-ranked road (a slip road ending a few metres off the carriageway it
+ * serves, a link stopping short of the dual centreline), joins that node to the other road: it splits the other road
+ * at the nearest point (or reuses its end node when that is within `endReach`) and merges the node into it, so the
+ * two roads then share a node and the overlap beside it is the junction's. Returns the number of nodes joined.
+ */
+export function snapNodesOntoRoads(g, pairs, { reach = 25, endReach = 4 } = {}) {
+    let joined = 0;
+    const touched = new Set();
+    for (const p of pairs) {
+        const [v, k] = keepScore(p.e) < keepScore(p.f) ? [p.e, p.f] : [p.f, p.e];
+        if (!g.edges.has(v.id) || !g.edges.has(k.id) || touched.has(v.id) || touched.has(k.id)) continue;
+        const need = stripHalf(v) + stripHalf(k);
+        let best = null;
+        for (const id of [v.a, v.b]) {
+            if (id === k.a || id === k.b) continue;
+            const n = g.nodes.get(id);
+            if (n.boundary || n.junction === 'roundabout' || n.mini || Math.hypot(n.x - p.x, n.y - p.y) > reach) continue;
+            const c = closestOn(k.pts, n.x, n.y);
+            if (v.segs[v.a === id ? 0 : v.segs.length - 1] || nearStructure(k, c.along)) continue; // never join onto or at a bridge or tunnel
+            if (c.d < need && (!best || c.d < best.c.d)) best = { n, c };
+        }
+        if (!best) continue;
+        const { n, c } = best;
+        let target;
+        if (c.along <= endReach) target = g.nodes.get(k.a);
+        else if (c.along >= k.len - endReach) target = g.nodes.get(k.b);
+        else {
+            if (k.dual && k.oneway) continue;
+            target = g.splitAt(k, c.along);
+        }
+        if (target.boundary || target === n) continue;
+        const touchedIds = [v.id, k.id, ...target.edges, ...n.edges];
+        target.signals ||= n.signals;
+        g.mergeNodes(target, n);
+        for (const id of touchedIds) touched.add(id);
+        joined++;
+    }
+    if (joined) contractShort(g, 0.001);
+    return joined;
+}
+
+/**
+ * A short lower-ranked road that overlaps another and cannot be dropped (it is the only link between two junctions of a
+ * complex: a slip road a few metres long beside a dual carriageway) is contracted instead: its two nodes become one, as
+ * `contractShort` does at the bake's shorter lengths. Returns the number of edges contracted.
+ */
+export function contractShortVictims(g, pairs, { maxLen = 45 } = {}) {
+    let contracted = 0;
+    const touched = new Set();
+    for (const p of pairs) {
+        const [v, k] = keepScore(p.e) < keepScore(p.f) ? [p.e, p.f] : [p.f, p.e];
+        for (const e of [v, k]) {
+            if (!g.edges.has(e.id) || touched.has(e.id) || e.len > maxLen || e.a === e.b || e.segs.some(Boolean)) continue;
+            const na = g.nodes.get(e.a), nb = g.nodes.get(e.b);
+            if (!na || !nb || (na.boundary && nb.boundary) || na.edges.size < 2 || nb.edges.size < 2) continue;
+            const onStructure = n => [...n.edges].some(id => { const f = g.edges.get(id); return f.segs[f.a === n.id ? 0 : f.segs.length - 1]; });
+            if (onStructure(na) || onStructure(nb)) continue;
+            if (na.junction === 'roundabout' && nb.junction === 'roundabout') continue;
+            const [keep, drop] = nodeWeight(g, na) >= nodeWeight(g, nb) ? [na, nb] : [nb, na];
+            for (const id of [...na.edges, ...nb.edges]) touched.add(id);
+            g.removeEdge(e);
+            keep.signals ||= drop.signals;
+            g.mergeNodes(keep, drop);
+            contracted++;
+            break;
+        }
+    }
+    if (contracted) contractShort(g, 0.001);
+    return contracted;
+}
+
+/**
+ * Moves the lower-ranked road of each overlapping pair sideways until the strips clear (used for what dropping cannot
+ * fix: a slip road hugging a motorway, a bypass beside the old road, anything on a bridge or that would disconnect the
+ * map). The mover is resampled to <= `step` m segments, vertices inside the overlap are pushed away from the other road
+ * by the missing gap, and the push fades out over `taper` m along the road; the end nodes and vertices on a bridge or
+ * tunnel stay put. Returns the set of edge ids moved.
+ */
+export function nudgeApart(g, pairs, { taper = 30, gap = 0.5, step = 4, accept = 0.8, index = overlapIndex(g) } = {}) {
+    const before = new Map();
+    for (const p of pairs) {
+        before.set(p.e.id, (before.get(p.e.id) ?? 0) + p.depth * p.lenE);
+        before.set(p.f.id, (before.get(p.f.id) ?? 0) + p.depth * p.lenF);
+    }
+    const jobs = new Map();
+    for (const p of pairs) {
+        let [mv, ot, segs] = keepScore(p.e) < keepScore(p.f) ? [p.e, p.f, p.segsE] : [p.f, p.e, p.segsF];
+        const lv = segLevels(mv);
+        if (lv && [...segs].every(s => lv[s])) [mv, ot, segs] = mv === p.e ? [p.f, p.e, p.segsF] : [p.e, p.f, p.segsE]; // the overlap is on its structure: move the other
+        if (!jobs.has(mv.id)) jobs.set(mv.id, { e: mv, parts: [] });
+        jobs.get(mv.id).parts.push({ f: ot, segs });
+    }
+    const moved = new Set();
+    for (const { e, parts } of jobs.values()) {
+        if (!g.edges.has(e.id)) continue;
+        const oldAlong = [0];
+        for (let i = 2; i < e.pts.length; i += 2) oldAlong.push(oldAlong[oldAlong.length - 1] + Math.hypot(e.pts[i] - e.pts[i - 2], e.pts[i + 1] - e.pts[i - 1]));
+        const ranges = parts.map(({ f, segs }) => ({ f, iv: [...segs].map(s => [oldAlong[s], oldAlong[s + 1]]) }));
+        // resample
+        const pts = [e.pts[0], e.pts[1]], segFlag = [], along = [0];
+        for (let s = 0; s < e.segs.length; s++) {
+            const ax = e.pts[2 * s], ay = e.pts[2 * s + 1], bx = e.pts[2 * s + 2], by = e.pts[2 * s + 3];
+            const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / step));
+            for (let k = 1; k <= n; k++) {
+                pts.push(ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n);
+                segFlag.push(e.segs[s]);
+                along.push(oldAlong[s] + ((oldAlong[s + 1] - oldAlong[s]) * k) / n);
+            }
+        }
+        const nv = pts.length / 2, he = stripHalf(e);
+        const need = new Float64Array(nv), dirx = new Float64Array(nv), diry = new Float64Array(nv);
+        for (let i = 1; i < nv - 1; i++) {
+            if (segFlag[i - 1] || segFlag[i]) continue;
+            for (const { f, iv } of ranges) {
+                if (!iv.some(([a0, a1]) => along[i] >= a0 - 0.01 && along[i] <= a1 + 0.01)) continue;
+                const c = closestOn(f.pts, pts[2 * i], pts[2 * i + 1]);
+                const missing = he + stripHalf(f) + gap - c.d;
+                if (missing <= need[i]) continue;
+                need[i] = missing;
+                if (c.d > 0.05) { dirx[i] = (pts[2 * i] - c.x) / c.d; diry[i] = (pts[2 * i + 1] - c.y) / c.d; }
+                else { dirx[i] = -Math.sin(c.angle); diry[i] = Math.cos(c.angle); }
+            }
+        }
+        // spread each push along the road, fading out (a bigger push needs a longer run-in)
+        const fade = Math.max(taper, 6 * Math.max(0, ...need));
+        const out = pts.slice();
+        let any = false;
+        for (let i = 1; i < nv - 1; i++) {
+            if (segFlag[i - 1] || segFlag[i]) continue;
+            let best = 0, bj = -1;
+            for (let j = Math.max(0, i - 120); j < Math.min(nv, i + 121); j++) {
+                if (!need[j]) continue;
+                const w = need[j] * Math.max(0, 1 - Math.abs(along[i] - along[j]) / fade);
+                if (w > best) { best = w; bj = j; }
+            }
+            if (bj < 0) continue;
+            out[2 * i] += dirx[bj] * best; out[2 * i + 1] += diry[bj] * best;
+            any = true;
+        }
+        if (!any) continue;
+        // keep the move only if it clearly reduces this road's overlaps (it must not just push them onto a third road)
+        const old = { pts: e.pts, segs: e.segs, len: e.len };
+        e.pts = out; e.segs = segFlag; e.len = polyLen(out);
+        index.stale.add(e.id);
+        const after = findStripOverlaps(g, { index, only: new Set([e.id]) }).reduce((a, q) => a + q.depth * q.lenE, 0);
+        if (after < accept * (before.get(e.id) ?? 0)) { moved.add(e.id); continue; }
+        e.pts = old.pts; e.segs = old.segs; e.len = old.len;
+        index.stale.delete(e.id);
+    }
+    return moved;
+}
+
+/**
+ * Resolves same-level strip overlaps by dropping the lower-ranked road of each overlapping pair while the network stays
+ * connected (a spur is always droppable, like dropOverlaps). Repeats until no more pairs can be resolved.
+ * Returns {dropped, droppedLen, byClass, rounds, before, after, left (the pairs still overlapping), levelConflicts}.
+ */
+export function generaliseSeparation(g, { rounds = 8, nudgeRounds = 10, passes = 3, limit = 4000, log = () => {} } = {}) {
+    const stats = { dropped: 0, droppedLen: 0, byClass: {}, rounds: 0, before: 0, after: 0, left: [], levelConflicts: 0, nudgeRounds: 0, snapped: 0, contracted: 0, nudged: 0 };
+    const nudged = new Set();
+
+    /** Drops lower-ranked roads while the network stays connected; every pair names its victim, lowest ranks first. */
+    const dropPhase = (swap = false) => {
+        for (let r = 0; r < rounds; r++) {
+            const pairs = findStripOverlaps(g);
+            if (stats.rounds === 0) stats.before = pairs.length;
+            stats.rounds++;
+            if (!pairs.length) return;
+            const cand = pairs.map(p => (keepScore(p.e) < keepScore(p.f) ? { v: p.e, k: p.f, p } : { v: p.f, k: p.e, p }));
+            cand.sort((a, b) => keepScore(a.v) - keepScore(b.v));
+            let changed = 0;
+            const droppable = v => {
+                if (!removable(g, v)) return false;
+                const na = g.nodes.get(v.a), nb = g.nodes.get(v.b);
+                const spur = na.edges.size === 1 || nb.edges.size === 1;
+                if (!spur && !connectedWithout(g, v, limit) && !tinyBranch(g, v)) return false;
+                return !(isTrunk(v) && !trunkConnectedWithout(g, v));
+            };
+            for (const c of cand) {
+                let v = c.v;
+                if (!g.edges.has(v.id) || !g.edges.has(c.k.id)) continue;
+                // the lower-ranked road is stuck (it is the only way through): in later passes a slip road beside it may go instead
+                if (!droppable(v)) {
+                    if (!swap || !c.k.link || !droppable(c.k)) continue;
+                    v = c.k;
+                }
+                const na = g.nodes.get(v.a), nb = g.nodes.get(v.b);
+                const realEnd = [na, nb].some(m => m.edges.size === 1 && (m.rawDeg === 1 || m.osmEnd));
+                g.removeEdge(v);
+                stats.dropped++; stats.droppedLen += v.len; stats.byClass[v.cls] = (stats.byClass[v.cls] ?? 0) + 1;
+                for (const m of [na, nb]) {
+                    if (!m.edges.size) g.nodes.delete(m.id);
+                    else if (m.edges.size === 1 && (realEnd || !m.boundary)) m.osmEnd = true; // the remaining road now really ends here
+                }
+                changed++;
+            }
+            // a roundabout that lost its arms is just a bend or a dead end now
+            for (const n of g.nodes.values()) if (n.junction === 'roundabout' && !n.mini && n.edges.size < 3) { delete n.junction; delete n.ringRadius; }
+            mergeDegree2(g);
+            log('separation drop', r + 1, { pairs: pairs.length, dropped: changed });
+            if (!changed) return;
+        }
+    };
+
+    /** What cannot be dropped is joined (an end node beside the other road), contracted (a short link) or moved apart. */
+    const fixPhase = () => {
+        for (let r = 0; r < nudgeRounds; r++) {
+            let index = overlapIndex(g), pairs = findStripOverlaps(g, { index });
+            if (!pairs.length) return;
+            const joined = snapNodesOntoRoads(g, pairs);
+            stats.snapped += joined;
+            if (joined) { index = overlapIndex(g); pairs = findStripOverlaps(g, { index }); }
+            if (!pairs.length) return;
+            const contracted = contractShortVictims(g, pairs);
+            stats.contracted += contracted;
+            if (contracted) { index = overlapIndex(g); pairs = findStripOverlaps(g, { index }); }
+            if (!pairs.length) return;
+            const moved = nudgeApart(g, pairs, { index });
+            for (const id of moved) nudged.add(id);
+            stats.nudgeRounds++;
+            log('separation fix', r + 1, { pairs: pairs.length, joined, contracted, moved: moved.size });
+            if (!moved.size && !joined && !contracted) return;
+        }
+    };
+
+    for (let pass = 0; pass < passes; pass++) {
+        const before = stats.dropped + stats.snapped + stats.contracted + nudged.size;
+        dropPhase(pass > 0);
+        fixPhase();
+        if (stats.dropped + stats.snapped + stats.contracted + nudged.size === before) break;
+    }
+    stats.nudged = nudged.size;
+    stats.left = findStripOverlaps(g);
+    stats.after = stats.left.length;
+    // nodes where roads at different non-zero levels meet (should be none: a bridge never joins what it crosses)
+    for (const n of g.nodes.values()) {
+        const lv = new Set();
+        for (const id of n.edges) {
+            const e = g.edges.get(id), l = segLevels(e, 0);
+            if (l) lv.add(l[e.a === n.id ? 0 : l.length - 1]);
+        }
+        lv.delete(0);
+        if (lv.size > 1) stats.levelConflicts++;
+    }
+    return stats;
+}
+
 // ---- The whole bake ----------------------------------------------------------------------------------------------
 
 /**
@@ -1326,6 +1957,7 @@ export function bake(elements, seed, { scale, tolScale = 1, log = () => {}, prob
     stats.merge1 = mergeDegree2(g);
     probe?.('merge1', g);
     projectGraph(g, proj);
+    for (const n of g.nodes.values()) if (n.ringRadius) n.ringRadius *= proj.worldScale; // real metres -> world metres
     stats.merge1b = mergeDegree2(g, { shortLen: toWorld_(45.5) });
     probe?.('merge1b', g);
     stats.contract = contractShort(g, toWorld_(45.5));
@@ -1350,6 +1982,35 @@ export function bake(elements, seed, { scale, tolScale = 1, log = () => {}, prob
     stats.crossings.final = findCrossings(g).length;
     probe?.('crossings', g);
     log('simplify', stats.simplify, 'trim', stats.trim, 'crossings', stats.crossings, 'stubs', stats.stubs);
+    // plan 0009 phase 4: keep roads one carriageway-plus-pavement apart at the same level
+    stats.consolidate = consolidateJunctions(g);
+    stats.ringArms = absorbIntoRoundabouts(g);
+    log('junction clusters', stats.consolidate, 'roundabout arms', stats.ringArms);
+    // moving and joining roads can cross others (a junction goes back at every crossing), which can overlap others again:
+    // up to three rounds of separation then crossing repair
+    let overlapsLeft = [];
+    stats.separation = { dropped: 0, droppedLen: 0, byClass: {}, snapped: 0, contracted: 0, nudged: 0, levelConflicts: 0, before: 0, rounds: 0 };
+    for (let round = 0; round < 3; round++) {
+        const { left: _left, byClass, ...sep } = generaliseSeparation(g, { log });
+        const t = stats.separation;
+        if (round === 0) t.before = sep.before;
+        for (const k of ['dropped', 'droppedLen', 'snapped', 'contracted', 'nudged', 'rounds']) t[k] += sep[k];
+        for (const [k, v] of Object.entries(byClass)) t.byClass[k] = (t.byClass[k] ?? 0) + v;
+        t.levelConflicts = sep.levelConflicts;
+        stats.ringArms2 = absorbIntoRoundabouts(g);
+        stats.components3 = keepLargestComponent(g);
+        stats.stubs2 = pruneArtificialEnds(g);
+        quantiseGraph(g);
+        stats.crossings3 = repairCrossings(g, { straightenBelow: toWorld_(520) });
+        stats.stubs3 = pruneArtificialEnds(g);
+        quantiseGraph(g);
+        stats.crossings3.final = findCrossings(g).length;
+        overlapsLeft = findStripOverlaps(g);
+        t.remaining = overlapsLeft.length;
+        t.rounds2 = round + 1;
+        if (!overlapsLeft.some(p => !p.level) && !stats.crossings3.final) break;
+    }
+    log('separation', stats.separation, 'components', stats.components3, 'stubs', stats.stubs2, 'crossings', stats.crossings3);
     // signals within ~25 real metres of a junction (they sit on the approaches), measured in world metres
     const sigWorld = parsed.signals.map(s => proj.fromReal(s.x, s.y));
     stats.junctions = typeJunctions(g, sigWorld, n => Math.max(1.5, 30 * proj.localScale(n.x, n.y)));
@@ -1376,7 +2037,16 @@ export function bake(elements, seed, { scale, tolScale = 1, log = () => {}, prob
     const tidal = parsed.tidal.map(t => simplifyLine(toWorld(t.ll), 1)).filter(r => r.length >= 8);
     stats.coast = { rings: coast.length, points: coast.reduce((a, r) => a + r.length / 2, 0), problems: land.problems.length };
     log('coast', stats.coast);
-    return { graph: g, coast, rivers, tidal, stats, proj, eraCheck };
+    return { graph: g, coast, rivers, tidal, stats, proj, eraCheck, overlapsLeft };
+}
+
+/**
+ * Level of a bridge (flag 1, >= 1) or tunnel (flag 2, <= -1) stretch of an edge: the OSM `layer` tag where it points the
+ * right way (a bridge on layer 2 is level 2), else +1 / -1. Everything outside a span is on the ground (level 0).
+ */
+export function spanLevelOf(e, flag) {
+    const layer = Math.trunc(e.layer ?? 0);
+    return flag === 2 ? (layer < 0 ? layer : -1) : (layer > 0 ? layer : 1);
 }
 
 /** Flattens the bake graph to global ids and per-tile lists: main network first, then one tile per town. */
@@ -1398,14 +2068,14 @@ export function toTiles(g, seed) {
     let next = 0;
     for (const t of tiles) { t.nodeStart = next; for (const n of t.nodes) gid.set(n.id, next++); }
     for (const e of g.edges.values()) byId.get(townTile(e) ?? 'main').edges.push(e);
-    const nodeOut = n => ({ x: n.x, y: n.y, junction: n.junction, end: n.end ?? null, priority: !!n.priority, mini: !!n.mini, town: n.town ?? null, signalsFrom: n.signalsFrom, roundaboutFrom: n.roundaboutFrom });
+    const nodeOut = n => ({ x: n.x, y: n.y, junction: n.junction, end: n.end ?? null, priority: !!n.priority, mini: !!n.mini, town: n.town ?? null, signalsFrom: n.signalsFrom, roundaboutFrom: n.roundaboutFrom, ringRadius: n.ringRadius });
     const edgeOut = e => {
         const spans = [];
         for (let s = 0; s < e.segs.length; s++) {
             if (!e.segs[s]) continue;
             const last = spans[spans.length - 1];
             if (last && last.i1 === s && last.flag === e.segs[s]) last.i1 = s + 1;
-            else spans.push({ i0: s, i1: s + 1, flag: e.segs[s], type: e.segs[s] === 2 ? 'tunnel' : 'bridge' });
+            else spans.push({ i0: s, i1: s + 1, flag: e.segs[s], type: e.segs[s] === 2 ? 'tunnel' : 'bridge', level: spanLevelOf(e, e.segs[s]) });
         }
         return {
             a: gid.get(e.a), b: gid.get(e.b), cls: e.cls, oneway: !!e.oneway, link: !!e.link, lit: !!e.lit, dual: !!e.dual,

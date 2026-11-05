@@ -172,3 +172,49 @@ test('bridge-clearance: a deck less than 5.5 m over the road below is reported, 
     assert.equal(unmeasured.counts.clearanceMeasured, 0);
     assert.equal(low.counts.clearanceMeasured, 1);
 });
+
+// ---- plan 0009 phase 4: ramps, junction patches, decks, bridge-end arms ----------------------------------------------
+
+test('overlap-same-layer: a stretch within 30 m of a bridge is on its approach ramp, further along it overlaps again', () => {
+    const spans = [{ from: 0, to: 50, type: 'bridge' }];
+    // beside the bridge span (and its ramp, to 80 m) is not an overlap; 100 m further along it is
+    const long = validateGraph(graphOf([{ pts: [0, 0, 400, 0] }, { pts: [0, 8, 400, 8], spans }]));
+    assert.equal(count(long, 'overlap-same-layer'), 1);
+    const short = validateGraph(graphOf([{ pts: [0, 0, 70, 0] }, { pts: [0, 8, 70, 8], spans }]));
+    assert.equal(count(short, 'overlap-same-layer'), 0);
+});
+
+test('overlap-same-layer: the junction patch of a node beside the overlap covers it, a long parallel run starting there does not', () => {
+    // a street ending 4 m beside a B road's T-junction (not at its node): inside the junction's patch
+    const t = graphOf([{ pts: [-100, 0, 0, 0], cls: 'B' }, { pts: [0, 0, 100, 0], cls: 'B' }, { pts: [0, 0, 0, 100], cls: 'B' }, { pts: [3, 3, 40, 40] }]);
+    assert.equal(count(validateGraph(t), 'overlap-same-layer'), 0);
+    // the same street running 6 m beside the B road for 150 m is a real overlap
+    const run = graphOf([{ pts: [-100, 0, 0, 0], cls: 'B' }, { pts: [0, 0, 160, 0], cls: 'B' }, { pts: [0, 0, 0, 100], cls: 'B' }, { pts: [6, 6, 160, 6] }]);
+    assert.ok(count(validateGraph(run), 'overlap-same-layer') >= 1);
+});
+
+test('overlap-same-layer is judged the same whichever road is scanned first', () => {
+    const lines = [{ pts: [-60, 0, 60, 0], cls: 'B' }, { pts: [60, 0, 160, 0], cls: 'B' }, { pts: [-60, 0, -60, 90], cls: 'B' }, { pts: [0, 7, 120, 7] }];
+    const a = validateGraph(graphOf(lines)), b = validateGraph(graphOf([...lines].reverse()));
+    assert.equal(count(a, 'overlap-same-layer'), count(b, 'overlap-same-layer'));
+});
+
+test('deck-overlap: parallel decks on a structure are soft, the same overlap on the ground is hard', () => {
+    const decks = validateGraph(graphOf([{ pts: [0, 0, 300, 0], spans: [{ from: 0, to: 300, type: 'bridge', level: 1 }] }, { pts: [0, 8, 300, 8], spans: [{ from: 0, to: 300, type: 'bridge', level: 1 }] }]));
+    assert.equal(count(decks, 'overlap-same-layer'), 0);
+    assert.equal(count(decks, 'deck-overlap'), 1);
+    assert.equal(decks.issues.find(i => i.check === 'deck-overlap').hard, false);
+});
+
+test('roundabout-arm-bridge: an arm whose far end starts a bridge is soft, a plain short arm stays hard', () => {
+    const ring = bridgeAtFar => [
+        { pts: [0, 0, 10, 0], nodeProps: { a: { junction: 'roundabout' } } },
+        { pts: [0, 0, -60, 0] }, { pts: [0, 0, 0, 60] },
+        ...(bridgeAtFar ? [{ pts: [10, 0, 80, 0], bridge: true }] : [{ pts: [10, 0, 80, 0] }]),
+    ];
+    const withBridge = validateGraph(graphOf(ring(true)));
+    assert.equal(count(withBridge, 'roundabout-arm-gap'), 0);
+    assert.equal(count(withBridge, 'roundabout-arm-bridge'), 1);
+    assert.equal(withBridge.issues.find(i => i.check === 'roundabout-arm-bridge').hard, false);
+    assert.equal(count(validateGraph(graphOf(ring(false))), 'roundabout-arm-gap'), 1);
+});

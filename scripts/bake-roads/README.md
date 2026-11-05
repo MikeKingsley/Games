@@ -53,9 +53,23 @@ node scripts/validate-roads.mjs --baked --area all  # check the result
 
 The bake is pure and deterministic from the cache: parse and classify (`OSM_CLASS` table in `bake.mjs`), build the
 topology on shared vertices, collapse roundabouts and dual carriageways, keep minor streets only inside town
-footprints, merge, contract, simplify, type junctions, then write the manifest, `main.json`, one `town-<id>.json`
+footprints, merge, contract, simplify, then keep roads one carriageway-plus-pavement apart at the same level (below),
+type junctions, then write the manifest, `main.json`, one `town-<id>.json`
 per town, `coast.json` and `rivers.json` (format in `world/baked-format.js`). It fails if the output exceeds
 10 MiB gzipped.
+
+### Generalisation (plan 0009 phase 4)
+
+At 1:4 life-size roads still overlap in dense grids and interchanges, so `bake()` runs, after the simplify/trim/crossing
+steps and before junction typing and the era pass: `consolidateJunctions` (two or three junctions closer than their
+footprints become one), `absorbIntoRoundabouts` (a junction inside a roundabout's ring joins the roundabout; ring =
+island 7.2 m + widest arm), then up to three rounds of `generaliseSeparation` + `repairCrossings`. Separation finds
+same-level strip overlaps (`findStripOverlaps`: carriageway/2 + 2 m pavement per road, ignoring the patch around a
+junction node of either road, 30 m either side of a bridge or tunnel = its approach ramp) and resolves each by dropping
+the lower-ranked road if the network and the M5/A30/A38 chain stay connected, else joining a nearby end node onto the
+other road, contracting a short link, or nudging the road sideways. Bridge and tunnel stretches are never edited.
+Spans carry a `level` (OSM `layer`, else +1 bridge / -1 tunnel); roundabout nodes carry `ringRadius` (world metres).
+`bake` logs the counts (`separation {...}`) and `validate-roads.mjs --baked --area all --strict` must exit 0.
 
 Coordinates are world metres from `world/projection.js`: a plain equirectangular projection at `WORLD_SCALE` in
 `config.js` (1:4 since plan 0009; there is no town lens any more). Clean-up tolerances in `bake()` are written in real

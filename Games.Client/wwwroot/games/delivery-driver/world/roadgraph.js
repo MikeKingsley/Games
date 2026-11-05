@@ -253,7 +253,7 @@ export function buildRoadGraph(region) {
     for (const n of nodes) {
         g.addNode(n.x, n.y, {
             junction: n.junction, end: n.end, priority: n.priority, mini: n.mini, town: n.town ?? undefined,
-            signalsFrom: n.signalsFrom, roundaboutFrom: n.roundaboutFrom, kind: n.junction === 'end' ? 'end' : 'junction',
+            signalsFrom: n.signalsFrom, roundaboutFrom: n.roundaboutFrom, ringRadius: n.ringRadius, kind: n.junction === 'end' ? 'end' : 'junction',
         });
     }
     for (const e of edges) {

@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 
 const game = p => import(pathToFileURL(resolve(`Games.Client/wwwroot/games/delivery-driver/${p}`)).href);
 const { realToLatLon, createProjection, TOWN_RADIUS, TOWN_FOOTPRINT, townFootprint } = await game('world/projection.js');
-const { decodeTiles } = await game('world/baked-format.js');
+const { decodeTiles, encodeTile, BAKE_FORMAT } = await game('world/baked-format.js');
 const { bake, toTiles, findCrossings } = await import(pathToFileURL(resolve('scripts/bake-roads/bake.mjs')).href);
 
 const SEED = { id: 'fixture', origin: { lat: 50.5, lon: -4.5 }, bounds: { north: 50.6, south: 50.4, west: -4.7, east: -4.3 }, towns: [] };
@@ -106,6 +106,39 @@ test('a bridge over a road makes no junction and keeps its bridge span', () => {
     const bridged = decoded.edges.filter(e => e.bridge);
     assert.equal(bridged.length, 1);
     assert.ok(bridged[0].spans.length === 1 && bridged[0].spans[0].type === 'bridge');
+    assert.equal(bridged[0].spans[0].level, 1, 'a bridge on layer 1 is level 1');
+});
+
+test('spans carry levels from the OSM layer tag, defaulting to +1 for bridges and -1 for tunnels', () => {
+    const o = osm();
+    o.way([[-1000, 0], [-300, 0]], { highway: 'tertiary', name: 'East Road' });
+    o.way([[-300, 0], [-200, 0]], { highway: 'tertiary', name: 'East Road', bridge: 'yes', layer: '2' });
+    o.way([[-200, 0], [400, 0]], { highway: 'tertiary', name: 'East Road' });
+    o.way([[400, 0], [500, 0]], { highway: 'tertiary', name: 'East Road', tunnel: 'yes', layer: '-1' });
+    o.way([[500, 0], [900, 0]], { highway: 'tertiary', name: 'East Road' });
+    o.way([[0, 300], [0, 500]], { highway: 'tertiary', name: 'Cut Road', tunnel: 'yes' }); // untagged layer
+    o.way([[0, 500], [600, 900]], { highway: 'tertiary', name: 'Cut Road' });
+    o.way([[0, 1], [0, 300]], { highway: 'tertiary', name: 'Cut Road' });
+    const decoded = decodeTiles(toTiles(run(o.elements), SEED).map(t => t.encoded));
+    const levels = decoded.edges.flatMap(e => e.spans.map(sp => [sp.type, sp.level]));
+    assert.deepEqual(levels.map(l => l.join(':')).sort(), ['bridge:2', 'tunnel:-1', 'tunnel:-1']);
+    for (const e of decoded.edges) for (const sp of e.spans) assert.ok(sp.type === 'bridge' ? sp.level >= 1 : sp.level <= -1);
+    assert.equal(BAKE_FORMAT, 3);
+});
+
+test('tile format 3 round-trips span levels and roundabout ring radii', () => {
+    const nodes = [{ x: 0, y: 0, junction: 'roundabout', ringRadius: 3.4, roundaboutFrom: 1960 }, { x: 40, y: 0, junction: 'end' }, { x: 80, y: 0, junction: 'end' }];
+    const pos = i => nodes[i];
+    const base = { cls: 'A', ref: null, name: null };
+    const edgesIn = [
+        { ...base, a: 0, b: 1, pts: [0, 0, 20, 0, 40, 0], spans: [{ i0: 0, i1: 1, type: 'bridge', level: 2 }, { i0: 1, i1: 2, type: 'tunnel', level: -2 }], bridge: true, tunnel: true },
+        { ...base, a: 1, b: 2, pts: [40, 0, 80, 0], spans: [{ i0: 0, i1: 1, type: 'bridge' }] }, // no explicit level: +1
+    ];
+    const out = decodeTiles([JSON.parse(JSON.stringify(encodeTile('t', 0, nodes, edgesIn, pos)))]);
+    assert.deepEqual(out.edges[0].spans.map(sp => [sp.type, sp.level]), [['bridge', 2], ['tunnel', -2]]);
+    assert.deepEqual(out.edges[1].spans.map(sp => [sp.type, sp.level]), [['bridge', 1]]);
+    assert.equal(out.nodes[0].ringRadius, 3.4);
+    assert.equal(out.nodes[1].ringRadius, undefined);
 });
 
 test('ways meeting end to end with matching tags merge into one edge', () => {
@@ -175,4 +208,98 @@ test('elevation.bin round-trips: predicted residuals, varints and zero runs deco
     assert.ok(buf.byteLength < 24 + width * height * 2, 'smaller than raw Int16');
     // bilinear sampling at a cell centre returns the stored height in world metres
     assert.equal(sampleElevation(dem, -100 + 20 * 24, 50 + 5 * 24), data[5 * width + 20] * 0.25);
+});
+
+// ---- plan 0009 phase 4: separation, junction consolidation, roundabout arms ----------------------------------------
+
+const sep = await import(pathToFileURL(resolve('scripts/bake-roads/bake.mjs')).href);
+
+/** Bake graph from nodes [[x, y, props?], ...] and edges [[a, b, flatPts, cls, props?], ...] in world metres. */
+function bakeGraph(nodeList, edgeList) {
+    const g = sep.createBakeGraph();
+    const ns = nodeList.map(([x, y, props]) => g.addNode(x, y, { rawDeg: 3, ...props }));
+    const es = edgeList.map(([a, b, pts, cls = 'lane', props = {}]) => g.addEdge(ns[a], ns[b], pts, new Array(pts.length / 2 - 1).fill(props.flag ?? 0), { cls, ...props }));
+    return { g, ns, es };
+}
+
+test('strip overlaps: a street 6 m beside an A road overlaps, 20 m beside it does not', () => {
+    const build = dy => bakeGraph([[-300, 0], [-100, 0], [100, 0], [300, 0], [-100, dy], [100, dy]],
+        [[0, 1, [-300, 0, -100, 0], 'A'], [1, 2, [-100, 0, 100, 0], 'A'], [2, 3, [100, 0, 300, 0], 'A'], [4, 5, [-100, dy, 100, dy], 'street']]);
+    assert.ok(sep.findStripOverlaps(build(6).g).length >= 1);
+    assert.equal(sep.findStripOverlaps(build(20).g).length, 0);
+});
+
+test('generaliseSeparation drops the lower-ranked road when the network stays connected and never the higher one', () => {
+    // a lane loop beside an A road, joined to it at both ends: the lane can go, the A road stays
+    const { g, es } = bakeGraph([[-500, 0], [-100, 0], [100, 0], [500, 0], [-100, 4], [100, 4]],
+        [[0, 1, [-500, 0, -100, 0], 'A'], [1, 2, [-100, 0, 100, 0], 'A'], [2, 3, [100, 0, 500, 0], 'A'], [1, 4, [-100, 0, -100, 4], 'lane'], [4, 5, [-100, 4, 100, 4], 'lane'], [5, 2, [100, 4, 100, 0], 'lane']]);
+    const stats = sep.generaliseSeparation(g);
+    assert.equal(stats.after, 0);
+    assert.ok(stats.dropped + stats.contracted + stats.snapped + stats.nudged >= 1);
+    for (const e of es.slice(0, 3)) assert.ok(g.edges.has(e.id), 'the A road survives');
+    const lane = es[4];
+    assert.ok(!g.edges.has(lane.id) || lane.pts.some((v, i) => i % 2 === 1 && Math.abs(v) > 9), 'the parallel lane is gone or has moved clear');
+});
+
+test('generaliseSeparation moves apart a road it cannot drop (the only link between two big halves)', () => {
+    // two long lanes joined only by a street that bends to run 5 m beside an A road
+    const { g, es } = bakeGraph([[-3000, 400], [-300, 400], [-300, 14], [20, 14], [900, 14], [3000, 400], [-500, 0], [-140, 0], [300, 0], [800, 0]],
+        [[0, 1, [-3000, 400, -300, 400], 'lane'], [1, 2, [-300, 400, -300, 14], 'lane'],
+            [2, 3, [-300, 14, -140, 14, -100, 6, 0, 6, 20, 14], 'street'],
+            [3, 4, [20, 14, 900, 14], 'lane'], [4, 5, [900, 14, 3000, 400], 'lane'],
+            [6, 7, [-500, 0, -140, 0], 'A'], [7, 8, [-140, 0, 300, 0], 'A'], [8, 9, [300, 0, 800, 0], 'A']]);
+    const street = es[2];
+    const first = street.pts.slice(0, 2), last = street.pts.slice(-2);
+    assert.ok(sep.findStripOverlaps(g).length >= 1, 'overlapping to start with');
+    const stats = sep.generaliseSeparation(g);
+    assert.equal(stats.after, 0, 'cleared');
+    assert.ok(g.edges.has(street.id), 'the street is the only way through, so it stays');
+    assert.deepEqual([street.pts[0], street.pts[1]], first, 'its end nodes have not moved');
+    assert.deepEqual(street.pts.slice(-2), last);
+    assert.ok(stats.nudged >= 1);
+});
+
+test('generaliseSeparation never removes a long bridge', () => {
+    // a 400 m bridge carrying a B road beside an A road: it is not dropped (and is a structure throughout)
+    const { g, es } = bakeGraph([[-2000, 0], [-200, 0], [200, 0], [2000, 0], [-200, 6], [200, 6]],
+        [[0, 1, [-2000, 0, -200, 0], 'A'], [1, 2, [-200, 0, 200, 0], 'A'], [2, 3, [200, 0, 2000, 0], 'A'], [4, 5, [-200, 6, 200, 6], 'B', { flag: 1 }]]);
+    const bridge = es[3];
+    sep.generaliseSeparation(g);
+    assert.ok(g.edges.has(bridge.id), 'the bridge edge stays');
+    assert.equal(bridge.segs.filter(Boolean).length, bridge.segs.length, 'and is still a bridge throughout');
+});
+
+test('consolidateJunctions merges two close T-junctions into one crossroads and leaves distant ones', () => {
+    const tees = gap => bakeGraph([[-200, 0], [0, 0], [gap, 0], [200, 0], [0, 100], [gap, -100]],
+        [[0, 1, [-200, 0, 0, 0], 'B'], [1, 2, [0, 0, gap, 0], 'B'], [2, 3, [gap, 0, 200, 0], 'B'], [1, 4, [0, 0, 0, 100], 'B'], [2, 5, [gap, 0, gap, -100], 'B']]);
+    const close = tees(8);
+    assert.equal(sep.consolidateJunctions(close.g).merged, 1);
+    assert.equal([...close.g.nodes.values()].filter(n => n.edges.size === 4).length, 1, 'one four-way node');
+    assert.equal(sep.consolidateJunctions(tees(60).g).merged, 0);
+});
+
+test('absorbIntoRoundabouts pulls a junction inside the ring into the roundabout', () => {
+    // ring: island 7.2 + A width 8 = 15.2 m; a side road joins 10 m out, the other arms are long
+    const { g, ns } = bakeGraph([[0, 0, { junction: 'roundabout' }], [-300, 0], [300, 0], [0, 300], [10, 0], [10, 200]],
+        [[0, 1, [0, 0, -300, 0], 'A'], [0, 2, [0, 0, 300, 0], 'A'], [0, 3, [0, 0, 0, 300], 'A'], [0, 4, [0, 0, 10, 0], 'A'], [4, 5, [10, 0, 10, 200], 'A']]);
+    const r = sep.absorbIntoRoundabouts(g);
+    assert.equal(r.absorbed, 1);
+    assert.equal(r.left, 0);
+    assert.ok(!g.nodes.has(ns[4].id), 'the inner junction is gone');
+    assert.equal(ns[0].edges.size, 4, 'its road now joins the roundabout node');
+    assert.equal(ns[0].junction, 'roundabout');
+});
+
+test('a baked roundabout keeps its ring radius (world metres) on the node and in the tile', () => {
+    const o = osm();
+    const ring = [];
+    for (let k = 0; k <= 16; k++) { const a = (k % 16) * Math.PI / 8; ring.push([Math.round(40 * Math.cos(a) * 1000) / 1000, Math.round(40 * Math.sin(a) * 1000) / 1000]); }
+    o.way(ring, { highway: 'primary', junction: 'roundabout' });
+    for (const k of [0, 4, 8, 12]) { const a = k * Math.PI / 8; o.way([[40 * Math.cos(a), 40 * Math.sin(a)], [400 * Math.cos(a), 400 * Math.sin(a)]], { highway: 'primary', name: `Arm ${k}` }); }
+    const g = run(o.elements);
+    const rb = nodes(g).find(n => n.junction === 'roundabout');
+    assert.ok(Math.abs(rb.ringRadius - 40 * SCALE) < 0.5, `ring radius ${rb.ringRadius} ~ ${40 * SCALE}`);
+    const decoded = decodeTiles(toTiles(g, SEED).map(t => t.encoded));
+    const out = decoded.nodes.find(n => n.junction === 'roundabout');
+    assert.ok(Math.abs(out.ringRadius - rb.ringRadius) < 0.06);
 });
