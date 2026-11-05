@@ -3,7 +3,7 @@
 // its climbs (by its power to weight) and down steep descents, so the hilly way round costs more time, and the
 // route reports the fuel multiplier its hills add (sim/slope.js gradeFuelFactor). Returns the route as a polyline
 // for the route line, plus its length, time and hill summary.
-import { cruiseSpeed, edgeClass, edgeOpen, nearestEdge } from './roadgraph.js';
+import { edgeSpeed, edgeOpen, nearestEdge, coreNodes } from './roadgraph.js';
 import { TIME_SCALE } from '../config.js';
 import { gradeFuelFactor, hillSpeed, TYPICAL_CLIMB } from '../sim/slope.js';
 
@@ -95,7 +95,7 @@ const ferryWait = edge => (edge.ferry ? (edge.ferry.wait * 60) / TIME_SCALE : 0)
  * a -> b; `model` (sim/slope.js climbModel) is the vehicle's power to weight for the hills (a typical lorry if not given).
  */
 export function edgeTime(edge, year, vmax = 30, forward = true, model = TYPICAL_CLIMB) {
-    const v = Math.min(vmax, cruiseSpeed(edgeClass(edge, year), year));
+    const v = Math.min(vmax, edgeSpeed(edge, year));
     return hillSeconds(edge, forward, v, model) + ferryWait(edge);
 }
 
@@ -109,15 +109,27 @@ export function edgeTime(edge, year, vmax = 30, forward = true, model = TYPICAL_
  * or null when unreachable. Partly driven edges count their share of the edge's hills.
  */
 export function findRoute(graph, from, to, { year = 1919, vmax = 30, maxSnap = 400, climb = TYPICAL_CLIMB } = {}) {
-    const s = nearestEdge(graph, from.x, from.y, maxSnap, year);
-    const t = nearestEdge(graph, to.x, to.y, maxSnap, year);
+    // endpoints snap to a two-way road when there is one in reach (a one-way cul-de-sac would trap the start or the goal)
+    const core = coreNodes(graph);
+    const snap = p => {
+        const plain = nearestEdge(graph, p.x, p.y, maxSnap, year, e => !e.oneway && e.cls !== 'ferry') ?? nearestEdge(graph, p.x, p.y, maxSnap, year);
+        if (!plain || (core[plain.edge.a] && core[plain.edge.b])) return plain;
+        // in a one-way pocket: a road of the main network a little further off, if any
+        const better = nearestEdge(graph, p.x, p.y, plain.d + 40, year, e => !e.oneway && e.cls !== 'ferry' && core[e.a] && core[e.b]);
+        return better ?? plain;
+    };
+    const s = snap(from);
+    const t = snap(to);
     if (!s || !t) return null;
-    const speed = e => Math.min(vmax, cruiseSpeed(edgeClass(e, year), year));
+    const speed = e => Math.min(vmax, edgeSpeed(e, year));
     /** Seconds for `metres` of an edge driven one way (its share of the edge's hill time). */
     const part = (e, metres, forward) => (e.len > 0 ? (hillSeconds(e, forward, speed(e), climb) * metres) / e.len : 0);
 
+    // one-way roads (OSM `oneway`, a -> b) are only driven forward: the start can only leave through the b end, the
+    // goal can only be reached through the a end
+    const canBack = e => !e.oneway;
     // the same edge: drive straight along it
-    if (s.edge === t.edge) {
+    if (s.edge === t.edge && (t.along >= s.along || canBack(s.edge))) {
         const forward = t.along >= s.along;
         const pts = slice(s.edge.pts, Math.min(s.along, t.along), Math.max(s.along, t.along));
         const ordered = forward ? pts : reverse(pts);
@@ -125,7 +137,8 @@ export function findRoute(graph, from, to, { year = 1919, vmax = 30, maxSnap = 4
         return finish([from.x, from.y, ...ordered, to.x, to.y], [{ edge: s.edge, forward, metres }], part(s.edge, metres, forward), [], speed);
     }
 
-    const goal = new Map([[t.edge.a, part(t.edge, t.along, true)], [t.edge.b, part(t.edge, t.edge.len - t.along, false)]]);
+    const goal = new Map([[t.edge.a, part(t.edge, t.along, true)]]);
+    if (canBack(t.edge)) goal.set(t.edge.b, part(t.edge, t.edge.len - t.along, false));
     let fastest = 0;
     for (const e of graph.edges) if (edgeOpen(e, year)) fastest = Math.max(fastest, speed(e));
     const h = id => Math.hypot(graph.nodes[id].x - to.x, graph.nodes[id].y - to.y) / fastest;
@@ -134,7 +147,7 @@ export function findRoute(graph, from, to, { year = 1919, vmax = 30, maxSnap = 4
     const prev = new Map();
     const heap = new Heap();
     const seed = (node, c) => { if (c < (cost.get(node) ?? Infinity)) { cost.set(node, c); prev.set(node, null); heap.push(node, c + h(node)); } };
-    seed(s.edge.a, part(s.edge, s.along, false));
+    if (canBack(s.edge)) seed(s.edge.a, part(s.edge, s.along, false));
     seed(s.edge.b, part(s.edge, s.edge.len - s.along, true));
     let best = null, bestCost = Infinity;
     const done = new Set();
@@ -148,6 +161,7 @@ export function findRoute(graph, from, to, { year = 1919, vmax = 30, maxSnap = 4
         for (const eid of graph.nodes[n].edges) {
             const e = graph.edges[eid];
             if (!edgeOpen(e, year)) continue;
+            if (e.oneway && e.a !== n) continue; // against the one-way direction
             const m = e.a === n ? e.b : e.a;
             const nc = c + edgeTime(e, year, vmax, e.a === n, climb);
             if (nc < (cost.get(m) ?? Infinity)) {

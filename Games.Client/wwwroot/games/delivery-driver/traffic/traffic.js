@@ -4,7 +4,7 @@
 // and hold back down steep ones, and ride the graded road profile (z, pitch) for drawing.
 // Pure logic: positions come from the graph, randomness from a seeded RNG.
 import { seededRng, pick, range } from '../engine/rng.js';
-import { cruiseSpeed, edgeClass, edgeOpen, laneOffset, lanePoint, junctionType, ROAD_CLASS, nearestEdge } from '../world/roadgraph.js';
+import { edgeSpeed, edgeClass, edgeOpen, laneOffset, lanePoint, junctionType, ROAD_CLASS, nearestEdge } from '../world/roadgraph.js';
 import { roadHeightAt, roadGradeAt } from '../world/terrain.js';
 import { hillSpeed } from '../sim/slope.js';
 
@@ -76,12 +76,12 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
     traffic.spawnNear = (x, y, year, minD = 150, maxD = 280, heading = null) => {
         for (let attempt = 0; attempt < 8; attempt++) {
             const a = rng() * Math.PI * 2, d = range(rng, minD, maxD);
-            const near = nearestEdge(graph, x + Math.cos(a) * d, y + Math.sin(a) * d, 60, year, e => drivable(e, year));
+            const near = nearestEdge(graph, x + Math.cos(a) * d, y + Math.sin(a) * d, 60, year, e => drivable(e, year) && !e.link && e.len >= 20); // never on slip roads or short stubs
             if (!near) continue;
             const dx = near.x - x, dy = near.y - y, dist = Math.hypot(dx, dy);
             if (dist < minD * 0.9) continue; // the road bent back towards the player
             if (heading !== null && dist < SEE && dx * Math.cos(heading) + dy * Math.sin(heading) > dist * 0.35) continue; // ahead of the player
-            const forward = rng() < 0.5;
+            const forward = near.edge.oneway ? true : rng() < 0.5; // one-way roads only run a -> b
             const along = Math.max(0, Math.min(near.edge.len, forward ? near.along : near.edge.len - near.along));
             const agent = traffic.spawnOn(near.edge, forward, along, year, undefined, true);
             if (agent) return agent;
@@ -91,6 +91,7 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
 
     /** Places an agent on an edge (travelling forward = from a to b), unless the spot is taken; `moving` starts it at cruising pace. */
     traffic.spawnOn = (edge, forward, along, year, type = choose(year), moving = false) => {
+        if (edge.oneway) forward = true;
         const t = TRAFFIC_TYPES[type];
         const p = lanePoint(edge, along, forward, laneOffset(edge, year), {});
         for (const o of traffic.agents) if (Math.hypot(o.x - p.x, o.y - p.y) < 14) return null;
@@ -102,7 +103,7 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
         };
         agent.grade = rideProfile(agent, edge);
         agent.prevZ = agent.z;
-        if (moving) agent.speed = Math.min(t.vmax, cruiseSpeed(edgeClass(edge, year), year)) * agent.factor * 0.85; // far from the player: already up to speed, not a stationary obstacle
+        if (moving) agent.speed = Math.min(t.vmax, edgeSpeed(edge, year)) * agent.factor * 0.85; // far from the player: already up to speed, not a stationary obstacle
         agent.lat = laneOffset(edge, year);
         agent.ox = 0; agent.oy = 0;
         traffic.agents.push(agent);
@@ -121,12 +122,22 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
             if (id === a.edge) continue;
             const o = graph.edges[id];
             if (!drivable(o, year)) continue;
+            if (o.oneway && o.a !== nodeId) continue; // not against a one-way road
             const fwd = o.a === nodeId;
             const p = lanePoint(o, 1, fwd, 0, {});
             const turn = Math.abs(Math.atan2(Math.sin(p.angle - inAngle), Math.cos(p.angle - inAngle)));
-            options.push({ edge: id, forward: fwd, w: 0.4 + Math.cos(turn) + 1 + (ROAD_CLASS[o.cls]?.rank ?? 1) * 0.2, turn });
+            // a short cul-de-sac (a stub ending at a dead end) is a place to avoid, not to turn round in
+            const stub = o.len < 60 && graph.nodes[fwd ? o.b : o.a].edges.length === 1;
+            options.push({ edge: id, forward: fwd, w: 0.4 + Math.cos(turn) + 1 + (ROAD_CLASS[o.cls]?.rank ?? 1) * 0.2, turn, stub });
         }
-        if (!options.length) return { edge: e.id, forward: !a.forward, turn: Math.PI }; // dead end: turn round
+        // a short cul-de-sac is never entered while there is anywhere else to go
+        const through = options.filter(o => !o.stub);
+        if (through.length && through.length < options.length) options.splice(0, options.length, ...through);
+        if (!options.length) {
+            // dead end: turn round (a one-way road cannot be driven back: the vehicle leaves the map there)
+            if (e.oneway) return { edge: e.id, forward: a.forward, turn: Math.PI, gone: true };
+            return { edge: e.id, forward: !a.forward, turn: Math.PI };
+        }
         let r = rng() * options.reduce((s, o) => s + o.w, 0);
         for (const o of options) { r -= o.w; if (r <= 0) return o; }
         return options[0];
@@ -146,7 +157,8 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
         if (claim === a.id) return false;
         // past the stop line or already in the box: committed, keep going (stopping there would block everyone)
         if (myDist < STOP_LINE - 1 || Math.hypot(a.x - node.x, a.y - node.y) < BOX) return false;
-        if (claim !== undefined) return true;
+        // a claim held by a vehicle that is itself stuck for a long time is broken, but never into an occupied box
+        if (claim !== undefined && !(a.waiting > 25 && !others.some(o => o !== a && Math.hypot(o.x - node.x, o.y - node.y) < BOX))) return true;
         if (myDist > CLAIM_AT) return false; // too far off to matter yet
         for (const o of others) {
             if (o !== a && Math.hypot(o.x - node.x, o.y - node.y) < BOX) return true; // someone (or the player) is in it
@@ -208,7 +220,7 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
             a.prevX = a.x; a.prevY = a.y; a.prevHeading = a.heading;
             const e = graph.edges[a.edge];
             const cls = edgeClass(e, ctx.year);
-            let target = Math.min(a.spec.vmax, cruiseSpeed(cls, ctx.year)) * a.factor;
+            let target = Math.min(a.spec.vmax, edgeSpeed(e, ctx.year)) * a.factor;
             if (ctx.grip !== undefined) target *= 0.75 + 0.25 * ctx.grip; // drive slower in the wet
             target = hillSpeed(CLIMB[a.type], a.grade ?? 0, target); // crawl up hills, hold back down steep ones
             a.next ??= pickNext(a, ctx.year);
@@ -232,6 +244,7 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
                 const oe = graph.edges[a.edge];
                 lanePoint(oe, oe.len, a.forward, a.lat, oldP);
                 a.along -= oe.len;
+                if (a.next.gone) { a.gone = true; a.along = 0; a.next = { edge: a.edge, forward: a.forward, turn: 0 }; break; }
                 a.edge = a.next.edge;
                 a.forward = a.next.forward;
                 a.next = null;
@@ -257,6 +270,7 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
             else { const rate = Math.max(2.5, a.speed / 1.8) * dt; a.heading += Math.max(-rate, Math.min(rate, dh)); }
             a.grade = rideProfile(a, ed);
         }
+        if (traffic.agents.some(a => a.gone)) traffic.agents = traffic.agents.filter(a => !a.gone);
         releaseClaims();
         // despawn far away, then top up toward the target count
         if (ctx.player) {
