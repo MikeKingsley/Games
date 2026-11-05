@@ -16,6 +16,12 @@
 // reports it only). A crossing world/terrain.js gradeRoads had to take at road level (a structure's end joined to the
 // road it crosses, or an interchange link too short to ramp at 1:4: graph.crossings[].atGrade) is the soft
 // crossing-at-grade instead.
+// Junction layout checks (plan 0009 phase 8, on world/junction-layout.js): roundabout-arm-gap is judged on the layout (the arm's
+// mouth must lie outside the ring's outer radius; soft roundabout-arm-bridge when a structure starts at the arm or its far end,
+// soft roundabout-arm-ring for a dumbbell pair, soft roundabout-crowded when the entries cannot all fit round the ring), and
+// junction-overlap (hard: two junction surfaces at the same level overlap; nodes under 6 m apart are the soft junction-merged).
+// Overlaps beside a node are exempt out to the junction's layout reach and, for a node that is a roundabout or signal junction
+// in a later year, out to that final form's footprint (the bake generalised the roads against it).
 // Exit code is 0 unless --strict is given and a hard check fails.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -30,7 +36,8 @@ const { closestOnPoly, pointAt } = await game('world/geom.js');
 const { waterAt } = await game('world/region.js');
 const { obb, sat } = await game('sim/collision.js');
 const { gradeLimit, roadHeightAt } = await game('world/terrain.js');
-const { junctionRadius, ROUNDABOUT } = await game('render/gl/road-mesh.js');
+const { junctionRadius } = await game('render/gl/road-mesh.js');
+const { layoutJunction, polygonsOverlap } = await game('world/junction-layout.js');
 const { junctionType } = await game('world/roadgraph.js');
 const { isLive } = await game('world/furniture.js');
 
@@ -351,32 +358,69 @@ function junctionClusters(graph, year, box) {
     return out;
 }
 
-/** Roundabout arms that do not reach the ring: the end vertex is off the centre, or the arm is shorter than the ring. */
+/**
+ * Roundabout arms that do not reach the ring, judged on the junction layout (world/junction-layout.js): the arm's mouth
+ * must lie outside the ring's outer radius (the flared entry joins the ring there), and the edge must run to the node.
+ * An arm that is short because a bridge or tunnel starts at its far end, or because its far end is another roundabout's
+ * ring (a dumbbell pair), is soft; a ring whose entries cannot all fit round it is the soft `roundabout-crowded`.
+ */
 function roundaboutArmGaps(graph, openIds, year, box, add) {
     let rings = 0;
     for (const n of graph.nodes) {
         if (!inBox(box, n.x, n.y) || junctionType(n, year) !== 'roundabout' || n.mini) continue;
-        const arms = n.edges.map(id => graph.edges[id]).filter(e => openIds.has(e.id));
-        if (arms.length < 3) continue;
+        const L = layoutJunction(graph, n, year);
+        if (L.kind !== 'roundabout') continue;
         rings++;
-        const hw = Math.max(...arms.map(e => edgeWidth(e, year))) / 2;
-        // phase 8 replaces this with the junction layout's outer radius; until then the mesh's fixed ring
-        const outer = n.ringOuter ?? ROUNDABOUT.island + 2 * hw;
-        for (const e of arms) {
-            const atA = e.a === n.id;
-            if (levelAt(e, atA ? 0 : e.len, 0) !== 0) continue; // passes over or under the ring: not an arm
+        if (L.stats.rejected.includes('ring-crowded')) add('roundabout-crowded', false, n.x, n.y, `the ${L.arms.length} arms of the roundabout at node ${n.id} cannot all join its ${L.ring.ro.toFixed(1)} m ring without overlapping entries`, { node: n.id });
+        for (const a of L.arms) {
+            const e = a.edge, atA = a.end === 'a';
             const gap = atA ? Math.hypot(e.pts[0] - n.x, e.pts[1] - n.y) : Math.hypot(e.pts[e.pts.length - 2] - n.x, e.pts[e.pts.length - 1] - n.y);
-            // a bridge or tunnel that starts at the arm's far end makes the arm the approach ramp of that structure: soft until
-            // phase 8's layout and phase 10's deck meshes place the structure outside the ring
+            const radial = Math.hypot(a.mouth.x - n.x, a.mouth.y - n.y);
             const far = graph.nodes[atA ? e.b : e.a];
-            const rampArm = far.edges.some(id => id !== e.id && levelAt(graph.edges[id], graph.edges[id].a === far.id ? 0 : graph.edges[id].len, 0) !== 0);
-            const hard = !rampArm;
-            const check = rampArm ? 'roundabout-arm-bridge' : 'roundabout-arm-gap';
-            if (gap > 1) add(check, hard, n.x, n.y, `edge ${e.id} (${e.cls}) ends ${gap.toFixed(1)} m from the roundabout centre, short of its ${outer.toFixed(1)} m ring`, { node: n.id, edge: e.id });
-            else if (e.len < outer - 0.5) add(check, hard, n.x, n.y, `edge ${e.id} (${e.cls}) is ${e.len.toFixed(1)} m long, shorter than the roundabout's ${outer.toFixed(1)} m ring: its far end is inside the ring`, { node: n.id, edge: e.id });
+            const farLevel = far.edges.some(id => id !== e.id && levelAt(graph.edges[id], graph.edges[id].a === far.id ? 0 : graph.edges[id].len, 0) !== 0);
+            const check = farLevel || a.level !== 0 ? 'roundabout-arm-bridge' : a.farRing ? 'roundabout-arm-ring' : 'roundabout-arm-gap';
+            const hard = check === 'roundabout-arm-gap';
+            if (gap > 1) add(check, hard, n.x, n.y, `edge ${e.id} (${e.cls}) ends ${gap.toFixed(1)} m from the roundabout centre, short of its ${L.ring.ro.toFixed(1)} m ring`, { node: n.id, edge: e.id });
+            else if (radial < L.ring.ro) add(check, hard, n.x, n.y, `edge ${e.id} (${e.cls}) is ${e.len.toFixed(1)} m long: its mouth is ${radial.toFixed(1)} m from the centre, inside the roundabout's ${L.ring.ro.toFixed(1)} m ring`, { node: n.id, edge: e.id });
         }
     }
     return rings;
+}
+
+/** Junction nodes closer than this (m) are one junction cut up by the bake: their surfaces are expected to merge. */
+const MERGED_NODES = 6;
+
+/** Junction surfaces (layout boundaries) at the same level that overlap each other, in a box. */
+function junctionOverlaps(graph, year, box, add) {
+    const items = [];
+    const cell = 64, cells = new Map(), ck = (i, j) => i * 100003 + j;
+    for (const n of graph.nodes) {
+        if (!inBox(box, n.x, n.y)) continue;
+        const L = layoutJunction(graph, n, year);
+        if (L.boundary.length < 3 || L.kind === 'end') continue;
+        const it = { n, L };
+        items.push(it);
+        const k = ck(Math.floor(n.x / cell), Math.floor(n.y / cell));
+        (cells.get(k) ?? cells.set(k, []).get(k)).push(it);
+    }
+    let count = 0;
+    for (const a of items) {
+        const ci = Math.floor(a.n.x / cell), cj = Math.floor(a.n.y / cell);
+        for (let i = ci - 1; i <= ci + 1; i++) {
+            for (let j = cj - 1; j <= cj + 1; j++) {
+                for (const b of cells.get(ck(i, j)) ?? []) {
+                    if (b.n.id <= a.n.id || a.L.level !== b.L.level) continue;
+                    const d = Math.hypot(a.n.x - b.n.x, a.n.y - b.n.y);
+                    if (d >= a.L.reach + b.L.reach || !polygonsOverlap(a.L.boundary, b.L.boundary)) continue;
+                    // nodes a few metres apart are one junction split by the bake (a signalled interchange cut into several): soft
+                    const merged = d < MERGED_NODES;
+                    if (!merged) count++;
+                    add(merged ? 'junction-merged' : 'junction-overlap', !merged, (a.n.x + b.n.x) / 2, (a.n.y + b.n.y) / 2, `the junction surfaces at nodes ${a.n.id} and ${b.n.id} (${d.toFixed(0)} m apart) overlap`, { node: a.n.id, other: b.n.id });
+                }
+            }
+        }
+    }
+    return count;
 }
 
 function checkLayers(graph, open, openIds, year, box, add, hardClearance) {
@@ -391,8 +435,21 @@ function checkLayers(graph, open, openIds, year, box, add, hardClearance) {
         add('junction-cluster', false, (a.n.x + b.n.x) / 2, (a.n.y + b.n.y) / 2, `junctions at nodes ${a.n.id} and ${b.n.id} are ${d.toFixed(0)} m apart; their footprints (${a.r.toFixed(0)} + ${b.r.toFixed(0)} m) overlap`, { node: a.n.id, other: b.n.id });
     }
     const rings = roundaboutArmGaps(graph, openIds, year, box, add);
-    return { overlapPairs: pairs.size, junctionClusters: clusters.length, roundabouts: rings, gradeSeparatedCrossings: clearance.crossings, clearanceMeasured: clearance.measured, crossingsAtGrade: clearance.atGrade };
+    const jOverlaps = junctionOverlaps(graph, year, box, add);
+    return { overlapPairs: pairs.size, junctionClusters: clusters.length, junctionOverlaps: jOverlaps, roundabouts: rings, gradeSeparatedCrossings: clearance.crossings, clearanceMeasured: clearance.measured, crossingsAtGrade: clearance.atGrade };
 }
+
+/**
+ * How far from a node its junction reaches in a year: the larger of the old patch radius and the layout's reach (the road
+ * strips start outside it). The bake (phase 4) generalised the roads against each node's final form, so a node that is a
+ * plain junction in an early year but a roundabout or signal junction later keeps the later footprint's clearance.
+ */
+function junctionReach(graph, n, year) {
+    const r = junctionRadius(graph, n, year);
+    if (year >= FINAL_YEAR) return Math.max(r, layoutJunction(graph, n, year).reach);
+    return Math.max(r, junctionRadius(graph, n, FINAL_YEAR), layoutJunction(graph, n, year).reach, layoutJunction(graph, n, FINAL_YEAR).reach);
+}
+const FINAL_YEAR = 2100;
 
 /**
  * True if the overlap of two segments is the junction's own: their closest approach lies within the allowance of a node
@@ -408,6 +465,9 @@ function exemptNearJunction(graph, e, f, near, mid, a, b, c, d, he, hf, year) {
 
 /** True if `near` (the closest approach of edges e and f) lies within the junction/bend allowance of a node they share. */
 function nearSharedNode(graph, e, f, near, he, hf, year) {
+    // (a road dualled later keeps the clearance of its final width, as the bake generalised against it)
+    he = Math.max(he, edgeWidth(e, FINAL_YEAR) / 2 + PAVEMENT);
+    hf = Math.max(hf, edgeWidth(f, FINAL_YEAR) / 2 + PAVEMENT);
     for (const id of [e.a, e.b]) {
         if (id !== f.a && id !== f.b) continue;
         const n = graph.nodes[id];
@@ -419,11 +479,11 @@ function nearSharedNode(graph, e, f, near, he, hf, year) {
         if (th > Math.PI) th = 2 * Math.PI - th;
         // strips of two roads leaving a node at angle th overlap out to (he + hf) / (2 sin(th / 2)) from it
         const reach = Math.min(60, (he + hf) / (2 * Math.sin(Math.max(th, 0.14) / 2)));
-        if (Math.hypot(near.x - n.x, near.y - n.y) <= Math.max(reach, junctionRadius(graph, n, year)) + 0.5) return true;
+        if (Math.hypot(near.x - n.x, near.y - n.y) <= Math.max(reach, junctionReach(graph, n, year)) + 0.5) return true;
     }
     // beside a junction of either road (not shared): that junction's own patch covers the overlap (plan 0009 phase 4)
     for (const id of [e.a, e.b, f.a, f.b]) {
-        const n = graph.nodes[id], r = junctionRadius(graph, n, year);
+        const n = graph.nodes[id], r = junctionReach(graph, n, year);
         if (r && Math.hypot(near.x - n.x, near.y - n.y) <= r + 0.5) return true;
     }
     return false;

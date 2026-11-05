@@ -131,8 +131,8 @@ test('roundabout-arm-gap: arms shorter than the ring, or ending off the centre, 
         { pts: [0, 0, len, 0], nodeProps: { a: { junction: 'roundabout' } } },
         { pts: [0, 0, -len, 0] }, { pts: [0, 0, 0, len] },
     ];
-    // outer ring radius = 7.2 + 2 * 3.5 = 14.2 m
-    const short = validateGraph(graphOf(ring(10)));
+    // the layout's smallest ring has an outer radius of 8.5 m: arms of 6 m (0.9 of which is usable) cannot leave it
+    const short = validateGraph(graphOf(ring(6)));
     assert.equal(count(short, 'roundabout-arm-gap'), 3);
     assert.equal(short.issues.find(i => i.check === 'roundabout-arm-gap').hard, true);
     assert.equal(count(validateGraph(graphOf(ring(60))), 'roundabout-arm-gap'), 0);
@@ -143,10 +143,10 @@ test('roundabout-arm-gap: arms shorter than the ring, or ending off the centre, 
     const r = validateGraph(miss);
     assert.equal(count(r, 'roundabout-arm-gap'), 1);
     // a bridge arm passing over is not an arm; a mini-roundabout has no ring to reach
-    const over = ring(10);
+    const over = ring(6);
     over[0].bridge = true;
-    assert.equal(count(validateGraph(graphOf(over)), 'roundabout-arm-gap'), 2);
-    const mini = ring(10);
+    assert.equal(count(validateGraph(graphOf(over)), 'roundabout-arm-gap'), 0); // two real arms are no ring
+    const mini = ring(6);
     mini[0].nodeProps = { a: { junction: 'roundabout', mini: true } };
     assert.equal(count(validateGraph(graphOf(mini)), 'roundabout-arm-gap'), 0);
 });
@@ -216,13 +216,42 @@ test('deck-overlap: parallel decks on a structure are soft, the same overlap on 
 
 test('roundabout-arm-bridge: an arm whose far end starts a bridge is soft, a plain short arm stays hard', () => {
     const ring = bridgeAtFar => [
-        { pts: [0, 0, 10, 0], nodeProps: { a: { junction: 'roundabout' } } },
+        { pts: [0, 0, 6, 0], nodeProps: { a: { junction: 'roundabout' } } },
         { pts: [0, 0, -60, 0] }, { pts: [0, 0, 0, 60] },
-        ...(bridgeAtFar ? [{ pts: [10, 0, 80, 0], bridge: true }] : [{ pts: [10, 0, 80, 0] }]),
+        ...(bridgeAtFar ? [{ pts: [6, 0, 80, 0], bridge: true }] : [{ pts: [6, 0, 80, 0] }]),
     ];
     const withBridge = validateGraph(graphOf(ring(true)));
     assert.equal(count(withBridge, 'roundabout-arm-gap'), 0);
     assert.equal(count(withBridge, 'roundabout-arm-bridge'), 1);
     assert.equal(withBridge.issues.find(i => i.check === 'roundabout-arm-bridge').hard, false);
     assert.equal(count(validateGraph(graphOf(ring(false))), 'roundabout-arm-gap'), 1);
+});
+
+test('junction-overlap: junction surfaces that overlap are a hard failure; nodes under 6 m apart are one merged junction (soft)', () => {
+    const pair = gap => {
+        const specs = [{ pts: [0, 0, gap, 0] }];
+        for (const [x, y] of [[-100, 0], [0, 100], [0, -100]]) specs.push({ pts: [0, 0, x, y] });
+        for (const [x, y] of [[gap + 100, 0], [gap, 100], [gap, -100]]) specs.push({ pts: [gap, 0, x, y] });
+        return validateGraph(graphOf(specs));
+    };
+    const far = pair(30);
+    assert.equal(count(far, 'junction-overlap'), 0);
+    assert.equal(far.counts.junctionOverlaps, 0);
+    const tight = pair(6.5);
+    assert.ok(count(tight, 'junction-overlap') >= 1, 'two crossroads 6.5 m apart cannot both have a surface');
+    assert.equal(tight.issues.find(i => i.check === 'junction-overlap').hard, true);
+    const merged = pair(4);
+    assert.equal(count(merged, 'junction-overlap'), 0);
+    assert.ok(count(merged, 'junction-merged') >= 1);
+    assert.equal(merged.issues.find(i => i.check === 'junction-merged').hard, false);
+});
+
+test('roundabout-arm-gap uses the layout: a ring that fits its arms passes, and a crowded ring is soft', () => {
+    const arms = n => Array.from({ length: n }, (_, k) => ({ pts: [0, 0, Math.cos((k * 2 * Math.PI) / n) * 80, Math.sin((k * 2 * Math.PI) / n) * 80], ...(k === 0 ? { nodeProps: { a: { junction: 'roundabout' } } } : {}) }));
+    const ok = validateGraph(graphOf(arms(4)));
+    assert.equal(count(ok, 'roundabout-arm-gap'), 0);
+    assert.equal(ok.counts.roundabouts, 1);
+    const crowded = validateGraph(graphOf(arms(8)));
+    assert.equal(count(crowded, 'roundabout-arm-gap'), 0);
+    assert.ok(count(crowded, 'roundabout-crowded') <= 1);
 });
