@@ -257,19 +257,26 @@ export function addRing(b, ring, z, time = 0) {
     compose.cylinder(b, ring.x, ring.y, z, 0.12, 5 + Math.sin(time * 4) * 0.4, 6, glowColour(ring.ok ? '#6fd26f' : '#ffd37a'), { radiusTop: 0.05 });
 }
 
-/** The route line as a ribbon draped on the roads, from a flat [x0, y0, x1, y1, ...] polyline; only within `radius` of (cx, cy). */
-export function buildRouteMesh(world, flat, cx, cy, radius = 260, step = 3) {
+/**
+ * The route line as a ribbon draped on the roads, from a flat [x0, y0, x1, y1, ...] polyline; only within `radius` of
+ * (cx, cy). Each point takes the surface at (or just below) the height of the one before, so a route that passes under
+ * a bridge stays on the road beneath and one over a road stays on the deck; `startZ` (the player's height) picks the
+ * layer at the first point (the topmost surface if omitted).
+ */
+export function buildRouteMesh(world, flat, cx, cy, radius = 260, step = 3, startZ = undefined) {
     const b = createBuilder(), colour = glowColour('#ff3fb4');
     let run = [];
     const flush = () => { if (run.length >= 2) addStrip(b, run, 0.8, undefined, colour); run = []; };
     const r2 = radius * radius;
+    let hint = startZ;
     for (let i = 0; i + 3 < flat.length; i += 2) {
         const ax = flat[i], ay = flat[i + 1], dx = flat[i + 2] - ax, dy = flat[i + 3] - ay, len = Math.hypot(dx, dy);
         const n = Math.max(1, Math.ceil(len / step));
         for (let k = i === 0 ? 0 : 1; k <= n; k++) {
             const x = ax + (dx * k) / n, y = ay + (dy * k) / n;
             if ((x - cx) ** 2 + (y - cy) ** 2 > r2) { flush(); continue; }
-            run.push({ x, y, z: groundZ(world, x, y) + 0.2 });
+            hint = groundZ(world, x, y, hint);
+            run.push({ x, y, z: hint + 0.2 });
         }
     }
     flush();

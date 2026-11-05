@@ -7,9 +7,13 @@ import { seededRng, pick, range } from '../engine/rng.js';
 import { edgeSpeed, edgeClass, edgeOpen, laneOffset, lanePoint, junctionType, ROAD_CLASS, nearestEdge } from '../world/roadgraph.js';
 import { roadHeightAt, roadGradeAt } from '../world/terrain.js';
 import { hillSpeed } from '../sim/slope.js';
+import { connectorLayout, connectorBetween, connectorPoint, connectorsConflict, onJunction } from '../world/connectors.js';
 
-const STOP_LINE = 7.5;    // metres before the node centre where give-way traffic waits
-const BOX = 6;            // a vehicle within this of the node centre is "in the junction" (less than STOP_LINE)
+const STOP_LINE = 7.5;    // metres before the node centre where give-way traffic waits (where there is no junction layout)
+const STOP_GAP = 1.0;     // metres of road between a waiting vehicle's front and the junction mouth (the layout's trim)
+const BOX = 6;            // a vehicle within this of the node centre is "in the junction" (where there is no layout)
+const LAYER_GAP = 2.5;    // metres of height difference (plus a grade allowance) above which two vehicles are on different levels
+const LAYER_SLOPE = 0.14; // allowance per metre between them, so a hill does not split a queue into layers
 const LOOK = 45;          // metres ahead an agent watches for vehicles in its lane
 const SIGNAL_PHASE = 18;  // seconds per signal phase
 const CLAIM_AT = 16;      // metres from the stop line where a vehicle asks for the junction
@@ -44,6 +48,25 @@ function rideProfile(a, edge) {
     const grade = roadGradeAt(edge, d) * (a.forward ? 1 : -1);
     a.prevZ = a.z ?? 0;
     a.z = edge.z ? roadHeightAt(edge, d) : 0;
+    a.pitch = Math.atan(grade);
+    return grade;
+}
+/**
+ * Is `o` on another level than `a` (a bridge over the road `a` is on, a tunnel under it)? Vehicles on different
+ * levels never block, yield to or collide with each other. The same edge is always the same level; `dist` (m) lets
+ * the height difference of a hill grow with the gap.
+ */
+export function otherLayer(a, o, dist = 0) {
+    if (o.z === undefined || a.z === undefined) return false;
+    if (o.edge !== undefined && o.edge === a.edge) return false;
+    return Math.abs(o.z - a.z) > LAYER_GAP + LAYER_SLOPE * dist;
+}
+/** Height and grade of an agent inside a junction: the blend from its height at the mouth to the leaving road's. */
+function rideConn(a) {
+    const k = a.conn, len = k.c.len;
+    a.prevZ = a.z ?? 0;
+    a.z = len > 0 ? k.z0 + ((k.z1 - k.z0) * k.s) / len : k.z1;
+    const grade = len > 0 ? (k.z1 - k.z0) / len : 0;
     a.pitch = Math.atan(grade);
     return grade;
 }
@@ -99,7 +122,7 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
             id: traffic.nextId++, type, spec: t, edge: edge.id, forward, along,
             speed: 0, factor: range(rng, 0.82, 1.05), colour: pick(rng, PALETTE[ERA(year)]), era: ERA(year),
             x: p.x, y: p.y, heading: p.angle, prevX: p.x, prevY: p.y, prevHeading: p.angle,
-            next: null, stunned: 0, waiting: 0, z: 0, prevZ: 0, pitch: 0, grade: 0,
+            next: null, conn: null, leaving: null, stunned: 0, waiting: 0, z: 0, prevZ: 0, pitch: 0, grade: 0,
         };
         agent.grade = rideProfile(agent, edge);
         agent.prevZ = agent.z;
@@ -116,6 +139,8 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
         const e = graph.edges[a.edge];
         const nodeId = endNode(a);
         const node = graph.nodes[nodeId];
+        const inEnd = a.forward ? 'b' : 'a';
+        const layout = connectorLayout(graph, nodeId, year);
         const inAngle = a.heading;
         const options = [];
         for (const id of node.edges) {
@@ -128,15 +153,20 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
             const turn = Math.abs(Math.atan2(Math.sin(p.angle - inAngle), Math.cos(p.angle - inAngle)));
             // a short cul-de-sac (a stub ending at a dead end) is a place to avoid, not to turn round in
             const stub = o.len < 60 && graph.nodes[fwd ? o.b : o.a].edges.length === 1;
-            options.push({ edge: id, forward: fwd, w: 0.4 + Math.cos(turn) + 1 + (ROAD_CLASS[o.cls]?.rank ?? 1) * 0.2, turn, stub });
+            // the lane path through the junction layout to that road; none means that turn is not allowed
+            const conn = layout ? connectorBetween(layout, e, inEnd, o, fwd ? 'a' : 'b') : null;
+            options.push({ edge: id, forward: fwd, w: 0.4 + Math.cos(turn) + 1 + (ROAD_CLASS[o.cls]?.rank ?? 1) * 0.2, turn, stub, conn });
         }
+        // only turns the junction has a path for (unless none has: then the old straight jump)
+        const legal = options.filter(o => !layout || o.conn);
+        if (legal.length && legal.length < options.length) options.splice(0, options.length, ...legal);
         // a short cul-de-sac is never entered while there is anywhere else to go
         const through = options.filter(o => !o.stub);
         if (through.length && through.length < options.length) options.splice(0, options.length, ...through);
         if (!options.length) {
             // dead end: turn round (a one-way road cannot be driven back: the vehicle leaves the map there)
-            if (e.oneway) return { edge: e.id, forward: a.forward, turn: Math.PI, gone: true };
-            return { edge: e.id, forward: !a.forward, turn: Math.PI };
+            if (e.oneway) return { edge: e.id, forward: a.forward, turn: Math.PI, gone: true, conn: null };
+            return { edge: e.id, forward: !a.forward, turn: Math.PI, conn: layout ? connectorBetween(layout, e, inEnd, e, inEnd) : null };
         }
         let r = rng() * options.reduce((s, o) => s + o.w, 0);
         for (const o of options) { r -= o.w; if (r <= 0) return o; }
@@ -145,31 +175,53 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
 
     /**
      * Must this agent wait at the end of its edge? The first vehicle allowed through a junction claims it until it
-     * has left the junction box, so two vehicles can never be in it at once (whatever their speeds do).
+     * has left (its rear is clear of the mouth), so a vehicle never starts a path that crosses or merges with one
+     * already claimed. Plain and signal junctions are single occupancy (every path counts as crossing); at a
+     * roundabout only paths that really cross or merge (world/connectors.js connectorsConflict) wait for each other,
+     * so traffic already circulating has priority over a vehicle waiting to enter and vehicles on separate parts of
+     * the ring go together. `nc` is this agent's lane path (null where the node has no layout), `stopFront` how far
+     * from the node its front waits.
      */
-    function mustYield(a, ctx, others) {
+    function mustYield(a, ctx, others, nc, stopFront) {
         const nodeId = endNode(a);
         const node = graph.nodes[nodeId];
-        if (node.edges.length < 3) return false;
+        if (node.edges.length < 3 && nc?.layout.kind !== 'end') return false; // (a dead end's U-turn is single occupancy too)
         const e = graph.edges[a.edge];
         const myDist = e.len - a.along;
-        const claim = traffic.claims.get(nodeId);
-        if (claim === a.id) return false;
+        const claims = traffic.claims.get(nodeId);
+        if (claims?.some(r => r.id === a.id)) return false;
         // past the stop line or already in the box: committed, keep going (stopping there would block everyone)
-        if (myDist < STOP_LINE - 1 || Math.hypot(a.x - node.x, a.y - node.y) < BOX) return false;
-        // a claim held by a vehicle that is itself stuck for a long time is broken, but never into an occupied box
-        if (claim !== undefined && !(a.waiting > 25 && !others.some(o => o !== a && Math.hypot(o.x - node.x, o.y - node.y) < BOX))) return true;
-        if (myDist > CLAIM_AT) return false; // too far off to matter yet
-        for (const o of others) {
-            if (o !== a && Math.hypot(o.x - node.x, o.y - node.y) < BOX) return true; // someone (or the player) is in it
-        }
+        if (myDist - a.spec.len / 2 < stopFront - 2) return false; // (a waiting vehicle creeps no further than half a metre past the line)
+        if (!nc && Math.hypot(a.x - node.x, a.y - node.y) < BOX) return false;
         const type = junctionType(node, ctx.year);
+        const byPath = nc && nc.layout.kind === 'roundabout';
+        const clash = conn => !byPath || !conn || connectorsConflict(nc, conn);
+        // is body o in the junction? A vehicle on its own path is; one still on a road keeps clear of the mouth; the
+        // player (no path) is where it stands (on the surface, at its level)
+        const inside = o => {
+            if (o === a) return false;
+            if (o.conn) return o.conn.c.nodeId === nodeId;
+            if (nc && o.edge !== undefined) return false;
+            if (o.z !== undefined && node.z !== undefined && Math.abs(o.z - node.z) > LAYER_GAP) return false; // on a bridge over it, in a tunnel under it
+            if (!nc) return Math.hypot(o.x - node.x, o.y - node.y) < BOX;
+            return Math.hypot(o.x - node.x, o.y - node.y) < nc.layout.reach && onJunction(nc.layout, o.x, o.y);
+        };
+        // a claim held by a vehicle that is itself stuck for a long time is broken, but never into an occupied box:
+        // the stuck holders lose their claims and queue again behind this vehicle's
+        if (claims?.some(r => clash(r.conn))) {
+            if (!(a.waiting > 25 && !others.some(inside))) return true;
+            traffic.claims.set(nodeId, claims.filter(r => !clash(r.conn)));
+        }
+        if (myDist > CLAIM_AT + (nc ? nc.inTrim : 0)) return false; // too far off to matter yet
+        for (const o of others) {
+            if (inside(o) && clash(o.conn)) return true; // someone (or the player) is in it
+        }
         if (type === 'signals') {
             if (signalPhase(node, ctx.time) !== signalGroup(a.heading)) return true;
         } else {
             const myRank = ROAD_CLASS[edgeClass(e, ctx.year)]?.rank ?? 1;
             for (const o of others) {
-                if (o === a || o.edge === undefined || o.edge === a.edge || endNode(o) !== nodeId) continue;
+                if (o === a || o.edge === undefined || o.edge === a.edge || o.conn || endNode(o) !== nodeId) continue;
                 const oe = graph.edges[o.edge];
                 const oDist = oe.len - o.along;
                 if (oDist > 24 || o.speed < 0.2 && oDist > STOP_LINE + 3) continue;
@@ -177,18 +229,27 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
                 if (type !== 'roundabout' && oRank > myRank) return true; // give way to the major road
             }
         }
-        traffic.claims.set(nodeId, a.id);
+        const held = traffic.claims.get(nodeId);
+        if (held) held.push({ id: a.id, conn: nc }); else traffic.claims.set(nodeId, [{ id: a.id, conn: nc }]);
         a.claim = nodeId;
         return false;
     }
 
-    /** Releases junction claims once their holder is clear of the box (or gone). */
+    /** Releases junction claims once their holder is clear of the junction (or gone). */
     function releaseClaims() {
         const byId = new Map(traffic.agents.map(a => [a.id, a]));
-        for (const [nodeId, id] of traffic.claims) {
-            const a = byId.get(id);
+        for (const [nodeId, list] of traffic.claims) {
             const node = graph.nodes[nodeId];
-            if (!a || (endNode(a) !== nodeId && Math.hypot(a.x - node.x, a.y - node.y) > BOX + a.spec.len / 2 + 2)) traffic.claims.delete(nodeId);
+            const keep = list.filter(r => {
+                const a = byId.get(r.id);
+                if (!a) return false;
+                if (a.conn) return a.conn.c.nodeId === nodeId;     // on its path through
+                if (endNode(a) === nodeId) return true;             // still on the way in
+                if (a.leaving && a.leaving.node === nodeId && a.edge === a.leaving.edge && a.along < a.leaving.until) return true; // rear still in the mouth
+                if (!r.conn) return Math.hypot(a.x - node.x, a.y - node.y) <= BOX + a.spec.len / 2 + 2; // no layout: by distance
+                return false;
+            });
+            if (!keep.length) traffic.claims.delete(nodeId); else if (keep.length !== list.length) traffic.claims.set(nodeId, keep);
         }
     }
 
@@ -198,12 +259,89 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
         let gap = Infinity;
         for (const o of bodies) {
             if (o === a) continue;
+            // inside a junction only the others on their paths through it (and the player) count: vehicles waiting at
+            // the mouths are held by this one, and the road it leaves onto is watched by exitGap
+            if (a.conn && o.edge !== undefined && !o.conn) continue;
+            // likewise just after it: the vehicles waiting on the other arms are held by this one's claim
+            if (a.leaving && a.edge === a.leaving.edge && a.along < a.leaving.until && o.edge !== undefined && !o.conn && o.edge !== a.edge && endNode(o) === a.leaving.node) continue;
             const rx = o.x - a.x, ry = o.y - a.y;
             const fwd = rx * c + ry * s;
             if (fwd <= 0 || fwd > LOOK) continue;
             const lat = Math.abs(-rx * s + ry * c);
-            if (lat > (a.spec.width + (o.spec?.width ?? o.width ?? 2)) / 2 + 0.4) continue;
+            // (a vehicle on the same road going the same way is in the way whatever its lane: lanes ease sideways between road classes)
+            const sameRoad = o.edge === a.edge && o.forward === a.forward && !o.conn && !a.conn;
+            if (!sameRoad && lat > (a.spec.width + (o.spec?.width ?? o.width ?? 2)) / 2 + 0.4) continue;
+            if (otherLayer(a, o, fwd)) continue; // over or under it: not in this vehicle's way
             gap = Math.min(gap, fwd - (a.spec.len + (o.spec?.len ?? o.len ?? 4)) / 2);
+        }
+        return gap;
+    }
+
+    /** Starts an agent on the lane path through the junction at the end of its edge. */
+    function enterConnector(a) {
+        const c = a.next.conn, e = graph.edges[a.edge];
+        lanePoint(e, a.along, a.forward, a.lat, oldP);
+        connectorPoint(c, 0, lp);
+        a.ox += oldP.x - lp.x; a.oy += oldP.y - lp.y;   // the jump from the edge's lane to the path is blended away
+        const out = graph.edges[a.next.edge];
+        const z1 = out.z ? roadHeightAt(out, a.next.forward ? c.outTrim : out.len - c.outTrim) : 0;
+        a.conn = { c, s: 0, z0: a.z ?? 0, z1 };
+    }
+
+    /** Takes an agent off its path onto the road it leads to, at that road's trim, and picks the turn after. */
+    function leaveConnector(a, year) {
+        const { c } = a.conn, next = a.next;
+        connectorPoint(c, c.len, oldP);
+        a.conn = null;
+        a.edge = next.edge; a.forward = next.forward; a.along = c.outTrim;
+        a.leaving = { node: c.nodeId, edge: a.edge, until: c.outTrim + a.spec.len + 1 };
+        a.next = null;
+        a.next = pickNext(a, year);
+        lanePoint(graph.edges[a.edge], a.along, a.forward, a.lat, lp);
+        a.ox += oldP.x - lp.x; a.oy += oldP.y - lp.y;
+    }
+
+    /**
+     * Moves an agent `dist` metres on: along its edge to the junction mouth (the edge's trim), through the junction
+     * on its lane path, then along the next edge. With no layout it drives to the node and jumps to the next edge.
+     */
+    function advance(a, dist, year) {
+        let rem = dist;
+        for (let guard = 0; guard < 8; guard++) {
+            if (a.conn) {
+                const left = a.conn.c.len - a.conn.s;
+                if (rem < left) { a.conn.s += rem; return; }
+                rem -= left;
+                leaveConnector(a, year);
+                continue;
+            }
+            const e = graph.edges[a.edge];
+            const nc = a.next.conn;
+            const stopAt = nc ? Math.max(0, e.len - nc.inTrim) : e.len;
+            if (a.along + rem < stopAt) { a.along += rem; return; }
+            rem -= Math.max(0, stopAt - a.along);
+            a.along = Math.max(a.along, stopAt);
+            if (a.next.gone) { a.gone = true; a.along = 0; a.next = { edge: a.edge, forward: a.forward, turn: 0, conn: null }; return; }
+            if (nc) { enterConnector(a); continue; }
+            lanePoint(e, e.len, a.forward, a.lat, oldP);
+            a.edge = a.next.edge;
+            a.forward = a.next.forward;
+            a.along = 0;
+            a.next = null;
+            a.next = pickNext(a, year);
+            // keep the vehicle where it was: the jump onto the next edge's lane is blended away
+            lanePoint(graph.edges[a.edge], a.along, a.forward, a.lat, lp);
+            a.ox += oldP.x - lp.x; a.oy += oldP.y - lp.y;
+        }
+    }
+
+    /** Distance (bumper to bumper) from an agent on its lane path to the nearest vehicle on the road it is leaving onto, or Infinity. */
+    function exitGap(a, bodies) {
+        const { c, s } = a.conn, next = a.next;
+        let gap = Infinity;
+        for (const o of bodies) {
+            if (o === a || o.conn || o.edge !== next.edge || o.forward !== next.forward) continue;
+            gap = Math.min(gap, c.len - s + Math.max(0, o.along - c.outTrim) - (a.spec.len + o.spec.len) / 2);
         }
         return gap;
     }
@@ -224,12 +362,22 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
             if (ctx.grip !== undefined) target *= 0.75 + 0.25 * ctx.grip; // drive slower in the wet
             target = hillSpeed(CLIMB[a.type], a.grade ?? 0, target); // crawl up hills, hold back down steep ones
             a.next ??= pickNext(a, ctx.year);
-            const toEnd = e.len - a.along;
-            // slow for sharp turns and dead ends
-            if (toEnd < 20 && a.next.turn > 0.7) target = Math.min(target, a.next.turn > 2.5 ? 2.5 : 6);
-            let gap = gapAhead(a, bodies);
-            const yielding = mustYield(a, ctx, bodies);
-            if (yielding) { gap = Math.min(gap, toEnd - STOP_LINE - a.spec.len / 2 + 2); a.waiting += dt; } else a.waiting = 0;
+            const nc = a.conn ? null : a.next.conn;          // the lane path it is about to take (none: no layout)
+            const toEnd = e.len - a.along;                   // to the node centre along the edge
+            const stopFront = nc ? nc.inTrim + STOP_GAP : STOP_LINE;
+            let gap = gapAhead(a, bodies), yielding = false;
+            if (a.conn) {
+                target = Math.min(target, a.conn.c.vturn);   // corners and the ring are taken slowly
+                gap = Math.min(gap, exitGap(a, bodies));     // and a queue on the road it leads to is a vehicle ahead
+                a.waiting = 0;
+            } else {
+                if (nc) {
+                    // brake so as to arrive at the mouth at the corner's speed (3 m/s^2)
+                    if (nc.vturn < Infinity) target = Math.min(target, Math.sqrt(nc.vturn * nc.vturn + 6 * Math.max(0, toEnd - nc.inTrim)));
+                } else if (toEnd < 20 && a.next.turn > 0.7) target = Math.min(target, a.next.turn > 2.5 ? 2.5 : 6); // sharp turns and dead ends with no layout
+                yielding = mustYield(a, ctx, bodies, nc, stopFront);
+                if (yielding) { gap = Math.min(gap, toEnd - stopFront - a.spec.len / 2 + 2); a.waiting += dt; } else a.waiting = 0;
+            }
             // the speed that still lets it stop 2 m short of the obstacle at 3 m/s^2
             const safe = Math.sqrt(Math.max(0, 2 * 3 * Math.max(0, gap - 2)));
             if (a.stunned > 0) { a.stunned -= dt; target = 0; }
@@ -238,37 +386,29 @@ export function createTraffic(graph, { seed = 1, cap = 16 } = {}) {
             a.speed = Math.max(0, a.speed + acc * dt);
             if (gap < 0.3) a.speed = 0;
             // never roll past a stop line while giving way
-            if (yielding) a.speed = Math.min(a.speed, Math.max(0, (toEnd - STOP_LINE) / dt));
-            a.along += a.speed * dt;
-            while (a.along >= graph.edges[a.edge].len) {
-                const oe = graph.edges[a.edge];
-                lanePoint(oe, oe.len, a.forward, a.lat, oldP);
-                a.along -= oe.len;
-                if (a.next.gone) { a.gone = true; a.along = 0; a.next = { edge: a.edge, forward: a.forward, turn: 0 }; break; }
-                a.edge = a.next.edge;
-                a.forward = a.next.forward;
-                a.next = null;
-                a.next = pickNext(a, ctx.year);
-                // keep the vehicle where it was: the jump onto the next edge's lane is blended away below
-                lanePoint(graph.edges[a.edge], a.along, a.forward, a.lat, lp);
-                a.ox += oldP.x - lp.x; a.oy += oldP.y - lp.y;
-            }
+            if (yielding) a.speed = Math.min(a.speed, Math.max(0, (toEnd - stopFront - a.spec.len / 2 + 0.5) / dt));
+            advance(a, a.speed * dt, ctx.year);
             const ed = graph.edges[a.edge];
-            // ease sideways between lane offsets (a road changing class), follow the lane, and let any junction jump decay
+            // ease sideways between lane offsets (a road changing class), follow the lane or the junction path, and let any jump decay
             const wantLat = laneOffset(ed, ctx.year);
             a.lat += Math.max(-dt * 1.2, Math.min(dt * 1.2, wantLat - a.lat));
-            lanePoint(ed, a.along, a.forward, a.lat, lp);
+            if (a.conn) {
+                connectorPoint(a.conn.c, a.conn.s, lp);
+                connectorPoint(a.conn.c, Math.min(a.conn.c.len, a.conn.s + 2.5 + a.speed * 0.35), ahead);
+            } else {
+                lanePoint(ed, a.along, a.forward, a.lat, lp);
+                lanePoint(ed, Math.min(ed.len, a.along + 2.5 + a.speed * 0.35), a.forward, a.lat, ahead);
+            }
             const decay = Math.exp(-dt / 0.35);
             a.ox *= decay; a.oy *= decay;
             a.x = lp.x + a.ox; a.y = lp.y + a.oy;
             // steer towards a point just ahead on the lane, at a limited yaw rate (so corners are swept, not snapped)
-            lanePoint(ed, Math.min(ed.len, a.along + 2.5 + a.speed * 0.35), a.forward, a.lat, ahead);
             const far = Math.hypot(ahead.x - lp.x, ahead.y - lp.y) > 0.6;
             const aim = far ? Math.atan2(ahead.y + a.oy - a.y, ahead.x + a.ox - a.x) : lp.angle;
             let dh = Math.atan2(Math.sin(aim - a.heading), Math.cos(aim - a.heading));
             if (Math.abs(dh) > 2.6) a.heading = aim; // a U-turn at a dead end
             else { const rate = Math.max(2.5, a.speed / 1.8) * dt; a.heading += Math.max(-rate, Math.min(rate, dh)); }
-            a.grade = rideProfile(a, ed);
+            a.grade = a.conn ? rideConn(a) : rideProfile(a, ed);
         }
         if (traffic.agents.some(a => a.gone)) traffic.agents = traffic.agents.filter(a => !a.gone);
         releaseClaims();

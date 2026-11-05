@@ -135,6 +135,11 @@ test('traffic stays on open lanes over 10,000 seeded steps around Exeter', () =>
             for (const a of tr.agents) {
                 const e = world.graph.edges[a.edge];
                 assert.ok(edgeOpen(e, year) && e.cls !== 'lane' && e.cls !== 'access' && e.cls !== 'ferry', `agent on ${e.cls}`);
+                if (a.conn) { // on its lane path through a junction: within the junction's reach of the node
+                    const node = world.graph.nodes[a.conn.c.nodeId];
+                    assert.ok(Math.hypot(node.x - a.x, node.y - a.y) < a.conn.c.layout.reach + 3, 'agent off its junction path');
+                    continue;
+                }
                 const p = lanePoint(e, a.along, a.forward, laneOffset(e, year), {});
                 assert.ok(Math.hypot(p.x - a.x, p.y - a.y) < 14, 'agent off its lane'); // eased through junctions (between a dual carriageway's lane and a narrow road's it jumps ~13 m and decays), never far from the lane
                 assert.ok(a.along >= 0 && a.along <= e.len + 1e-6);

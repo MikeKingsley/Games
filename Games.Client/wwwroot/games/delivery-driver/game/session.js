@@ -17,7 +17,7 @@ import { bayCheck, doorCheck, bayHint, parkingSpots, trailerSpots } from './depo
 import { buyVehicle, buyTrailer, sellVehicle, sellTrailer, showroom } from './dealer.js';
 import { updateDrivers, aiPosition, hirePool, hireDriver, fireDriver, assignVehicle, startAiJob, relocate, buyDepot } from './fleet.js';
 import { takeLoan, repayLoan } from './economy.js';
-import { createTraffic, agentDrawSpec, TRAFFIC_TYPES } from '../traffic/traffic.js';
+import { createTraffic, agentDrawSpec, otherLayer, TRAFFIC_TYPES } from '../traffic/traffic.js';
 import { obb, sat } from '../sim/collision.js';
 import { railsNear, railTouches } from '../world/rails.js';
 import { stepTrailer, trailerObb, createTrailer, attach, underRun, stepLooseTrailer } from '../sim/trailer.js';
@@ -706,12 +706,13 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
     function stepTraffic(dt) {
         const p = session.player;
         const c = bodyCentre(p);
-        Object.assign(playerBody, { x: c.x, y: c.y, heading: p.heading, speed: p.speed, len: p.spec.length, width: p.spec.width });
+        Object.assign(playerBody, { x: c.x, y: c.y, z: p.z ?? 0, heading: p.heading, speed: p.speed, len: p.spec.length, width: p.spec.width });
         session.traffic.step(dt, { year: session.year, player: playerBody, grip: session.grip ?? 1 });
         session.vehicles = session.traffic.agents;
         // bumping into traffic: the other vehicle stops for a moment; the player is pushed back
         for (const a of session.traffic.agents) {
             if (Math.abs(a.x - c.x) > 14 || Math.abs(a.y - c.y) > 14) continue;
+            if (otherLayer(a, playerBody, 0)) continue; // on a bridge over it or under it: no contact
             const box = obb(a.x, a.y, a.spec.len, a.spec.width, a.heading);
             if (!sat(box, obb(c.x, c.y, p.spec.length, p.spec.width, p.heading))) continue;
             const impact = collideVehicle(p, { ...box, vx: Math.cos(a.heading) * a.speed, vy: Math.sin(a.heading) * a.speed, invMass: 0 });

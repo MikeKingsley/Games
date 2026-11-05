@@ -1,9 +1,12 @@
 // A* over the road graph by travel time, for a given year (roads not yet opened or already closed are skipped;
 // ferries add their wait). Hills count: each edge's graded profile (edge.z, world/terrain.js) slows a vehicle up
 // its climbs (by its power to weight) and down steep descents, so the hilly way round costs more time, and the
-// route reports the fuel multiplier its hills add (sim/slope.js gradeFuelFactor). Returns the route as a polyline
+// route reports the fuel multiplier its hills add (sim/slope.js gradeFuelFactor). Junctions count: a turn must have a
+// lane path through the junction layout (world/connectors.js) and costs the extra time its corner is driven at
+// (a U-turn on an ordinary road, which has none, is never part of a route). Returns the route as a polyline
 // for the route line, plus its length, time and hill summary.
 import { edgeSpeed, edgeOpen, nearestEdge, coreNodes } from './roadgraph.js';
+import { connectorLayout, connectorBetween, turnSeconds } from './connectors.js';
 import { TIME_SCALE } from '../config.js';
 import { gradeFuelFactor, hillSpeed, TYPICAL_CLIMB } from '../sim/slope.js';
 
@@ -143,34 +146,62 @@ export function findRoute(graph, from, to, { year = 1919, vmax = 30, maxSnap = 4
     for (const e of graph.edges) if (edgeOpen(e, year)) fastest = Math.max(fastest, speed(e));
     const h = id => Math.hypot(graph.nodes[id].x - to.x, graph.nodes[id].y - to.y) / fastest;
 
-    const cost = new Map();
-    const prev = new Map();
-    const heap = new Heap();
-    const seed = (node, c) => { if (c < (cost.get(node) ?? Infinity)) { cost.set(node, c); prev.set(node, null); heap.push(node, c + h(node)); } };
-    if (canBack(s.edge)) seed(s.edge.a, part(s.edge, s.along, false));
-    seed(s.edge.b, part(s.edge, s.edge.len - s.along, true));
-    let best = null, bestCost = Infinity;
-    const done = new Set();
-    while (heap.size) {
-        const n = heap.pop();
-        if (done.has(n)) continue;
-        done.add(n);
-        const c = cost.get(n);
-        if (c + h(n) >= bestCost) break;
-        if (goal.has(n) && c + goal.get(n) < bestCost) { bestCost = c + goal.get(n); best = n; }
-        for (const eid of graph.nodes[n].edges) {
-            const e = graph.edges[eid];
-            if (!edgeOpen(e, year)) continue;
-            if (e.oneway && e.a !== n) continue; // against the one-way direction
-            const m = e.a === n ? e.b : e.a;
-            const nc = c + edgeTime(e, year, vmax, e.a === n, climb);
-            if (nc < (cost.get(m) ?? Infinity)) {
-                cost.set(m, nc);
-                prev.set(m, { node: n, edge: e });
-                heap.push(m, nc + h(m));
+    // strict: junction turns need a connector and pay for the corner; relaxed (only if that finds no route): plain graph search
+    const search = strict => {
+        const cost = new Map();
+        const prev = new Map();
+        const via = new Map(); // node -> the edge it was reached along (the start edge for the first nodes)
+        const turns = new Map(); // node -> seconds the corners on its best route cost (reported apart from the hills)
+        const heap = new Heap();
+        const seed = (node, c) => { if (c < (cost.get(node) ?? Infinity)) { cost.set(node, c); prev.set(node, null); via.set(node, s.edge); turns.set(node, 0); heap.push(node, c + h(node)); } };
+        if (canBack(s.edge)) seed(s.edge.a, part(s.edge, s.along, false));
+        seed(s.edge.b, part(s.edge, s.edge.len - s.along, true));
+        let best = null, bestCost = Infinity, bestTurns = 0;
+        const done = new Set();
+        while (heap.size) {
+            const n = heap.pop();
+            if (done.has(n)) continue;
+            done.add(n);
+            const c = cost.get(n);
+            if (c + h(n) >= bestCost) break;
+            const node = graph.nodes[n];
+            const arrived = via.get(n);
+            const layout = strict && arrived && arrived.a !== arrived.b && node.edges.length >= 3 ? connectorLayout(graph, n, year) : null;
+            if (goal.has(n)) {
+                // the turn into the goal's road at this node
+                const conn = layout && t.edge.a !== t.edge.b && arrived !== t.edge ? connectorBetween(layout, arrived, arrived.b === n ? 'b' : 'a', t.edge, t.edge.a === n ? 'a' : 'b') : null;
+                if (!layout || conn || arrived === t.edge) {
+                    const goalTurn = conn ? turnSeconds(conn, speed(t.edge)) : 0;
+                    const total = c + goalTurn + goal.get(n);
+                    if (total < bestCost) { bestCost = total; best = n; bestTurns = turns.get(n) + goalTurn; }
+                }
+            }
+            for (const eid of node.edges) {
+                const e = graph.edges[eid];
+                if (!edgeOpen(e, year)) continue;
+                if (e.oneway && e.a !== n) continue; // against the one-way direction
+                const m = e.a === n ? e.b : e.a;
+                let turn = 0;
+                if (layout && e.a !== e.b) {
+                    const conn = connectorBetween(layout, arrived, arrived.b === n ? 'b' : 'a', e, e.a === n ? 'a' : 'b');
+                    if (!conn) continue; // no lane path through the junction to that road
+                    turn = turnSeconds(conn, speed(e));
+                }
+                const nc = c + turn + edgeTime(e, year, vmax, e.a === n, climb);
+                if (nc < (cost.get(m) ?? Infinity)) {
+                    cost.set(m, nc);
+                    prev.set(m, { node: n, edge: e });
+                    via.set(m, e);
+                    turns.set(m, turns.get(n) + turn);
+                    heap.push(m, nc + h(m));
+                }
             }
         }
-    }
+        return { best, prev, bestCost, bestTurns };
+    };
+    let found = search(true);
+    if (found.best === null) found = search(false);
+    const { best, prev, bestCost, bestTurns } = found;
     if (best === null) return null;
 
     // walk back: nodes from the start edge to the best goal node
@@ -192,11 +223,11 @@ export function findRoute(graph, from, to, { year = 1919, vmax = 30, maxSnap = 4
     const startPart = { edge: s.edge, forward: firstNode === s.edge.b, metres: firstNode === s.edge.a ? s.along : s.edge.len - s.along };
     const endPart = { edge: t.edge, forward: best === t.edge.a, metres: best === t.edge.a ? t.along : t.edge.len - t.along };
     const all = [startPart, ...steps.map(st => ({ ...st, metres: st.edge.len })), endPart];
-    return finish(pts, all, bestCost, steps.filter(st => st.edge.ferry).map(st => st.edge), speed);
+    return finish(pts, all, bestCost, steps.filter(st => st.edge.ferry).map(st => st.edge), speed, bestTurns);
 }
 
 /** The route's polyline, length and hill summary. `steps` carry the metres driven on each edge. */
-function finish(pts, steps, time, ferries, speed) {
+function finish(pts, steps, time, ferries, speed, turnTime = 0) {
     const clean = [pts[0], pts[1]];
     let length = 0;
     for (let i = 2; i < pts.length; i += 2) {
@@ -205,7 +236,7 @@ function finish(pts, steps, time, ferries, speed) {
         length += d;
         clean.push(pts[i], pts[i + 1]);
     }
-    let flatTime = 0, fuelMetres = 0, driven = 0, climb = 0;
+    let flatTime = turnTime, fuelMetres = 0, driven = 0, climb = 0;
     for (const st of steps) {
         const e = st.edge, share = e.len > 0 ? st.metres / e.len : 0;
         const hills = edgeHills(e);

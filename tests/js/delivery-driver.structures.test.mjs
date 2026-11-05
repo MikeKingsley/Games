@@ -274,3 +274,21 @@ test('abutments and piers are solid from the bed to the slab, stand clear of eve
     }
     assert.ok(supports > 10, `${supports} supports`);
 });
+
+test('the 3D route ribbon under an overpass stays on the road beneath, not on the deck above', async () => {
+    const { buildRouteMesh } = await import('../../Games.Client/wwwroot/games/delivery-driver/render/gl/prop-mesh.js');
+    let checked = 0;
+    for (const c of overpasses.slice(0, 40)) {
+        const L = E[c.lower.edge], U = E[c.upper.edge];
+        const deck = roadHeightAt(U, c.upper.d);
+        const low = roadHeightAt(L, c.lower.d);
+        if (deck - low < 4) continue;
+        const mesh = buildRouteMesh(world, L.pts, c.x, c.y, 60, 3, roadHeightAt(L, Math.max(0, c.lower.d - 50)));
+        if (!mesh) continue;
+        for (let i = 0; i < mesh.positions.length / 3; i++) {
+            const x = mesh.positions[i * 3], y = mesh.positions[i * 3 + 1], z = mesh.positions[i * 3 + 2];
+            if (Math.hypot(x - c.x, y - c.y) < 8) { assert.ok(z < low + 2, `ribbon at ${z.toFixed(1)} m under a deck at ${deck.toFixed(1)} (road ${low.toFixed(1)})`); checked++; }
+        }
+    }
+    assert.ok(checked > 10, `${checked} ribbon vertices under decks`);
+});

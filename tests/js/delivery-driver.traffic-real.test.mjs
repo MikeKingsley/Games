@@ -103,13 +103,19 @@ test('town centres are in the main one-way-aware network and the main routes exi
     for (const [x, y] of [['exeter', 'plymouth'], ['plymouth', 'exeter'], ['truro', 'penzance'], ['barnstaple', 'exeter']]) assert.ok(findRoute(world.graph, T(x), T(y), { year: 2020 }), `${x} -> ${y}`);
 });
 
-test('soak: seeded traffic around Exeter stays off closed and wrong-way edges and rarely overlaps (known: a few samples at 6-7 m roundabout stubs)', () => {
+test('soak: seeded traffic around Exeter and Plymouth stays off closed and wrong-way edges, off roundabout islands and the wrong way round rings, and rarely overlaps on one level', () => {
     const world = createWorld(seedWithBaked());
-    for (const year of [1919, 1965, 2020]) {
-        const r = soak(world, { town: 'exeter', year, steps: 2500 });
-        assert.equal(r.closed, 0, `${year}`);
-        assert.equal(r.wrongWay, 0, `${year}`);
-        assert.ok(r.overlaps <= r.samples * 0.015, `${year}: ${r.overlaps} overlapping samples of ${r.samples}`);
-        assert.ok(r.maxAgents >= 4, `${year}: ${r.maxAgents} agents`);
+    for (const town of ['exeter', 'plymouth']) for (const year of [1919, 1965, 2020]) {
+        const r = soak(world, { town, year, steps: 2500 });
+        const at = `${town} ${year}`;
+        assert.equal(r.closed, 0, at);
+        assert.equal(r.wrongWay, 0, at);
+        assert.equal(r.inIsland, 0, `${at}: vehicles inside a roundabout island`);
+        assert.equal(r.offRing, 0, `${at}: vehicles off a roundabout ring`);
+        assert.equal(r.ringWrong, 0, `${at}: vehicles going anticlockwise round a ring`);
+        // (known: Plymouth's signalled junction 12637 and its neighbour 12638 are 16 m apart; queues on their arms touch, a few percent of samples)
+        assert.ok(r.overlaps <= r.samples * (town === 'plymouth' ? 0.06 : 0.015), `${at}: ${r.overlaps} overlapping samples of ${r.samples}`);
+        assert.ok(r.maxAgents >= 4, `${at}: ${r.maxAgents} agents`);
+        assert.ok(r.junctionSamples > 0, `${at}: vehicles drove through junction layouts`);
     }
 });
