@@ -9,7 +9,7 @@ import * as mat4 from './mat4.js';
 import { QUALITY, CHUNK_SIZE } from '../../config.js';
 import { groundZ, decksAt, cameraGroundZ } from '../../world/terrain.js';
 import { SLAB } from '../../world/crossings.js';
-import { uploadMesh, drawMesh, deleteMesh, ATTRIB_SLOTS, INSTANCE_SLOTS, uploadInstances, drawInstances, deleteInstances, createStream } from './gpu-mesh.js';
+import { uploadMesh, drawMesh, drawMeshLayers, deleteMesh, ATTRIB_SLOTS, INSTANCE_SLOTS, uploadInstances, drawInstances, deleteInstances, createStream } from './gpu-mesh.js';
 import { buildFarField, WATER_ALPHA } from './terrain-mesh.js';
 import { chunkRoadSignature } from './road-mesh.js';
 import { buildChunkProps, chunkPropsSig, chunkSignalNodes, buildDynamicProps, lampStyle } from './prop-mesh.js';
@@ -323,6 +323,9 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
         for (let i = 0; i < lamps; i++) { const l = nearLamp[i].l; addSpot(l.x, l.y, (l.z ?? 0) + style.height - 0.3, 0, 0, -1, -2, 22, L.lampTint, 0.55 * n); nearLamp[i].l = null; }
     }
 
+    /** Polygon offset for a road layer: a slope factor of -1 and -2 depth units, plus -2 more per layer above the base. */
+    const roadLayerOffset = layer => gl.polygonOffset(-1, -2 - 2 * layer);
+
     const drawHandle = h => {
         if (!h) return;
         drawMesh(gl, h);
@@ -505,8 +508,14 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
                 gl.depthMask(true);
                 for (const e of entries) drawHandle(e.data.ground);
                 gl.enable(gl.POLYGON_OFFSET_FILL);
-                gl.polygonOffset(-1, -2);
-                for (const e of entries) drawHandle(e.data.roads);
+                // road layers (kerb, surface, junction, reservation, marking, pavement) each pull forward a little more than the
+                // one below, in depth-buffer units (so the gap holds at any range); layer 0 is the base offset
+                for (const e of entries) {
+                    const h = e.data.roads;
+                    if (!h) continue;
+                    stats.drawCalls += drawMeshLayers(gl, h, roadLayerOffset);
+                    stats.triangles += h.count / 3;
+                }
                 for (const e of entries) drawHandle(e.data.surf);
                 gl.disable(gl.POLYGON_OFFSET_FILL);
                 // buildings, lamps, signs, hedges, harbours: one static mesh per chunk

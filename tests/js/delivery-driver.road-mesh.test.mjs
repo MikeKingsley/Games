@@ -550,3 +550,22 @@ test('a 90 degree bend built from the spline has no edge-to-edge turn over 5 deg
     }
 });
 function width_(e) { return edgeWidth(e, 2000); }
+
+test('road layers have distinct heights, each drawn as its own group of the mesh', async () => {
+    const { LAYER, LAYER_ORDER } = await import('../../Games.Client/wwwroot/games/delivery-driver/render/gl/road-mesh.js');
+    const { createBuilder, addStrip, layerRanks } = await import('../../Games.Client/wwwroot/games/delivery-driver/render/gl/meshes.js');
+    const heights = Object.values(LAYER);
+    assert.equal(new Set(heights).size, heights.length);
+    const sorted = [...heights].sort((a, c) => a - c);
+    for (let i = 1; i < sorted.length; i++) assert.ok(sorted[i] - sorted[i - 1] >= 0.02 - 1e-9);
+    assert.equal(LAYER_ORDER.length, heights.length);
+    const b = createBuilder();
+    const pts = [{ x: 0, y: 0, z: 0 }, { x: 5, y: 0, z: 0 }];
+    addStrip(b, pts, 3, undefined, [1, 1, 1], { bias: LAYER.marking });
+    addStrip(b, pts, 3, undefined, [1, 1, 1], { bias: LAYER.surface });
+    addStrip(b, pts, 3, undefined, [1, 1, 1], { bias: LAYER.marking });
+    const m = b.finish();
+    assert.deepEqual(m.groups.map(g => g.layer), [layerRanks.get(LAYER.surface), layerRanks.get(LAYER.marking)]);
+    assert.equal(m.groups.reduce((s, g) => s + g.count, 0), m.indices.length);
+    assert.equal(m.groups[1].count, 12);
+});

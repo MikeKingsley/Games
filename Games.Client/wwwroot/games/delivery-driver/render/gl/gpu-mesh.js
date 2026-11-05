@@ -48,12 +48,20 @@ export function uploadMesh(gl, mesh) {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
     gl.bindVertexArray(null);
-    return { vao, vbo, ibo, count: mesh.indices.length, bytes: meshBytes(mesh), bounds: null };
+    return { vao, vbo, ibo, count: mesh.indices.length, bytes: meshBytes(mesh), bounds: null, groups: mesh.groups ?? null };
 }
 
 export function drawMesh(gl, handle) {
     gl.bindVertexArray(handle.vao);
     gl.drawElements(gl.TRIANGLES, handle.count, gl.UNSIGNED_INT, 0);
+}
+
+/** Draws a mesh one layer group at a time (see `createBuilder`'s `layer`); `before(layer)` runs ahead of each group. A mesh with no groups is one draw with `before(0)`. */
+export function drawMeshLayers(gl, handle, before) {
+    gl.bindVertexArray(handle.vao);
+    if (!handle.groups) { before(0); gl.drawElements(gl.TRIANGLES, handle.count, gl.UNSIGNED_INT, 0); return 1; }
+    for (const g of handle.groups) { before(g.layer); gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.start * 4); }
+    return handle.groups.length;
 }
 
 export function deleteMesh(gl, handle) {

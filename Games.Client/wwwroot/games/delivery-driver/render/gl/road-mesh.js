@@ -2,7 +2,7 @@
 // the graded centreline (`edge.z`, from world/terrain.js): kerb strip, surface, then markings, each a hair above the
 // last (the renderer adds a polygon offset for distance). Everything is built per edge or node and depends on the year
 // only through `roadKey(edge, year)`, so an era change rebuilds just the edges whose key changed.
-import { createBuilder, addStrip, compose } from './meshes.js';
+import { createBuilder, addStrip, compose, layerRanks } from './meshes.js';
 import { CHUNK_SIZE } from '../../config.js';
 import { edgeClass, edgeOpen, edgeWidth, ROAD_CLASS, LANE_WIDTH } from '../../world/roadgraph.js';
 import { layoutJunction, junctionSignature, trimFor, edgeSpline } from '../../world/junction-layout.js';
@@ -16,8 +16,14 @@ import { BRIDGE, addDeck, addTunnel, deckRuns, tunnelRuns } from './structure-me
 const hex = h => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
 const dim = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
 
-/** Heights above the graded surface for each layer, metres. */
-export const LAYER = { kerb: 0.04, surface: 0.06, reservation: 0.08, marking: 0.1, junction: 0.07, pavement: 0.14 };
+/**
+ * Heights above the graded surface for each layer, metres: distinct, 2 cm apart, so no two stacked layers share a height.
+ * Each also draws as its own layer (`LAYER_ORDER`, bottom first, numbered from 1), which the renderer gives a polygon offset
+ * of its own: a height step alone is smaller than the depth buffer's resolution at range.
+ */
+export const LAYER = { kerb: 0.04, surface: 0.06, junction: 0.08, reservation: 0.1, marking: 0.12, pavement: 0.14 };
+export const LAYER_ORDER = Object.keys(LAYER).sort((a, c) => LAYER[a] - LAYER[c]);
+LAYER_ORDER.forEach((k, i) => layerRanks.set(LAYER[k], i + 1));
 /** Sample spacing along an edge, metres. */
 export const STEP = 4;
 
@@ -337,6 +343,8 @@ function addBand(b, verts, mouth, o0, o1, colour, bias, minLen = 1e-4, blocked =
         return { x: verts[i].x + nx * o * k, y: verts[i].y + ny * o * k, z: verts[i].z + bias };
     };
     const v = pt => b.vertex(pt.x, pt.y, pt.z, 0, 0, 1, colour[0], colour[1], colour[2]);
+    const layer0 = b.layer;
+    b.layer = layerRanks.get(bias) ?? layer0;
     for (let i = 0; i < n; i++) {
         if (mouth[i] || seg[i].len < minLen) continue;
         const j = (i + 1) % n;
@@ -347,6 +355,7 @@ function addBand(b, verts, mouth, o0, o1, colour, bias, minLen = 1e-4, blocked =
         b.tri(a0, a1, c0);
         b.tri(a1, c1, c0);
     }
+    b.layer = layer0;
 }
 
 /**
@@ -372,10 +381,12 @@ export function buildNodeMesh(world, node, year, { wet = false, detail = true, i
     const verts = outline.map(p => ({ x: p.x, y: p.y, z: zAt(p.x, p.y) }));
     const n = verts.length;
     // the surface: a fan from the node over the boundary (star-shaped about it), at the carriageway height
-    const v = (x, y, z, c) => b.vertex(x, y, z + LAYER.surface, 0, 0, 1, c[0], c[1], c[2]);
+    const v = (x, y, z, c) => b.vertex(x, y, z + LAYER.junction, 0, 0, 1, c[0], c[1], c[2]);
+    b.layer = layerRanks.get(LAYER.junction);
     const c0 = v(node.x, node.y, node.z, surface);
     const idx = verts.map(p => v(p.x, p.y, p.z, surface));
     for (let i = 0; i < n; i++) b.tri(c0, idx[i], idx[(i + 1) % n]);
+    b.layer = 0;
     const mouth = verts.map((p, i) => isMouth(lay, p, verts[(i + 1) % n]));
     // kerb, then pavement (town streets) or verge beside it, as the edge strips have
     const blocked = (x, y) => onOtherRoad(graph, year, x, y);
@@ -387,7 +398,7 @@ export function buildNodeMesh(world, node, year, { wet = false, detail = true, i
         addBand(b, verts, mouth, 0.8, town ? 2.0 : 2.2, town ? col.pavement : col.verge, town ? LAYER.pavement : LAYER.kerb, 2.5, blocked);
     }
     const grey = hex('#8d8b84'), greyTop = hex('#9a9890');
-    const zc = node.z + LAYER.surface;
+    const zc = node.z + LAYER.junction;
     for (const isl of lay.islands) {
         const cx = isl.poly.reduce((s, p) => s + p.x, 0) / isl.poly.length, cy = isl.poly.reduce((s, p) => s + p.y, 0) / isl.poly.length;
         if (isl.kind === 'island') {

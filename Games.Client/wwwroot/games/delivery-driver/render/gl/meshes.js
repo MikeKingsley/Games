@@ -14,6 +14,12 @@
 
 const POOL_MAX = 6;
 const pool = [];
+/**
+ * Draw layers: a builder's `layer` (0 = the default group) is stored per triangle, and `finish()` sorts the triangles by it
+ * into `mesh.groups` ([{ layer, start, count }], index ranges) so the renderer can give each layer its own polygon offset.
+ * `layerRanks` maps a strip's height bias to its layer number (road-mesh registers its LAYER table here).
+ */
+export const layerRanks = new Map();
 /** Total scratch sets ever allocated (for tests: it stays small however many builders are made). */
 export const poolStats = { allocated: 0, free: () => pool.length };
 
@@ -21,7 +27,7 @@ function acquire() {
     const s = pool.pop();
     if (s) return s;
     poolStats.allocated++;
-    return { pos: new Float32Array(3 * 2048), nor: new Float32Array(3 * 2048), col: new Float32Array(3 * 2048), idx: new Uint32Array(3 * 4096) };
+    return { pos: new Float32Array(3 * 2048), nor: new Float32Array(3 * 2048), col: new Float32Array(3 * 2048), idx: new Uint32Array(3 * 4096), lay: new Uint8Array(4096) };
 }
 
 const grown = (a, n) => { const out = new a.constructor(Math.max(n, a.length * 2)); out.set(a); return out; };
@@ -35,6 +41,8 @@ export function createBuilder() {
     const b = {
         get vertexCount() { return nv; },
         get triangleCount() { return ni / 3; },
+        /** The draw layer new triangles belong to (see `layerRanks`). */
+        layer: 0,
         /** Add a vertex, returns its index. */
         vertex(x, y, z, nx, ny, nz, r, g, bl) {
             needV(1);
@@ -46,6 +54,8 @@ export function createBuilder() {
         },
         tri(a, c, d) {
             needI(3);
+            if (ni / 3 >= s.lay.length) s.lay = grown(s.lay, ni / 3 + 1);
+            s.lay[ni / 3] = b.layer;
             const { pos, nor, idx } = s;
             const ax = pos[a * 3], ay = pos[a * 3 + 1], az = pos[a * 3 + 2];
             const e1x = pos[c * 3] - ax, e1y = pos[c * 3 + 1] - ay, e1z = pos[c * 3 + 2] - az;
@@ -63,6 +73,8 @@ export function createBuilder() {
             needV(n); needI(mesh.indices.length);
             s.pos.set(mesh.positions, nv * 3); s.nor.set(mesh.normals, nv * 3); s.col.set(mesh.colors, nv * 3);
             for (let i = 0; i < mesh.indices.length; i++) s.idx[ni + i] = mesh.indices[i] + nv;
+            if (s.lay.length < (ni + mesh.indices.length) / 3) s.lay = grown(s.lay, (ni + mesh.indices.length) / 3);
+            s.lay.fill(b.layer, ni / 3, (ni + mesh.indices.length) / 3);
             nv += n; ni += mesh.indices.length;
         },
         finish() {
@@ -71,6 +83,19 @@ export function createBuilder() {
                 positions: s.pos.slice(0, nv * 3), normals: s.nor.slice(0, nv * 3), colors: s.col.slice(0, nv * 3),
                 indices: s.idx.slice(0, ni),
             };
+            const nt = ni / 3, lay = s.lay;
+            let layered = false;
+            for (let t = 0; t < nt; t++) if (lay[t]) { layered = true; break; }
+            if (layered) {
+                const counts = new Map();
+                for (let t = 0; t < nt; t++) counts.set(lay[t], (counts.get(lay[t]) ?? 0) + 1);
+                const order = [...counts.keys()].sort((a, c) => a - c), at = new Map(), groups = [];
+                let start = 0;
+                for (const l of order) { at.set(l, start); groups.push({ layer: l, start, count: counts.get(l) * 3 }); start += counts.get(l) * 3; }
+                const sorted = new Uint32Array(ni);
+                for (let t = 0; t < nt; t++) { const o = at.get(lay[t]); sorted.set(s.idx.subarray(t * 3, t * 3 + 3), o); at.set(lay[t], o + 3); }
+                out.indices = sorted; out.groups = groups;
+            }
             if (pool.length < POOL_MAX) pool.push(s);
             s = null;
             return out;
@@ -286,6 +311,8 @@ export function extrudeStrip(points, width, heightProfile = 0, color = [0.3, 0.3
 export function addStrip(b, points, width, heightProfile = 0, color = [0.3, 0.3, 0.3], { bias = 0 } = {}) {
     const n = points.length;
     const first = b.vertexCount;
+    const layer0 = b.layer;
+    if (bias && layerRanks.has(bias)) b.layer = layerRanks.get(bias);
     const zAt = (i) => {
         if (typeof heightProfile === 'function') return heightProfile(i, points[i].x, points[i].y);
         if (Array.isArray(heightProfile) || ArrayBuffer.isView(heightProfile)) return heightProfile[i];
@@ -319,6 +346,7 @@ export function addStrip(b, points, width, heightProfile = 0, color = [0.3, 0.3,
         b.tri(a, a + 1, a + 2);
         b.tri(a + 1, a + 3, a + 2);
     }
+    b.layer = layer0;
     return cum[n - 1] || 0;
 }
 
