@@ -88,9 +88,10 @@ export function createLens(cx, cy, rIn, rT, q = 0.55) {
 /**
  * The projection of a region seed JSON ({origin, towns}). Returns
  * project(lat, lon), unproject(x, y), fromReal(x, y) (real-metre frame -> world), toReal(x, y), the lenses, and
- * `localScale(x, y)`: world metres per real metre at a world point (approximate, for tolerances).
+ * `localScale(x, y)`: world metres per real metre at a world point (approximate, for tolerances). `scale` overrides
+ * WORLD_SCALE (the plan 0009 measurement bakes at 1/4 and 1/5 without touching config.js).
  */
-export function createProjection(json, { lens = true } = {}) {
+export function createProjection(json, { lens = true, scale = WORLD_SCALE } = {}) {
     const origin = json.origin;
     const lenses = [];
     const tmp = { x: 0, y: 0 };
@@ -103,16 +104,16 @@ export function createProjection(json, { lens = true } = {}) {
         const towns = json.towns.map((t, i) => ({ t, i })).sort((p, q) => (SIZE_ORDER[p.t.size] ?? 4) - (SIZE_ORDER[q.t.size] ?? 4) || p.i - q.i);
         for (const { t } of towns) {
             const r = latLonToReal(t.lat, t.lon, origin);
-            const c = applyLenses(r.x * WORLD_SCALE, r.y * WORLD_SCALE);
-            const rIn = footprintM(t) * WORLD_SCALE, rT = TOWN_RADIUS[t.size] ?? 100;
+            const c = applyLenses(r.x * scale, r.y * scale);
+            const rIn = footprintM(t) * scale, rT = TOWN_RADIUS[t.size] ?? 100;
             if (rT > rIn * 1.05) lenses.push(Object.assign(createLens(c.x, c.y, rIn, rT), { town: t.id }));
         }
     }
-    const fromReal = (x, y) => applyLenses(x * WORLD_SCALE, y * WORLD_SCALE);
+    const fromReal = (x, y) => applyLenses(x * scale, y * scale);
     const toReal = (x, y) => {
         tmp.x = x; tmp.y = y;
         for (let i = lenses.length - 1; i >= 0; i--) lenses[i].inverse(tmp.x, tmp.y, tmp);
-        return { x: tmp.x / WORLD_SCALE, y: tmp.y / WORLD_SCALE };
+        return { x: tmp.x / scale, y: tmp.y / scale };
     };
     const project = (lat, lon) => { const r = latLonToReal(lat, lon, origin); return fromReal(r.x, r.y); };
     const unproject = (x, y) => { const r = toReal(x, y); return realToLatLon(r.x, r.y, origin); };
@@ -121,5 +122,5 @@ export function createProjection(json, { lens = true } = {}) {
         const p = fromReal(r.x + 1, r.y), q = fromReal(r.x - 1, r.y);
         return Math.hypot(p.x - q.x, p.y - q.y) / 2;
     };
-    return { origin, lens, lenses, project, unproject, fromReal, toReal, localScale, worldScale: WORLD_SCALE };
+    return { origin, lens, lenses, project, unproject, fromReal, toReal, localScale, worldScale: scale };
 }

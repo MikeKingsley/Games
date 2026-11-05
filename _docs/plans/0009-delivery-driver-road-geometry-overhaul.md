@@ -114,20 +114,81 @@ For the next agent: the working tree is clean apart from this plan file. Baked d
 - `npm test`: 339 pass, 0 fail (expected 339 pass)
 
 ## Phase 2: Measure at 1:4 and add overlap validator
-Status: Not started
+Status: Complete
 Model: sonnet
 Effort: medium
 
-- [ ] Add a one-off script `scripts/bake-roads/measure-scale.mjs` that re-bakes into a scratch folder (not the committed baked folder) with `lens: false` at scales 1/4, 1/5 and 1/13, and prints per scale: node/edge counts, vertex count, edges shorter than 6 m, junction pairs closer than 25 m, share of town street length within 11 m of another road at the same level without a shared node, and gzip size; also count tunnels and bridge spans per level and the number of roundabouts by real radius band
-- [ ] Extend `scripts/validate-roads.mjs` with hard check `overlap-same-layer` (two edges at the same level whose carriageway-plus-pavement strips overlap, apart from within `junctionRadius` of a shared node), soft check `junction-cluster` (junction footprints that overlap) and hard check `bridge-clearance` (a higher level passing over a lower surface with less than 5.5 m clearance, once Phase 7 provides deck heights; until then report only), plus `roundabout-arm-gap` (an arm whose end does not reach the roundabout ring), each with unit tests on small fixture graphs in `tests/js/delivery-driver.roads-validator.test.mjs`
-- [ ] Run the new checks on the current 1:13 world (before numbers) and on the 1:4 scratch bake; record both tables in the Phase Summary and state plainly whether 1:4 is viable (rule in Assumptions)
+- ✅ Add a one-off script `scripts/bake-roads/measure-scale.mjs` that re-bakes into a scratch folder (not the committed baked folder) with `lens: false` at scales 1/4, 1/5 and 1/13, and prints per scale: node/edge counts, vertex count, edges shorter than 6 m, junction pairs closer than 25 m, share of town street length within 11 m of another road at the same level without a shared node, and gzip size; also count tunnels and bridge spans per level and the number of roundabouts by real radius band
+  - Note: to parameterise without touching `WORLD_SCALE`, `createProjection(json, {lens, scale})` gained a `scale` option (default `WORLD_SCALE`), `bake()` gained `scale` and `tolScale` options (multiplier on the world-metre clean-up tolerances so they stay the same in real metres; default 1 = unchanged output, verified byte-identical `main.json`/`town-exeter.json`/`manifest.json`), and `bake.mjs` main()'s file writing was extracted into an exported `writeBaked(res, seed, outDir, history)`. The script writes to `.cache/measure-scale/<name>/` (gitignored). Extra rows: today's 1:13 + lens, and 1:4 with raw (unscaled) tolerances. `--validate` (added with item 2) also runs the validator on each scratch bake. It also prints a simulated greedy generalisation (drop lowest-ranked mostly-overlapping street edges while connectivity survives) because the real generalisation pass only arrives in Phase 4; the viability rule is applied to its residual. Takes about 1 minute.
+- ✅ Extend `scripts/validate-roads.mjs` with hard check `overlap-same-layer` (two edges at the same level whose carriageway-plus-pavement strips overlap, apart from within `junctionRadius` of a shared node), soft check `junction-cluster` (junction footprints that overlap) and hard check `bridge-clearance` (a higher level passing over a lower surface with less than 5.5 m clearance, once Phase 7 provides deck heights; until then report only), plus `roundabout-arm-gap` (an arm whose end does not reach the roundabout ring), each with unit tests on small fixture graphs in `tests/js/delivery-driver.roads-validator.test.mjs`
+  - Notes: all four run inside `validateGraph` (new option `hardClearance`, CLI `--hard-clearance`; `bridge-clearance` is soft/report-only until Phase 7 flips the default). Strip half width = carriageway/2 + 2.0 m pavement. Levels come from `levelAt(edge, along)`: baked `spans` (type or a future `level`, 6 m margin like the crossing check), else `edge.level`, else whole-edge `bridge`/`tunnel` flags. The shared-node exemption is the larger of `junctionRadius` and the angle-dependent strip overlap reach `(he+hf)/(2 sin(theta/2))` (capped 60 m), so acute bends/junctions that the Phase 8 layout will trim are not flagged. `bridge-clearance` only measures crossings where both edges have `z` (the full game world after `gradeRoads`, not `--baked`); it does not yet consider bridges over terrain or water (needs Phase 7). `roundabout-arm-gap` uses the mesh's fixed ring (`ROUNDABOUT.island + 2*halfwidth`) unless a node has `ringOuter`; Phase 8 should feed the layout's outer radius. `loadBakedWorld` now reads `manifest.projection.worldScale`. 6 new fixture tests (11 pass in the file).
+- ✅ Run the new checks on the current 1:13 world (before numbers) and on the 1:4 scratch bake; record both tables in the Phase Summary and state plainly whether 1:4 is viable (rule in Assumptions)
+  - Notes: before = the committed 1:13 + lens baked world (validator on `--baked`, year 2024); after = scratch bakes at 1:5 and 1:4 with no lens. Both tables are in the Phase Summary, plus the full-game-world `bridge-clearance` baseline.
 
 ### Verification Plan
 - `node scripts/bake-roads/measure-scale.mjs` prints the comparison table and exits 0
 - `node scripts/validate-roads.mjs --area exeter --strict` runs with the new checks and the fixture tests pass in `npm test`
 
 ### Phase Summary
-_(write when phase completes)_
+Done (2026-11-05).
+
+**Verdict: 1:4 is viable.** After a simulated generalisation (drop the lowest-ranked, mostly-overlapping town street edges while the graph stays connected) only **2.9%** of town street length still lies within 11 m of another same-level road it does not share a node with, well under the 10% stop threshold. Without generalisation 16.3% overlaps, and the simulated pass drops 19.2% of town street length (37.5 km of 195 km), so the Phase 4 pass will thin dense town grids by roughly a fifth. Treat that as the expected cost, not a surprise. 1:5 would also pass (4.2% residual, 32.8% dropped); the scale stays 1:4 as the user decided.
+
+What was done:
+- `scripts/bake-roads/measure-scale.mjs` (new, one-off, about 1 minute): bakes the cached OSM into scratch folders `.cache/measure-scale/<name>/` (gitignored; the committed baked folder is never written) at 1:13 + lens (today), 1:13, 1:5, 1:4 (lens off, clean-up tolerances scaled to stay the same in real metres) and 1:4 with raw tolerances, and prints the comparison. `--validate` also runs the new validator checks on each scratch bake; `--only 1:4,1:5` limits the rows.
+- To parameterise without touching `WORLD_SCALE` (config.js is unchanged): `createProjection(json, {lens, scale})` has a new `scale` option (default `WORLD_SCALE`); `bake()` has new `scale` and `tolScale` options (default output byte-identical: `main.json`, `town-exeter.json` and `manifest.json` compared equal); `bake.mjs` main()'s file writing is now the exported `writeBaked(res, seed, outDir, history)`; `loadBakedWorld` in `validate-roads.mjs` reads `manifest.projection.worldScale`.
+- `scripts/validate-roads.mjs` gained `overlap-same-layer` (hard), `junction-cluster` (soft), `roundabout-arm-gap` (hard) and `bridge-clearance` (soft until `--hard-clearance`; Phase 7 should make it hard by default and also use deck heights over terrain/water), exported `levelAt`, `PAVEMENT` (2.0 m), `CLEARANCE` (5.5), `SLAB` (0.6). `validateGraph` returns extra counts (`overlapPairs`, `junctionClusters`, `roundabouts`, `gradeSeparatedCrossings`, `clearanceMeasured`). 5 new fixture tests (`tests/js/delivery-driver.roads-validator.test.mjs`, 11 tests in the file).
+
+Measurement table (real run; "1:13+lens" is today's game; km are world km; town streets = class street inside a town, open in 2024; the cache holds streets only inside each town's current footprint):
+
+| metric | 1:13+lens (today) | 1:13 no lens | 1:5 | 1:4 | 1:4 raw tol |
+|---|---|---|---|---|---|
+| nodes | 31,944 | 27,960 | 29,885 | 30,091 | 38,008 |
+| edges | 41,030 | 36,201 | 38,944 | 39,272 | 48,608 |
+| vertices | 115,894 | 103,760 | 109,287 | 109,981 | 175,168 |
+| edges < 6 m | 3,077 | 3,592 | 44 | 26 | 2,844 |
+| junction pairs < 25 m | 22,913 | 26,116 | 7,304 | 4,913 | 19,001 |
+| road gzip, MiB (no elevation) | 0.77 | 0.69 | 0.87 | 0.92 | 1.20 |
+| town street km | 183.4 | 52.1 | 154.6 | 195.1 | 213.7 |
+| town street overlap share (<11 m) | 53.7% | 94.7% | 30.7% | 16.3% | 44.3% |
+| all-road overlap share | 16.3% | 13.4% | 3.4% | 2.2% | 5.1% |
+| street km dropped by simulated generalisation | 40.1% | 62.0% | 32.8% | 19.2% | 34.9% |
+| residual street overlap after it (of original km) | 12.9% | 28.4% | 4.2% | **2.9%** | 10.7% |
+| roundabout rings / minis | 534 / 251 | 533 / 245 | 535 / 247 | 535 / 247 | 538 / 269 |
+| rings by real radius <8 / 8-12 / 12-20 / 20-35 / 35+ m | 48/179/193/82/32 | same | same | same | same |
+| rings under 12 m world outer radius at that scale | 534 | 533 | 521 | 515 | 518 |
+| bridge spans L1 (n; km) | 3,705; 7.7 | 3,702; 6.8 | 3,747; 17.8 | 3,760; 22.4 | 3,781; 22.5 |
+| bridge spans L2 (n; km) | 5; 0.1 | 5; 0.1 | 5; 0.3 | 5; 0.4 | 5; 0.4 (and 2 at L3) |
+| tunnel spans L-1 (n; km) | 88; 0.4 | 79; 0.3 | 82; 0.8 | 85; 1.1 | 88; 1.1 |
+| era connectivity problems | 0 | 0 | 0 | 0 | 0 |
+
+Reading it: with the lens removed at 1:13 nearly every town street overlaps (94.7%), which is why the lens existed. At 1:4 only 16.3% does, junction pairs closer than 25 m fall from 22.9k to 4.9k, and edges under 6 m almost vanish (the scaled tolerances do this; with raw tolerances 2,844 remain). Levels: bridges are OSM `layer` 1 (a handful at 2), tunnels all -1; only about 85 tunnel spans (1.1 world km) and about 3.8k bridge spans, many tiny. Roundabouts: about 535 rings plus about 247 mini-roundabouts; real radii are mostly 8-20 m, so at 1:4 every ring's scaled radius (real x 0.25, 2-9 m) is smaller than a life-size ring (island 4 + ring 8 = 12 m): roundabout size must come from the class clamps in Phase 8 (`RI_MIN`/`RI_MAX`), not from the scaled OSM radius; `node.ringRadius` (real metres, set by `collapseRoundabouts` before projection) is only a hint.
+
+Validator results (year 2024, `--baked --area all`, issue counts; `crossing-no-node` is 0 everywhere except 1 in the raw-tolerance row):
+
+| check | 1:13+lens (before) | 1:5 | 1:4 (after) |
+|---|---|---|---|
+| overlap-same-layer (hard) | 37,808 pairs (~767 km of road involved) | 9,996 | 5,297 (~289 km) |
+| junction-cluster (soft) | 6,701 | 1,221 | 489 |
+| roundabout-arm-gap (hard) | 732 (403 rings) | 390 | 307 (427 rings) |
+| sharp-angle / no-priority / odd-degree / short-edge / road-in-water (existing checks) | 1,592 / 11,400 / 27 / 65 / 106 | 1,724 / 9,464 / 102 / 10 / 85 | 1,812 / 9,517 / 114 / 7 / 86 |
+
+So the strict validator is expected to fail until Phase 4: even at 1:4 there are 5,297 overlapping pairs (street+street 2,105, A+A 852, A+lane 661, A+street 466, A+B 465, about 54% involve a town edge) and 307 roundabout arms shorter than the ring. Phase 4 generalisation, junction consolidation and roundabout arm handling must bring these to 0. They are stricter than the 11 m measure (they include A-road slip/link pairs and anything within carriageway plus pavement, and the shared-node exemption only covers directly shared nodes). `bridge-clearance` was measured on the full game world at today's 1:13 (`validate-roads.mjs --area all`): all **342 of 342** grade-separated crossings have under 5.5 m clearance (min -6.4 m, median -0.6 m, max 4.7 m), confirming decks are not raised over the road below. This is the Phase 7 baseline.
+
+Key decisions:
+- `tolScale = 13 / denominator` for the clean-up tolerances (`contractShort`/`mergeDegree2` 3.5 m, simplify 1.5/4 m, `trimOvershoots`, `repairCrossings`), i.e. Phase 3's "same fidelity in real terms". Snap and spur-prune are already in real metres. Footprints are unchanged (the cache only has today's `footprintM`: city 1210, town 910, small 730, village 505 real metres); Phase 3's larger footprints need a new OSM fetch (`fetch-osm.mjs` reads `townBoxes`), which this phase did not do.
+- The real generalisation pass does not exist yet, so the viability rule is judged on a simulation (greedy drop of lowest-ranked, at least 30% overlapping, non-ref, non-bridge street edges when connectivity survives; spurs always droppable). Phase 4's real pass may merge instead of drop and so keep more streets.
+- Overlap uses a flat 11 m in the script (two 7 m streets plus 2 m pavements each side) and carriageway/2 + 2.0 m per road in the validator (2.0 m = outer edge of the mesh pavement strip).
+- `--strict` now exits 1 on the current world (new hard checks fail: the Exeter area has 6,018 hard failures, mostly overlaps), whereas before this phase it was 0. That is intended; Phase 4 targets 0. Nothing in `npm test` runs `--strict`.
+
+Files: added `scripts/bake-roads/measure-scale.mjs`; changed `scripts/bake-roads/bake.mjs`, `Games.Client/wwwroot/games/delivery-driver/world/projection.js`, `scripts/validate-roads.mjs`, `tests/js/delivery-driver.roads-validator.test.mjs`, this plan. App runtime behaviour is unchanged (the projection default scale is still `WORLD_SCALE`), so no dev-server restart was needed.
+
+For the next agent: the scratch bakes live in `.cache/measure-scale/` (gitignored, safe to delete, rebuilt in about a minute). Phase 3 still has to change `WORLD_SCALE`, delete the lens and re-bake into the committed folder. `bake.mjs` main() also bakes elevation via `WORLD_SCALE`, so `--scale` is not exposed on the CLI (measure-scale.mjs calls `bake()` directly and skips elevation).
+
+### Verification Results
+- `node scripts/bake-roads/measure-scale.mjs` prints the comparison table and exits 0
+- `node scripts/validate-roads.mjs --area exeter --strict` runs with the new checks (it now exits 1 by design: 6,018 hard failures on the current world, to be fixed from Phase 4); the new fixture tests pass in `npm test`
+- `npm test`: 344 tests, 344 pass, 0 fail (339 baseline + 5 new)
 
 ## Phase 3: Rescale projection, bake and elevation
 Status: Not started

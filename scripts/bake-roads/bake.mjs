@@ -1289,8 +1289,10 @@ const ringArea = pts => { let a = 0; for (let i = 0, j = pts.length - 2; i < pts
  * Runs every stage on raw elements. `seed` = {origin, bounds, towns}; `lens` toggles the town lenses.
  * Returns {graph (world metres), coast, rivers, tidal, stats}.
  */
-export function bake(elements, seed, { lens = true, log = () => {}, probe = null, history = null } = {}) {
-    const proj = createProjection(seed, { lens });
+export function bake(elements, seed, { lens = true, scale, tolScale = 1, log = () => {}, probe = null, history = null } = {}) {
+    // `scale` (default WORLD_SCALE) and `tolScale` (multiplier on the world-metre clean-up tolerances below; the
+    // plan 0009 measurement passes scale * 13 so they stay the same in real metres) exist for scripts/bake-roads/measure-scale.mjs
+    const proj = createProjection(seed, scale ? { lens, scale } : { lens });
     const ctx = { origin: seed.origin };
     const stats = {};
     const parsed = parseOsm(elements, ctx);
@@ -1322,9 +1324,9 @@ export function bake(elements, seed, { lens = true, log = () => {}, probe = null
     stats.merge1 = mergeDegree2(g);
     probe?.('merge1', g);
     projectGraph(g, proj);
-    stats.merge1b = mergeDegree2(g, { shortLen: 3.5 });
+    stats.merge1b = mergeDegree2(g, { shortLen: 3.5 * tolScale });
     probe?.('merge1b', g);
-    stats.contract = contractShort(g, 3.5);
+    stats.contract = contractShort(g, 3.5 * tolScale);
     probe?.('contract', g);
     stats.prune2 = pruneSpurs(g, { serviceSpur: 0 });
     probe?.('prune2', g);
@@ -1335,12 +1337,12 @@ export function bake(elements, seed, { lens = true, log = () => {}, probe = null
     stats.merge2 = mergeDegree2(g);
     probe?.('merge2', g);
     log('merge', stats.merge1, 'contract', stats.contract, 'overlaps', stats.overlaps, stats.components2, 'merge', stats.merge2);
-    stats.simplify = simplifyGuarded(g, e => (e.town ? 1.5 : 4));
+    stats.simplify = simplifyGuarded(g, e => (e.town ? 1.5 : 4) * tolScale);
     probe?.('simplify', g);
-    stats.trim = trimOvershoots(g);
+    stats.trim = trimOvershoots(g, { reach: 8 * tolScale, gap: 1 * tolScale });
     probe?.('trim', g);
     quantiseGraph(g);
-    stats.crossings = repairCrossings(g);
+    stats.crossings = repairCrossings(g, { straightenBelow: 40 * tolScale });
     stats.stubs = pruneArtificialEnds(g);
     quantiseGraph(g);
     stats.crossings.final = findCrossings(g).length;
@@ -1429,25 +1431,12 @@ function loadElements() {
     return { elements, files: files.length };
 }
 
-async function main() {
-    const args = process.argv.slice(2);
-    const opt = (n, d) => (args.includes(n) ? args[args.indexOf(n) + 1] : d);
-    const quiet = args.includes('--quiet');
-    const outDir = resolve(opt('--out', OUT_DIR));
-    const seed = loadSeed();
-    const t0 = Date.now();
-    const { elements, files } = loadElements();
-    console.log(`read ${files} cached tiles, ${elements.length} elements`);
-    const history = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'history.json'), 'utf8'));
-    const res = bake(elements, seed, { lens: !args.includes('--no-lens'), history, log: quiet ? () => {} : (...a) => console.log(' ', ...a.map(x => (typeof x === 'string' ? x : JSON.stringify(x)))) });
+/**
+ * Writes manifest, road tiles, coast and rivers of a bake result into `outDir` (not elevation). Returns
+ * {tiles, files_ ({name, bytes, gzip}), perClass}. Used by main() and by scripts/bake-roads/measure-scale.mjs.
+ */
+export function writeBaked(res, seed, outDir, history) {
     const { graph: g } = res;
-    if (res.eraCheck.problems.length) {
-        console.error('FAIL: era connectivity check');
-        for (const p of res.eraCheck.problems) console.error(`  ${p.year} ${p.town}: ${p.reason}`);
-        process.exitCode = 1;
-        return;
-    }
-
     mkdirSync(outDir, { recursive: true });
     const tiles = toTiles(g, seed);
     const files_ = [];
@@ -1477,6 +1466,29 @@ async function main() {
         stats: { nodes: g.nodes.size, edges: g.edges.size, perClass, junctions: res.stats.junctions },
     };
     write('manifest.json', manifest);
+    return { tiles, files_, perClass };
+}
+
+async function main() {
+    const args = process.argv.slice(2);
+    const opt = (n, d) => (args.includes(n) ? args[args.indexOf(n) + 1] : d);
+    const quiet = args.includes('--quiet');
+    const outDir = resolve(opt('--out', OUT_DIR));
+    const seed = loadSeed();
+    const t0 = Date.now();
+    const { elements, files } = loadElements();
+    console.log(`read ${files} cached tiles, ${elements.length} elements`);
+    const history = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'history.json'), 'utf8'));
+    const res = bake(elements, seed, { lens: !args.includes('--no-lens'), history, log: quiet ? () => {} : (...a) => console.log(' ', ...a.map(x => (typeof x === 'string' ? x : JSON.stringify(x)))) });
+    const { graph: g } = res;
+    if (res.eraCheck.problems.length) {
+        console.error('FAIL: era connectivity check');
+        for (const p of res.eraCheck.problems) console.error(`  ${p.year} ${p.town}: ${p.reason}`);
+        process.exitCode = 1;
+        return;
+    }
+
+    const { tiles, files_, perClass } = writeBaked(res, seed, outDir, history);
     // real elevation (needs the cached grid from fetch-elevation.mjs; patches manifest.json with an `elevation` entry)
     if (existsSync(resolve(CACHE, 'elevation', 'grid.f32'))) {
         const { bakeElevation } = await import('./bake-elevation.mjs');

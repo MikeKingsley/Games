@@ -2,12 +2,16 @@
 // and street furniture (lamps, signs) that sits on the carriageway or inside buildings.
 //
 //   node scripts/validate-roads.mjs [--area exeter|plymouth|truro|penzance|all|<town id>[,...]] [--year 2024]
-//        [--radius 1500] [--furniture] [--strict] [--json] [--baked]
+//        [--radius 1500] [--furniture] [--strict] [--json] [--baked] [--hard-clearance]
 //
 // --baked validates the baked OSM graph (world/seed/baked/, see scripts/bake-roads/bake.mjs) instead of the seeded
 // world, with the baked coast for water, and adds the trunk chain check (M5, A30 and A38 form one network).
 // // --check-yards (full game world only) checks every depot, garage, industry site and farm: connected to the main
 // road network in each sample year, its yard clear of roads and of other yards.
+// Layer checks (plan 0009): overlap-same-layer (hard: carriageway-plus-pavement strips of two roads at the same level
+// overlap, apart from near a shared node), junction-cluster (soft: junction footprints overlap), roundabout-arm-gap
+// (hard: an arm that does not reach the ring or ends inside it) and bridge-clearance (a higher level crossing a lower
+// road with less than 5.5 m under the deck; report-only until --hard-clearance, which phase 7 makes the default).
 // Exit code is 0 unless --strict is given and a hard check fails.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -21,7 +25,9 @@ const { ROAD_CLASS, edgeOpen, edgeWidth, edgeClass } = await game('world/roadgra
 const { closestOnPoly, pointAt } = await game('world/geom.js');
 const { waterAt } = await game('world/region.js');
 const { obb, sat } = await game('sim/collision.js');
-const { gradeLimit } = await game('world/terrain.js');
+const { gradeLimit, roadHeightAt } = await game('world/terrain.js');
+const { junctionRadius, ROUNDABOUT } = await game('render/gl/road-mesh.js');
+const { junctionType } = await game('world/roadgraph.js');
 const { isLive } = await game('world/furniture.js');
 
 const SAMPLE_YEARS = [1919, 1930, 1950, 1970, 1990, 2024];
@@ -64,7 +70,7 @@ function segCross(ax, ay, bx, by, cx, cy, dx, dy) {
  * Structural checks on a road graph. `world` needs `graph` (with `index`); `region` is optional (water and grade
  * checks are skipped without it). Returns {counts, issues}: each issue is {check, hard, edge?, node?, x, y, detail}.
  */
-export function validateGraph(world, { year = 2024, box = null } = {}) {
+export function validateGraph(world, { year = 2024, box = null, hardClearance = false } = {}) {
     const { graph, region } = world;
     const issues = [];
     const add = (check, hard, x, y, detail, extra = {}) => issues.push({ check, hard, x, y, detail, ...extra });
@@ -166,8 +172,190 @@ export function validateGraph(world, { year = 2024, box = null } = {}) {
         }
     }
 
-    const counts = { nodes: graph.nodes.length, edges: graph.edges.length, openEdges: open.length, components: compSizes.length, largestComponents: compSizes.slice(0, 5) };
+    const layer = checkLayers(graph, open, openIds, year, box, add, hardClearance);
+    const counts = { nodes: graph.nodes.length, edges: graph.edges.length, openEdges: open.length, components: compSizes.length, largestComponents: compSizes.slice(0, 5), ...layer };
     return { counts, issues };
+}
+
+// ---- layer checks ------------------------------------------------------------------------------------------------
+
+/** Outer edge of the pavement beyond the carriageway edge (render/gl/road-mesh.js pavement strip). */
+export const PAVEMENT = 2.0;
+/** Clear height required under a deck, and the slab thickness taken off the deck height. */
+export const CLEARANCE = 5.5, SLAB = 0.6;
+const OVERLAP_TOLERANCE = 0.25;
+
+/**
+ * Level of an edge at distance `along`: 0 on the ground, bridge >= 1, tunnel <= -1. Baked edges carry spans (a margin
+ * around them counts as on the structure, like the crossing check); graph fixtures flag the whole edge.
+ */
+export function levelAt(e, along, margin = 6) {
+    if (e.cls === 'ferry') return 0;
+    if (Array.isArray(e.spans)) {
+        for (const s of e.spans) if (along >= s.from - margin && along <= s.to + margin) return s.level ?? (s.type === 'tunnel' ? -1 : 1);
+        return 0;
+    }
+    return e.level ?? (e.bridge ? 1 : e.tunnel ? -1 : 0);
+}
+
+/** Closest approach of segments a-b and c-d (not crossing): {d, x, y} with (x, y) midway between the closest pair. */
+function segSegClosest(a, b, c, d) {
+    let best = { d: Infinity, x: 0, y: 0 };
+    const consider = (p, s, t) => {
+        const ex = t[0] - s[0], ey = t[1] - s[1], l2 = ex * ex + ey * ey;
+        const u = l2 ? Math.max(0, Math.min(1, ((p[0] - s[0]) * ex + (p[1] - s[1]) * ey) / l2)) : 0;
+        const qx = s[0] + ex * u, qy = s[1] + ey * u, dist = Math.hypot(p[0] - qx, p[1] - qy);
+        if (dist < best.d) best = { d: dist, x: (p[0] + qx) / 2, y: (p[1] + qy) / 2 };
+    };
+    consider(a, c, d); consider(b, c, d); consider(c, a, b); consider(d, a, b);
+    return best;
+}
+
+/** Along-distance of each vertex of an edge's polyline (cached on the edge). */
+function vertexAlong(e) {
+    if (e._along) return e._along;
+    const a = [0];
+    for (let i = 2; i < e.pts.length; i += 2) a.push(a[a.length - 1] + Math.hypot(e.pts[i] - e.pts[i - 2], e.pts[i + 1] - e.pts[i - 1]));
+    Object.defineProperty(e, '_along', { value: a, enumerable: false });
+    return a;
+}
+const midAlong = (e, s) => { const a = vertexAlong(e); return (a[s] + a[s + 1]) / 2; };
+const segOf = (e, s) => [[e.pts[2 * s], e.pts[2 * s + 1]], [e.pts[2 * s + 2], e.pts[2 * s + 3]]];
+
+/** Clearance of the upper road over the lower one at a crossing point; records it in `clearance`, reports a short one. */
+function checkClearance(up, low, hit, clearance, add, hard) {
+    clearance.crossings++;
+    if (!(up.z && low.z && up.zStep > 0 && low.zStep > 0)) return;
+    clearance.measured++;
+    const zu = roadHeightAt(up, closestOnPoly(up.pts, hit.x, hit.y).along), zl = roadHeightAt(low, closestOnPoly(low.pts, hit.x, hit.y).along);
+    const gap = zu - SLAB - zl;
+    if (gap < CLEARANCE - 0.01) {
+        clearance.short++;
+        add('bridge-clearance', hard, hit.x, hit.y, `edge ${up.id} (${up.cls}) passes over ${low.id} (${low.cls}) with ${gap.toFixed(1)} m clearance (need ${CLEARANCE} m)`, { edge: up.id, other: low.id });
+    }
+}
+
+/** Strip overlaps at one level and grade-separated crossings. Returns the overlapping pairs (Map) and clearance counts. */
+function scanSegments(graph, open, openIds, year, box, add, hardClearance) {
+    const half = e => edgeWidth(e, year) / 2 + PAVEMENT;
+    const maxHalf = ROAD_CLASS.M.width / 2 + PAVEMENT;
+    const pairs = new Map();
+    const clearance = { crossings: 0, measured: 0, short: 0 };
+    const seenCross = new Set();
+    for (const e of open) {
+        if (e.cls === 'ferry' || !edgeInBox(box, e)) continue;
+        const he = half(e);
+        for (let s = 0; s < e.pts.length / 2 - 1; s++) {
+            const [a, b] = segOf(e, s);
+            const sl = Math.hypot(b[0] - a[0], b[1] - a[1]);
+            for (const o of graph.index.near((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, sl / 2 + he + maxHalf)) {
+                if (o.edge <= e.id || !openIds.has(o.edge)) continue;
+                const f = graph.edges[o.edge];
+                if (f.cls === 'ferry') continue;
+                const [c, d] = segOf(f, o.seg);
+                const le = levelAt(e, midAlong(e, s)), lf = levelAt(f, midAlong(f, o.seg));
+                const hit = segCross(a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1]);
+                if (hit) {
+                    if (le === lf) continue; // a same-level crossing is crossing-no-node's
+                    const key = `${e.id}:${f.id}:${Math.round(hit.x)}:${Math.round(hit.y)}`;
+                    if (seenCross.has(key)) continue;
+                    seenCross.add(key);
+                    const [up, low] = le > lf ? [e, f] : [f, e];
+                    checkClearance(up, low, hit, clearance, add, hardClearance);
+                    continue;
+                }
+                if (le !== lf) continue;
+                const hf = half(f);
+                const near = segSegClosest(a, b, c, d);
+                const depth = he + hf - near.d;
+                if (depth <= OVERLAP_TOLERANCE || nearSharedNode(graph, e, f, near, he, hf, year)) continue;
+                const k = e.id * 100003 + f.id;
+                const p = pairs.get(k) ?? pairs.set(k, { e, f, len: 0, segs: new Set(), depth: 0, x: near.x, y: near.y }).get(k);
+                if (!p.segs.has(s)) { p.segs.add(s); p.len += sl; } // each segment of e once, however many of f's it meets
+                if (depth > p.depth) { p.depth = depth; p.x = near.x; p.y = near.y; }
+            }
+        }
+    }
+    return { pairs, clearance };
+}
+
+/** Pairs of junction footprints (circles of junctionRadius) that overlap, in a box. */
+function junctionClusters(graph, year, box) {
+    const js = [];
+    for (const n of graph.nodes) {
+        if (!inBox(box, n.x, n.y)) continue;
+        const r = junctionRadius(graph, n, year);
+        if (r > 0) js.push({ n, r });
+    }
+    const cell = 48, cells = new Map();
+    const ck = (i, j) => i * 100003 + j;
+    for (const j of js) { const k = ck(Math.floor(j.n.x / cell), Math.floor(j.n.y / cell)); (cells.get(k) ?? cells.set(k, []).get(k)).push(j); }
+    const out = [];
+    for (const a of js) {
+        const ci = Math.floor(a.n.x / cell), cj = Math.floor(a.n.y / cell);
+        for (let i = ci - 1; i <= ci + 1; i++) {
+            for (let j = cj - 1; j <= cj + 1; j++) {
+                for (const b of cells.get(ck(i, j)) ?? []) {
+                    const d = Math.hypot(a.n.x - b.n.x, a.n.y - b.n.y);
+                    if (b.n.id > a.n.id && d < a.r + b.r) out.push({ a, b, d });
+                }
+            }
+        }
+    }
+    return out;
+}
+
+/** Roundabout arms that do not reach the ring: the end vertex is off the centre, or the arm is shorter than the ring. */
+function roundaboutArmGaps(graph, openIds, year, box, add) {
+    let rings = 0;
+    for (const n of graph.nodes) {
+        if (!inBox(box, n.x, n.y) || junctionType(n, year) !== 'roundabout' || n.mini) continue;
+        const arms = n.edges.map(id => graph.edges[id]).filter(e => openIds.has(e.id));
+        if (arms.length < 3) continue;
+        rings++;
+        const hw = Math.max(...arms.map(e => edgeWidth(e, year))) / 2;
+        // phase 8 replaces this with the junction layout's outer radius; until then the mesh's fixed ring
+        const outer = n.ringOuter ?? ROUNDABOUT.island + 2 * hw;
+        for (const e of arms) {
+            const atA = e.a === n.id;
+            if (levelAt(e, atA ? 0 : e.len, 0) !== 0) continue; // passes over or under the ring: not an arm
+            const gap = atA ? Math.hypot(e.pts[0] - n.x, e.pts[1] - n.y) : Math.hypot(e.pts[e.pts.length - 2] - n.x, e.pts[e.pts.length - 1] - n.y);
+            if (gap > 1) add('roundabout-arm-gap', true, n.x, n.y, `edge ${e.id} (${e.cls}) ends ${gap.toFixed(1)} m from the roundabout centre, short of its ${outer.toFixed(1)} m ring`, { node: n.id, edge: e.id });
+            else if (e.len < outer - 0.5) add('roundabout-arm-gap', true, n.x, n.y, `edge ${e.id} (${e.cls}) is ${e.len.toFixed(1)} m long, shorter than the roundabout's ${outer.toFixed(1)} m ring: its far end is inside the ring`, { node: n.id, edge: e.id });
+        }
+    }
+    return rings;
+}
+
+function checkLayers(graph, open, openIds, year, box, add, hardClearance) {
+    const { pairs, clearance } = scanSegments(graph, open, openIds, year, box, add, hardClearance);
+    for (const p of pairs.values()) {
+        add('overlap-same-layer', true, p.x, p.y, `edges ${p.e.id} (${p.e.cls}) and ${p.f.id} (${p.f.cls}) overlap by up to ${p.depth.toFixed(1)} m over ~${p.len.toFixed(0)} m at the same level`, { edge: p.e.id, other: p.f.id });
+    }
+    const clusters = junctionClusters(graph, year, box);
+    for (const { a, b, d } of clusters) {
+        add('junction-cluster', false, (a.n.x + b.n.x) / 2, (a.n.y + b.n.y) / 2, `junctions at nodes ${a.n.id} and ${b.n.id} are ${d.toFixed(0)} m apart; their footprints (${a.r.toFixed(0)} + ${b.r.toFixed(0)} m) overlap`, { node: a.n.id, other: b.n.id });
+    }
+    const rings = roundaboutArmGaps(graph, openIds, year, box, add);
+    return { overlapPairs: pairs.size, junctionClusters: clusters.length, roundabouts: rings, gradeSeparatedCrossings: clearance.crossings, clearanceMeasured: clearance.measured };
+}
+
+/** True if `near` (the closest approach of edges e and f) lies within the junction/bend allowance of a node they share. */
+function nearSharedNode(graph, e, f, near, he, hf, year) {
+    for (const id of [e.a, e.b]) {
+        if (id !== f.a && id !== f.b) continue;
+        const n = graph.nodes[id];
+        const bearing = g => {
+            const p = pointAt(g.pts, g.a === id ? Math.min(8, g.len / 2) : Math.max(g.len - 8, g.len / 2));
+            return Math.atan2(p.y - n.y, p.x - n.x);
+        };
+        let th = Math.abs(bearing(e) - bearing(f)) % (2 * Math.PI);
+        if (th > Math.PI) th = 2 * Math.PI - th;
+        // strips of two roads leaving a node at angle th overlap out to (he + hf) / (2 sin(th / 2)) from it
+        const reach = Math.min(60, (he + hf) / (2 * Math.sin(Math.max(th, 0.14) / 2)));
+        if (Math.hypot(near.x - n.x, near.y - n.y) <= Math.max(reach, junctionRadius(graph, n, year)) + 0.5) return true;
+    }
+    return false;
 }
 
 /**
@@ -262,7 +450,7 @@ export async function loadBakedWorld(dir = `${GAME}/world/seed/baked`) {
     }
     graph.index = createSegmentIndex(graph);
     const json = JSON.parse(readFileSync(`${GAME}/world/seed/sw-england.json`, 'utf8'));
-    const proj = createProjection(json, { lens: manifest.projection.lens });
+    const proj = createProjection(json, { lens: manifest.projection.lens, scale: manifest.projection.worldScale });
     const rings = decodeLines(JSON.parse(readFileSync(`${dir}/${manifest.coast}`, 'utf8')).rings);
     // one flat even-odd polygon: every ring is entered from and left back to a shared anchor point, so the
     // connecting segments are each traversed twice and cancel out
@@ -355,6 +543,7 @@ function parseArgs(argv) {
         else if (a === '--json') o.json = true;
         else if (a === '--baked') o.baked = true;
         else if (a === '--check-yards') o.yards = true;
+        else if (a === '--hard-clearance') o.hardClearance = true;
         else throw new Error(`unknown argument ${a}`);
     }
     return o;
@@ -389,7 +578,7 @@ async function main() {
     let hard = 0;
     for (const area of areas) {
         const box = area?.box ?? null;
-        const g = validateGraph(world, { year: opts.year, box });
+        const g = validateGraph(world, { year: opts.year, box, hardClearance: !!opts.hardClearance });
         let issues = g.issues;
         let furnitureCounts = null;
         if (opts.furniture) {
