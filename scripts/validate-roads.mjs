@@ -22,6 +22,9 @@
 // junction-overlap (hard: two junction surfaces at the same level overlap; nodes under 6 m apart are the soft junction-merged).
 // Overlaps beside a node are exempt out to the junction's layout reach and, for a node that is a roundabout or signal junction
 // in a later year, out to that final form's footprint (the bake generalised the roads against it).
+// --greybox (plan 0010 phase 7) validates the greybox test level (greybox/spec.js) instead of the map: same-layer overlaps,
+// roundabout arms missing the ring and bridges lacking clearance, plus a check that each bridge was actually measured.
+// The pieces are separate on purpose, so disconnected and dead-end are ignored; any other hard failure exits 1 (always strict).
 // Exit code is 0 unless --strict is given and a hard check fails.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -673,6 +676,31 @@ export function collectFurniture(world, box, year = 2024) {
     return { props, buildings: [...buildings.keys()] };
 }
 
+// ---- greybox ------------------------------------------------------------------------------------------------------
+
+/** Checks that do not apply to the greybox: its six pieces are deliberately separate and every road ends in a dead end. */
+const GREYBOX_IGNORED = new Set(['disconnected', 'dead-end']);
+
+/**
+ * Validate the greybox world (greybox/graph.js). The deck runs in `edge.zones` are given to the level logic as bridge spans so
+ * the clearance and layer checks see the overbridge. Returns {counts, issues, expected}; `issues` holds the applicable ones
+ * plus a hard `greybox-expectation` issue for every piece the checks failed to see (a roundabout ring, a measured bridge).
+ */
+export async function validateGreybox({ world = null, year = 2024 } = {}) {
+    const { buildGreyboxWorld } = await game('greybox/graph.js');
+    const w = world ?? buildGreyboxWorld();
+    for (const e of w.graph.edges) if (e.zones?.length) e.spans = e.zones.map(z => ({ from: z.from, to: z.to, level: 1, type: 'bridge' }));
+    const g = validateGraph(w, { year, hardClearance: true });
+    const issues = g.issues.filter(i => !GREYBOX_IGNORED.has(i.check));
+    const expected = {
+        roundabouts: w.spec.junctions.filter(j => j.kind === 'roundabout').length,
+        bridges: w.spec.roads.filter(r => r.deck).length,
+    };
+    if (g.counts.roundabouts !== expected.roundabouts) issues.push({ check: 'greybox-expectation', hard: true, x: 0, y: 0, detail: `${g.counts.roundabouts} roundabout ring(s) checked, spec has ${expected.roundabouts}` });
+    if (g.counts.clearanceMeasured !== expected.bridges) issues.push({ check: 'greybox-expectation', hard: true, x: 0, y: 0, detail: `${g.counts.clearanceMeasured} bridge clearance(s) measured, spec has ${expected.bridges}` });
+    return { counts: g.counts, issues, expected };
+}
+
 // ---- CLI ---------------------------------------------------------------------------------------------------------
 
 const toArrayBuffer = b => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
@@ -688,6 +716,7 @@ function parseArgs(argv) {
         else if (a === '--strict') o.strict = true;
         else if (a === '--json') o.json = true;
         else if (a === '--baked') o.baked = true;
+        else if (a === '--greybox') o.greybox = true;
         else if (a === '--check-yards') o.yards = true;
         else if (a === '--soft-clearance') o.softClearance = true;
         else if (a === '--hard-clearance') o.softClearance = false; // (the default since plan 0009 phase 7)
@@ -698,6 +727,21 @@ function parseArgs(argv) {
 
 async function main() {
     const opts = parseArgs(process.argv.slice(2));
+    if (opts.greybox) {
+        const r = await validateGreybox({ year: opts.year });
+        const hard = r.issues.filter(i => i.hard).length;
+        if (opts.json) console.log(JSON.stringify(r, null, 2));
+        else {
+            console.log(`== greybox (year ${opts.year}) ==`);
+            console.log(`graph: ${r.counts.nodes} nodes, ${r.counts.edges} edges; ${r.counts.roundabouts} roundabout(s), ${r.counts.clearanceMeasured} bridge clearance(s) measured, ${r.counts.overlapPairs} same-layer overlap pair(s)`);
+            if (!r.issues.length) console.log('no issues');
+            for (const i of r.issues) console.log(`  [${i.check}${i.hard ? ' HARD' : ''}] (${i.x.toFixed(0)}, ${i.y.toFixed(0)}) ${i.detail}`);
+            console.log(`
+hard failures: ${hard}`);
+        }
+        process.exitCode = hard ? 1 : 0;
+        return;
+    }
     const { CHUNK_SIZE } = await game('config.js');
     let world;
     if (opts.baked) {
