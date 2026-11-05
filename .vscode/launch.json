@@ -12,7 +12,7 @@
                 "--no-build",
                 "--project", "${workspaceFolder}/Games.Client/Games.Client.csproj",
                 "--no-launch-profile",
-                "--urls", "http://localhost:5210"
+                "--urls", "http://0.0.0.0:5210"
             ],
             "cwd": "${workspaceFolder}/Games.Client",
             "stopAtEntry": false,

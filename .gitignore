@@ -13,3 +13,7 @@ Games-site.zip
 
 # Road bake raw downloads
 .cache/
+
+# Dev server logs
+server.log
+server.err
