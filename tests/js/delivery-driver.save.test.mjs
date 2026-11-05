@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
@@ -10,8 +11,7 @@ import { buyTrailer } from '../../Games.Client/wwwroot/games/delivery-driver/gam
 import { hirePool, hireDriver, assignVehicle } from '../../Games.Client/wwwroot/games/delivery-driver/game/fleet.js';
 import { finishStop } from '../../Games.Client/wwwroot/games/delivery-driver/game/contracts.js';
 
-const SEED = new URL('../../Games.Client/wwwroot/games/delivery-driver/world/seed/sw-england.json', import.meta.url);
-const world = createWorld(JSON.parse(fs.readFileSync(SEED, 'utf8')));
+const world = createWorld(seedWithBaked());
 const stubInput = () => ({ update: () => ({ throttle: 0, brake: 0, steer: 0 }), setOverride() {}, onAction() {} });
 
 function memoryStorage() {
@@ -47,15 +47,15 @@ test('a save loads back to the same state', () => {
     assert.ok(Math.abs(t.player.x - (depot.x + 40)) < 1e-9);
 });
 
-test('saves are version 3 and older saves are dropped: no save, with a notice, until overwritten', () => {
-    assert.equal(SAVE_VERSION, 3);
+test('saves are version 4 and older saves are dropped: no save, with a notice, until overwritten', () => {
+    assert.equal(SAVE_VERSION, 4);
     const s = session();
     const current = makeSave(s);
-    assert.equal(current.version, 3);
+    assert.equal(current.version, 4);
     assert.equal(migrate(current).career.company, 'Tamar Valley Haulage');
     const storage = memoryStorage();
     const store = createSaveStore(storage);
-    for (const version of [1, 2]) {
+    for (const version of [1, 2, 3]) {
         const old = { ...structuredClone(current), version };
         assert.throws(() => migrate(old), /earlier version/);
         storage.setItem('games.dd.slot1', JSON.stringify(old));
@@ -63,7 +63,7 @@ test('saves are version 3 and older saves are dropped: no save, with a notice, u
         assert.deepEqual(store.list()[0], { slot: 1, empty: true, outdated: true });
         assert.throws(() => store.importJson(2, JSON.stringify(old)), /earlier version/);
     }
-    assert.throws(() => migrate({ version: 4, career: {} }), /Not a Delivery Driver save/);
+    assert.throws(() => migrate({ version: 5, career: {} }), /Not a Delivery Driver save/);
     assert.deepEqual(store.list()[1], { slot: 2, empty: true }, 'a plain empty slot has no notice');
     store.write(1, current); // a new game in the slot replaces the old save
     assert.equal(store.list()[0].company, 'Tamar Valley Haulage');

@@ -1,6 +1,7 @@
 // Era rules (scripts/bake-roads/era.mjs) on the baked road data: M5 and Tamar Bridge dates, dualling upgrades,
 // town growth, per-year connectivity, curated history events and the tile format round trip.
 import { test } from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';

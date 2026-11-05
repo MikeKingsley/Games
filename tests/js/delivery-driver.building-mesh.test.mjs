@@ -1,4 +1,6 @@
+import { signalPolesOf } from '../../Games.Client/wwwroot/games/delivery-driver/world/furniture.js';
 import test from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
@@ -9,8 +11,7 @@ import * as I from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/i
 import * as M from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/meshes.js';
 import { interleave } from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/gpu-mesh.js';
 
-const SEED = new URL('../../Games.Client/wwwroot/games/delivery-driver/world/seed/sw-england.json', import.meta.url);
-const world = createWorld(JSON.parse(fs.readFileSync(SEED, 'utf8')));
+const world = createWorld(seedWithBaked());
 const exeter = world.region.project(50.7236, -3.5275);
 
 /** All the chunks within `r` metres of Exeter's centre. */
@@ -136,8 +137,9 @@ test('harbour walls rise out of the water and boats float', () => {
     assert.ok(min[2] < 0 && max[2] > 1.5);
 });
 
-test('signals show green on the corners whose axis has the phase', () => {
-    const node = world.graph.nodes.find(n => n.junction === 'signals');
+test('signals show green on the poles whose signal group has the phase', () => {
+    const node = world.graph.nodes.find(n => n.junction === 'signals' && signalPolesOf(world, n).some(p => p.group === 0) && signalPolesOf(world, n).some(p => p.group === 1));
+    const poles = signalPolesOf(world, node);
     assert.ok(node, 'a signalled junction');
     const green = [0.235, 1, 0.416], red = [1, 0.231, 0.184];
     const count = (mesh, rgb) => {
@@ -147,8 +149,9 @@ test('signals show green on the corners whose axis has the phase', () => {
     };
     for (const phase of [0, 1]) {
         const m = P.buildDynamicProps(world, { signalNodes: [node], phaseOf: () => phase });
-        assert.equal(count(m, green), 8); // two green lamps of four vertices
-        assert.equal(count(m, red), 8);
+        const greens = poles.filter(p => p.group === phase).length;
+        assert.equal(count(m, green), 4 * greens); // a green lamp is four vertices
+        assert.equal(count(m, red), 4 * (poles.length - greens));
     }
     const a = P.buildDynamicProps(world, { signalNodes: [node], phaseOf: () => 0 }), c = P.buildDynamicProps(world, { signalNodes: [node], phaseOf: () => 1 });
     assert.notDeepEqual([...a.positions], [...c.positions]);

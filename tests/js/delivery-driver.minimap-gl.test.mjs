@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
@@ -7,8 +8,7 @@ import {
     mapTransform, hillshade, hypsometric, reliefColour, reliefRaster, visibleRoads, buildMapMesh, buildMapMarkers, SEA,
 } from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/minimap-gl.js';
 
-const SEED = new URL('../../Games.Client/wwwroot/games/delivery-driver/world/seed/sw-england.json', import.meta.url);
-const world = createWorld(JSON.parse(fs.readFileSync(SEED, 'utf8')));
+const world = createWorld(seedWithBaked());
 const { region } = world;
 const exeter = region.townById.get('exeter');
 

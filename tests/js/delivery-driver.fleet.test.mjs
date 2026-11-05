@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
@@ -15,8 +16,7 @@ import { createVehicle } from '../../Games.Client/wwwroot/games/delivery-driver/
 import { vehicleById } from '../../Games.Client/wwwroot/games/delivery-driver/game/catalogue.js';
 import { TIERS } from '../../Games.Client/wwwroot/games/delivery-driver/game/reputation.js';
 
-const SEED = new URL('../../Games.Client/wwwroot/games/delivery-driver/world/seed/sw-england.json', import.meta.url);
-const world = createWorld(JSON.parse(fs.readFileSync(SEED, 'utf8')));
+const world = createWorld(seedWithBaked());
 const home = world.depots.find(d => d.home);
 
 /** A career with a second vehicle at the home depot and a driver assigned to it. */

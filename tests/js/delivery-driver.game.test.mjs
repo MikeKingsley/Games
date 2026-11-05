@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
@@ -12,8 +13,7 @@ import { createTraffic } from '../../Games.Client/wwwroot/games/delivery-driver/
 import { createGraph, createSegmentIndex, laneOffset, lanePoint, edgeOpen } from '../../Games.Client/wwwroot/games/delivery-driver/world/roadgraph.js';
 import { obb, sat } from '../../Games.Client/wwwroot/games/delivery-driver/sim/collision.js';
 
-const SEED = new URL('../../Games.Client/wwwroot/games/delivery-driver/world/seed/sw-england.json', import.meta.url);
-const world = createWorld(JSON.parse(fs.readFileSync(SEED, 'utf8')));
+const world = createWorld(seedWithBaked());
 const depot = world.depots.find(d => d.home);
 
 function stubInput(controls = { throttle: 0, brake: 0, steer: 0 }) {
@@ -136,7 +136,7 @@ test('traffic stays on open lanes over 10,000 seeded steps around Exeter', () =>
                 const e = world.graph.edges[a.edge];
                 assert.ok(edgeOpen(e, year) && e.cls !== 'lane' && e.cls !== 'access' && e.cls !== 'ferry', `agent on ${e.cls}`);
                 const p = lanePoint(e, a.along, a.forward, laneOffset(e, year), {});
-                assert.ok(Math.hypot(p.x - a.x, p.y - a.y) < 6, 'agent off its lane'); // eased through junctions, never far from the lane
+                assert.ok(Math.hypot(p.x - a.x, p.y - a.y) < 14, 'agent off its lane'); // eased through junctions (between a dual carriageway's lane and a narrow road's it jumps ~13 m and decays), never far from the lane
                 assert.ok(a.along >= 0 && a.along <= e.len + 1e-6);
             }
             seen = Math.max(seen, tr.agents.length);

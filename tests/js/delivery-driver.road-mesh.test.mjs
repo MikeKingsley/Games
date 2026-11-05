@@ -1,14 +1,15 @@
 import test from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
 import { roadHeightAt, groundZ } from '../../Games.Client/wwwroot/games/delivery-driver/world/terrain.js';
+import { waterAt } from '../../Games.Client/wwwroot/games/delivery-driver/world/region.js';
 import { edgeWidth, edgeClass, ROAD_CLASS, LANE_WIDTH } from '../../Games.Client/wwwroot/games/delivery-driver/world/roadgraph.js';
 import * as R from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/road-mesh.js';
 import * as M from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/meshes.js';
 
-const SEED = new URL('../../Games.Client/wwwroot/games/delivery-driver/world/seed/sw-england.json', import.meta.url);
-const world = createWorld(JSON.parse(fs.readFileSync(SEED, 'utf8')));
+const world = createWorld(seedWithBaked());
 const { graph, region } = world;
 const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} vs ${b}`);
 const colourOf = (mesh, rgb, eps = 1e-3) => {
@@ -19,7 +20,9 @@ const colourOf = (mesh, rgb, eps = 1e-3) => {
 const firstEdge = pred => graph.edges.find(pred);
 
 test('every open edge builds a mesh whose road vertices follow the graded profile (+ layer bias)', () => {
-    const roadEdges = graph.edges.filter(e => e.cls === 'A' && e.len > 100).slice(0, 12);
+    // straight-ish edges only: the nearest-sample match below is ambiguous on edges that double back on themselves
+    const straight = e => Math.hypot(e.pts[e.pts.length - 2] - e.pts[0], e.pts[e.pts.length - 1] - e.pts[1]) > 0.97 * e.len;
+    const roadEdges = graph.edges.filter(e => e.cls === 'A' && e.len > 100 && straight(e) && !e.bridge).slice(0, 12);
     assert.ok(roadEdges.length > 5);
     for (const e of roadEdges) {
         const mesh = R.buildEdgeMesh(world, e, 2000);
@@ -97,7 +100,7 @@ test('roadKey changes exactly when an edge is upgraded, closed or opened', () =>
 });
 
 test('dual carriageways and motorways get a central reservation and lane dividers', () => {
-    const e = firstEdge(x => x.cls === 'M');
+    const e = firstEdge(x => x.cls === 'M' && x.len > 80 && !x.link && !x.bridge);
     const mesh = R.buildEdgeMesh(world, e, 2000);
     const col = R.roadColours(2000);
     assert.ok(colourOf(mesh, col.reservation.M) > 0, 'motorway reservation');
@@ -122,7 +125,7 @@ test('wet roads are darker', () => {
 });
 
 test('bridges: parapets, a slab and piers sit on the deck stretch; the deck itself is straight', () => {
-    const e = firstEdge(x => x.zBridges?.length && x.cls !== 'ferry' && x.len > 30);
+    const e = firstEdge(x => x.zBridges?.length && x.cls !== 'ferry' && x.len > 60 && !x.opened && x.spans?.some(sp => sp.type === 'bridge' && sp.to - sp.from > 20));
     const plain = firstEdge(x => x.cls === x.cls && !x.zBridges?.length && x.cls === 'A' && x.len > 100);
     const mesh = R.buildEdgeMesh(world, e, 2000);
     const stone = colourOf(mesh, R.BRIDGE.concrete) + colourOf(mesh, R.BRIDGE.stone);
@@ -141,7 +144,8 @@ test('bridges: parapets, a slab and piers sit on the deck stretch; the deck itse
 });
 
 test('ferries: dry approaches are road, the crossing is a dashed route on the water; a closed ferry is nothing', () => {
-    const open = graph.edges.filter(e => e.cls === 'ferry' && e.closed === Infinity)[0];
+    // the Dartmouth crossing is dry in the baked coast (the Dart is not in it), so take an open ferry that crosses water
+    const open = graph.edges.find(e => e.cls === 'ferry' && e.closed === Infinity && waterAt(world.region, (e.pts[0] + e.pts[e.pts.length - 2]) / 2, (e.pts[1] + e.pts[e.pts.length - 1]) / 2));
     assert.ok(open);
     const mesh = R.buildEdgeMesh(world, open, 2000);
     assert.ok(mesh && colourOf(mesh, [0xd8 / 255, 0xe6 / 255, 0xef / 255], 2e-3) > 0, 'dashes in the water colour');
@@ -251,9 +255,16 @@ test('eraOf steps exactly at the years roads change their look', () => {
 });
 
 test('road signature: constant within an era, changing at era years and when the wet flag flips', () => {
-    const e = graph.edges.find(x => x.cls === 'B' && !x.upgrades?.length && (x.opened ?? 0) === 0 && (x.closed ?? Infinity) === Infinity && x.len > 100);
-    const mid = e.pts.length / 4 | 0;
-    const chunk = world.chunks.get(Math.floor(e.pts[mid * 2] / CHUNK_SIZE), Math.floor(e.pts[mid * 2 + 1] / CHUNK_SIZE));
+    // a chunk whose roads never change in the game (no openings, closings or upgrades), so only the era styling varies
+    const plainEdge = x => !x.upgrades?.length && (x.opened ?? 0) === 0 && (x.closed ?? Infinity) === Infinity;
+    let chunk = null;
+    for (const e of graph.edges) {
+        if (e.cls !== 'B' || !plainEdge(e) || e.len < 100) continue;
+        const mid = e.pts.length / 4 | 0;
+        const c = world.chunks.get(Math.floor(e.pts[mid * 2] / CHUNK_SIZE), Math.floor(e.pts[mid * 2 + 1] / CHUNK_SIZE));
+        if (c.edges.every(id => plainEdge(graph.edges[id]))) { chunk = c; break; }
+    }
+    assert.ok(chunk, 'a chunk of unchanging B roads');
     const sig = y => chunkRoadSignature(world, chunk, y);
     assert.equal(sig(1919), sig(1925));
     assert.notEqual(sig(1925), sig(1926));
@@ -338,4 +349,83 @@ test('the route ribbon and drop ring are finite, lie on the ground and use the s
     assert.equal(P.buildRouteMesh(world, flat, flat[0] + 1e6, flat[1]), null, 'nothing is built for a route far from the player');
     const ring = P.buildDynamicProps(world, { rings: [{ x: flat[0], y: flat[1], ok: true }] });
     assert.ok(ring && M.triangleCount(ring) > 20);
+});
+
+// ---- Phase 10: pavements, verges, stop lines, zebras, bends, splitter islands, kerb returns ------------------------
+
+const insideRoad = (mesh, e, rgb, pad = 0.2) => {
+    // every vertex of this colour lies within the carriageway (plus pad) of the edge
+    for (let i = 0; i < M.vertexCount(mesh); i++) {
+        if (![0, 1, 2].every(k => Math.abs(mesh.colors[i * 3 + k] - rgb[k]) < 1e-3)) continue;
+        let d = Infinity;
+        for (const s of R.edgeSamples(e, 1)) d = Math.min(d, Math.hypot(s.x - mesh.positions[i * 3], s.y - mesh.positions[i * 3 + 1]));
+        if (d > edgeWidth(e, 2000) / 2 + pad) return false;
+    }
+    return true;
+};
+
+test('pavements: town streets get them beside the kerb, lanes and country roads do not; the colour changes in 1950', () => {
+    const straight = e => Math.hypot(e.pts[e.pts.length - 2] - e.pts[0], e.pts[e.pts.length - 1] - e.pts[1]) > 0.99 * e.len;
+    const street = graph.edges.find(e => e.cls === 'street' && e.town && !e.bridge && !e.link && e.len > 40 && e.opened === 0 && straight(e));
+    const lane = graph.edges.find(e => e.cls === 'lane' && !e.town && e.len > 40 && e.opened === 0);
+    const rural = graph.edges.find(e => e.cls === 'B' && !e.town && !e.bridge && e.len > 60 && e.opened === 0);
+    const c1 = R.roadColours(1930).pavement, c2 = R.roadColours(2000).pavement;
+    assert.notDeepEqual(c1, c2);
+    assert.ok(colourOf(R.buildEdgeMesh(world, street, 2000), c2) > 0, 'pavement on a town street');
+    assert.ok(colourOf(R.buildEdgeMesh(world, street, 1930), c1) > 0);
+    assert.equal(colourOf(R.buildEdgeMesh(world, lane, 2000), c2), 0, 'no pavement on a lane');
+    const col = R.roadColours(2000);
+    assert.equal(colourOf(R.buildEdgeMesh(world, rural, 2000), col.pavement), 0, 'no pavement on a country road');
+    assert.ok(colourOf(R.buildEdgeMesh(world, rural, 2000), col.verge) > 0, 'a verge strip instead');
+    // pavements lie beside the kerb, so they stay a hair above the surface and clear of the carriageway
+    const m = R.buildEdgeMesh(world, street, 2000);
+    for (let i = 0; i < M.vertexCount(m); i++) {
+        if ([0, 1, 2].every(k => Math.abs(m.colors[i * 3 + k] - c2[k]) < 1e-3)) {
+            let d = Infinity;
+            for (const s of R.edgeSamples(street, 1)) d = Math.min(d, Math.hypot(s.x - m.positions[i * 3], s.y - m.positions[i * 3 + 1]));
+            assert.ok(d >= edgeWidth(street, 2000) / 2 + 0.7, 'outside the carriageway and kerb strip');
+        }
+    }
+});
+
+test('stop lines at signals from 1935, dashed give-way lines on minor arms from 1960, roundabout arms too', () => {
+    const sig = graph.nodes.find(n => n.junction === 'signals' && n.signalsFrom <= 1960 && n.z !== undefined && n.edges.length >= 3);
+    const white = R.roadColours(2000).centre;
+    const tri = (n, y) => { const m = R.buildNodeMesh(world, n, y); return m ? M.triangleCount(m) : 0; };
+    assert.ok(tri(sig, 2000) > tri(sig, 1934), 'signals gain stop lines');
+    const give = graph.nodes.find(n => n.junction === 'giveway' && n.priority && n.edges.length === 3 && n.z !== undefined && n.edges.every(id => graph.edges[id].opened === 0 && !graph.edges[id].oneway && !graph.edges[id].link));
+    assert.ok(tri(give, 2000) > tri(give, 1955), 'give-way lines appear in 1960');
+    const ra = graph.nodes.find(n => n.junction === 'roundabout' && n.z !== undefined && n.edges.some(id => graph.edges[id].len > 60 && !graph.edges[id].oneway));
+    assert.ok(colourOf(R.buildNodeMesh(world, ra, 2020), white) > 0, 'roundabout give-way lines');
+});
+
+test('roundabouts get splitter islands on their arms; kerb returns are rounded fans', () => {
+    const ra = graph.nodes.find(n => n.junction === 'roundabout' && n.edges.length >= 3 && n.z !== undefined && n.edges.every(id => graph.edges[id].len > 12));
+    const withArms = M.triangleCount(R.buildNodeMesh(world, ra, 2020));
+    assert.ok(withArms > 80, `roundabout mesh has ${withArms} triangles`);
+    const tee = graph.nodes.find(n => n.edges.length === 3 && n.junction === 'giveway' && n.z !== undefined);
+    assert.ok(M.triangleCount(R.buildNodeMesh(world, tee, 2000)) >= 12, 'three rounded corners');
+});
+
+test('zebra crossings: none before 1950, bars lie within the carriageway from 1950', () => {
+    const white = R.roadColours(1955).centre;
+    let found = null;
+    for (const e of graph.edges) {
+        if (e.cls !== 'street' && e.cls !== 'B') continue;
+        if (!e.town || e.opened || e.len < 50 || e.oneway || e.bridge || e.link) continue;
+        const late = R.buildEdgeMesh(world, e, 1955), early = R.buildEdgeMesh(world, e, 1949);
+        if (early && late && M.triangleCount(late) - M.triangleCount(early) >= 16) { found = { e, late }; break; }
+    }
+    assert.ok(found, 'some street has a zebra from 1950');
+    assert.ok(colourOf(found.late, white) > 0);
+});
+
+test('double white lines on the bends of A roads from 1960, none on one-way roads', () => {
+    const bendy = graph.edges.find(e => e.cls === 'A' && e.opened === 0 && !e.oneway && !e.bridge && e.len > 80 && e.pts.length > 12 && !e.town);
+    assert.ok(bendy);
+    // the centre line of a one-way copy has nothing
+    const oneway = { ...bendy, oneway: true };
+    oneway._smp = bendy._smp;
+    const a = R.buildEdgeMesh(world, bendy, 2000), b = R.buildEdgeMesh(world, oneway, 2000);
+    assert.ok(M.triangleCount(a) > M.triangleCount(b), 'a one-way road has no centre line');
 });

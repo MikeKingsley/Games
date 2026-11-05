@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
@@ -9,8 +10,7 @@ import {
 import { pointAt } from '../../Games.Client/wwwroot/games/delivery-driver/world/geom.js';
 import { CHUNK_SIZE } from '../../Games.Client/wwwroot/games/delivery-driver/config.js';
 
-const SEED = new URL('../../Games.Client/wwwroot/games/delivery-driver/world/seed/sw-england.json', import.meta.url);
-const json = () => JSON.parse(fs.readFileSync(SEED, 'utf8'));
+const json = () => seedWithBaked();
 const world = createWorld(json());
 const { region, graph } = world;
 const exeter = region.townById.get('exeter');
@@ -44,7 +44,8 @@ const steepness = (x, y, heading, length = 3, width = 3) => {
 };
 
 test('heights are deterministic: repeated calls, a second region instance and a second world agree', () => {
-    const other = buildRegion(json());
+    // (town centres move onto their real centre junction when the road graph is built, so compare two built worlds)
+    const other = createWorld(json()).region;
     for (const p of scatter(3000)) {
         const h = terrainHeight(region, p.x, p.y);
         assert.ok(Number.isFinite(h));
@@ -74,7 +75,7 @@ test('the sea (and the shore strip) is at or below sea level, and deepens offsho
     assert.equal(waterLevel(region, offshore.x, offshore.y), 0);
 });
 
-test('Dartmoor stands well above the Exeter pad, at about the planned heights', () => {
+test('Dartmoor stands well above the Exeter pad, at its real height (621 m / 13)', () => {
     const moor = region.moors.find(m => m.id === 'dartmoor');
     let cx = 0, cy = 0;
     for (let i = 0; i < moor.pts.length; i += 2) { cx += moor.pts[i]; cy += moor.pts[i + 1]; }
@@ -85,7 +86,7 @@ test('Dartmoor stands well above the Exeter pad, at about the planned heights', 
     assert.ok(dartmoor > pad + 15, `Dartmoor ${dartmoor.toFixed(2)} vs Exeter ${pad.toFixed(2)}`);
     let top = -Infinity;
     for (let x = cx - 1500; x <= cx + 1500; x += 25) for (let y = cy - 1500; y <= cy + 1500; y += 25) top = Math.max(top, terrainHeight(region, x, y));
-    assert.ok(top >= 25 && top <= 40.5, `Dartmoor's highest point ${top.toFixed(2)} m (target ~25-40)`);
+    assert.ok(top >= 42 && top <= 48.5, `Dartmoor's highest point ${top.toFixed(2)} m (real: High Willhays 621 m / 13 = 47.8)`);
     // and Exeter's ground is a level pad
     for (let k = 0; k < 16; k++) {
         const a = (k / 16) * Math.PI * 2;
@@ -127,7 +128,13 @@ test('no road is ever steeper than its class allows (and none climbs over 12% fo
 });
 
 test('town streets are level (< 2%)', () => {
-    for (const e of graph.edges.filter(x => x.cls === 'street')) {
+    // (streets inside the town's flat pad; the real streets at the town's edge follow the land up to the class limit)
+    const inPad = e => {
+        const t = region.townById.get(e.town);
+        const m = pointAt(e.pts, e.len / 2);
+        return t && Math.hypot(m.x - t.x, m.y - t.y) < t.radius * 0.6;
+    };
+    for (const e of graph.edges.filter(x => x.cls === 'street' && inPad(x))) {
         for (let i = 1; i < e.z.length; i++) assert.ok(Math.abs(e.z[i] - e.z[i - 1]) / e.zStep < 0.02, `street ${e.id} in ${e.town}`);
     }
 });
@@ -166,7 +173,7 @@ test('bridge decks are straight between their abutments and clear the water', ()
         }
     }
     assert.ok(spans > 50 && wet > 50, `${spans} spans, ${wet} deck samples over water`);
-    const tamar = graph.edges.find(e => e.road === 'a38-tamar-bridge' && e.bridge && e.len > 100);
+    const tamar = graph.edges.find(e => e.road === 'a38-tamar-bridge' && e.bridge && e.len > 25);
     assert.ok(tamar, 'the Tamar Bridge');
     assert.deepEqual(tamar.zBridges, [[0, tamar.z.length - 1]]);
 });

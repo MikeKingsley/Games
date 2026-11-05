@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { VEHICLES, TRAILERS, vehicleById } from '../../Games.Client/wwwroot/games/delivery-driver/game/catalogue.js';
@@ -12,8 +13,7 @@ import { createSession } from '../../Games.Client/wwwroot/games/delivery-driver/
 import { minutesAt } from '../../Games.Client/wwwroot/games/delivery-driver/game/calendar.js';
 import { createVehicle, stepVehicle } from '../../Games.Client/wwwroot/games/delivery-driver/sim/vehicle.js';
 
-const SEED = new URL('../../Games.Client/wwwroot/games/delivery-driver/world/seed/sw-england.json', import.meta.url);
-const world = createWorld(JSON.parse(fs.readFileSync(SEED, 'utf8')));
+const world = createWorld(seedWithBaked());
 
 test('the catalogue has 12-15 vehicles with unique ids, years ascending within each class', () => {
     assert.ok(VEHICLES.length >= 12 && VEHICLES.length <= 15, `${VEHICLES.length}`);

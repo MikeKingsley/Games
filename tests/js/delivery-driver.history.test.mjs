@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
@@ -7,8 +8,7 @@ import { edgeOpen, edgeClass } from '../../Games.Client/wwwroot/games/delivery-d
 import { eventsBetween, ferrySlips, slipNear, roadEvents } from '../../Games.Client/wwwroot/games/delivery-driver/world/history.js';
 import { WORLD_SCALE, TIME_SCALE, MPH } from '../../Games.Client/wwwroot/games/delivery-driver/config.js';
 
-const SEED = new URL('../../Games.Client/wwwroot/games/delivery-driver/world/seed/sw-england.json', import.meta.url);
-const world = createWorld(JSON.parse(fs.readFileSync(SEED, 'utf8')));
+const world = createWorld(seedWithBaked());
 const town = id => world.region.townById.get(id);
 
 test('Plymouth to Saltash takes the Saltash ferry in 1950 and the Tamar Bridge in 1965', () => {

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import assert from 'node:assert/strict';
 import * as M from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/meshes.js';
 import * as m4 from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/mat4.js';
@@ -174,8 +175,7 @@ import { terrainHeight, GRID_N, roadDeckNear } from '../../Games.Client/wwwroot/
 import { buildChunkMesh, buildFarField, coastParts, GROUND } from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/terrain-mesh.js';
 import { CHUNK_SIZE } from '../../Games.Client/wwwroot/games/delivery-driver/config.js';
 
-const SEED = new URL('../../Games.Client/wwwroot/games/delivery-driver/world/seed/sw-england.json', import.meta.url);
-const world = createWorld(JSON.parse(fs.readFileSync(SEED, 'utf8')));
+const world = createWorld(seedWithBaked());
 const region = world.region;
 const chunkAt = (x, y) => world.chunks.get(Math.floor(x / CHUNK_SIZE), Math.floor(y / CHUNK_SIZE));
 const exeter = region.townById.get('exeter');
@@ -248,14 +248,17 @@ test('chunk meshes: the sea has a flat water surface and a bluish floor; the moo
     assert.ok(moor[0] > moor[2], 'moor is warm (red above blue)');
 });
 
-test('rivers: strips are flat at the water level and never below the sea', () => {
-    const river = region.rivers.find(r => r.pts.length > 6);
+// Inland rivers are not in the game (the baked coastline holds the tidal rivers and estuaries), so the water mesh checks
+// run on the sea and estuary water around Plymouth.
+function waterChunksNear(town, r = 2) {
+    const ci = Math.floor(town.x / CHUNK_SIZE), cj = Math.floor(town.y / CHUNK_SIZE), out = [];
+    for (let di = -r; di <= r; di++) for (let dj = -r; dj <= r; dj++) out.push(world.chunks.get(ci + di, cj + dj));
+    return out;
+}
+
+test('water: surfaces are flat at sea level and never below it', () => {
     let vertices = 0;
-    const seen = new Set();
-    for (const p of river.pts) {
-        const chunk = chunkAt(p.x, p.y), key = `${chunk.i},${chunk.j}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
+    for (const chunk of waterChunksNear(region.townById.get('plymouth'))) {
         const { water } = buildChunkMesh(world, chunk);
         if (!water) continue;
         vertices += M.vertexCount(water);
@@ -264,13 +267,11 @@ test('rivers: strips are flat at the water level and never below the sea', () =>
     assert.ok(vertices > 0);
 });
 
-test('rivers: a piece of river is built by exactly one chunk (no doubled translucent water)', () => {
-    const river = region.rivers.find(r => r.pts.length > 6);
-    const chunks = new Map();
-    for (const p of river.pts) { const c = chunkAt(p.x, p.y); chunks.set(`${c.i},${c.j}`, c); }
+test('water: a piece of water is built by exactly one chunk (no doubled translucent water)', () => {
     const owner = new Map();
     let shared = 0, triangles = 0;
-    for (const [key, chunk] of chunks) {
+    for (const chunk of waterChunksNear(region.townById.get('plymouth'))) {
+        const key = `${chunk.i},${chunk.j}`;
         const { water } = buildChunkMesh(world, chunk);
         if (!water) continue;
         for (let t = 0; t < water.indices.length; t += 3) {

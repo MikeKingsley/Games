@@ -1,10 +1,11 @@
 // Save games: three slots in localStorage (games.dd.slot1-3), with a small index of them in the shell's progress
 // store (games.progress.delivery-driver). The world is rebuilt from the region seed, so a save only holds what the
 // player changed: the career (money, calendar, fleet, trailers, drivers, loans, depots, reputation, the job) and
-// where things stand. Versioned: version 3 (terrain, hills and slope physics, plan 0007) dropped older saves with
-// no migration (the game is still in early development); they read as an empty slot with a notice.
+// where things stand. Versioned: version 4 (real OpenStreetMap roads, real elevation, plan 0008) dropped older saves
+// with no migration (the game is still in early development; town, yard and road ids moved); they read as an empty
+// slot with a notice. Version 3 was the terrain and slope physics (plan 0007).
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 export const SLOTS = [1, 2, 3];
 export const MAX_BYTES = 500 * 1024;
 const key = slot => `games.dd.slot${slot}`;
@@ -58,8 +59,8 @@ export function makeSave(session) {
 export const isOutdated = data => !!data && typeof data === 'object' && Number.isFinite(data.version) && data.version >= 1 && data.version < SAVE_VERSION;
 
 /**
- * Checks a save can be loaded and returns a copy. Saves from before version 3 are dropped (the world and its
- * physics changed): they throw, as do newer or foreign files. Future versions migrate from 3 here.
+ * Checks a save can be loaded and returns a copy. Saves from before version 4 are dropped (the roads, terrain and
+ * yard positions changed): they throw, as do newer or foreign files. Future versions migrate from 4 here.
  */
 export function migrate(data) {
     if (isOutdated(data)) throw new Error('That save is from an earlier version of the game and can’t be loaded');

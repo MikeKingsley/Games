@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { G, slopeForce, gradeSin, brakeFade, fadeFactor, FADE_MIN, engineBraking, engineBrakeForce } from '../../Games.Client/wwwroot/games/delivery-driver/sim/slope.js';
@@ -305,8 +306,7 @@ test('sustained full-throttle steep climbs wear the engine; braking wears the br
 
 // ---- in the game: the session on a real steep road ------------------------------------------------------------------
 
-const SEED = new URL('../../Games.Client/wwwroot/games/delivery-driver/world/seed/sw-england.json', import.meta.url);
-const world = createWorld(JSON.parse(fs.readFileSync(SEED, 'utf8')));
+const world = createWorld(seedWithBaked());
 
 function gameOn(controls) {
     const s = createSession({ world });

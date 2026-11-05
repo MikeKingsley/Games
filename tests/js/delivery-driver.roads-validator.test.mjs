@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 
 const game = p => import(pathToFileURL(resolve(`Games.Client/wwwroot/games/delivery-driver/${p}`)).href);
 const { createGraph, createSegmentIndex } = await game('world/roadgraph.js');
-const { validateGraph, validateFurniture } = await import(pathToFileURL(resolve('scripts/validate-roads.mjs')).href);
+const { validateGraph, validateFurniture, validateYards } = await import(pathToFileURL(resolve('scripts/validate-roads.mjs')).href);
 
 /** Builds a graph from [[x1, y1, x2, y2, cls?], ...] straight edges, each with its own end nodes. */
 function fixture(lines) {
@@ -51,4 +51,28 @@ test('validator detects a prop inside a building', () => {
     const box = { x: 0, y: 20, hx: 6, hy: 5, angle: 0 };
     const r = validateFurniture(world, [{ kind: 'sign', x: 1, y: 21 }], { buildings: [{ box }] });
     assert.equal(r.issues.filter(i => i.check === 'furniture-in-building').length, 1);
+});
+
+test('yard check flags a disconnected yard, a yard on a road and two overlapping yards, and accepts a clean one', async () => {
+    const { obb } = await game('sim/collision.js');
+    const g = createGraph();
+    const a = g.addNode(-100, 0), b = g.addNode(100, 0), c = g.addNode(500, 500), d = g.addNode(600, 500);
+    g.addEdge(a, b, [-100, 0, 100, 0], { cls: 'street' });
+    g.addEdge(c, d, [500, 500, 600, 500], { cls: 'street' }); // a separate island
+    const entry = g.addNode(0, 5);
+    g.addEdge(g.nodes[a.id], entry, [-100, 0, 0, 5], { cls: 'access' });
+    g.addEdge(entry, b, [0, 5, 100, 0], { cls: 'access' });
+    g.index = createSegmentIndex(g);
+    const yard = (id, node, x, y) => ({ id, name: id, type: 'depot', node, x, y, yard: { zone: obb(x, y, 28, 34, 0) } });
+    const clean = yard('clean', entry.id, 40, 40);
+    const island = yard('island', c.id, 550, 550);
+    const onRoad = yard('onroad', entry.id, 0, 4); // lies across the street
+    const twin = yard('twin', entry.id, 45, 40);   // overlaps `clean`
+    const res = validateYards({ graph: g, yards: [clean, island, onRoad, twin] }, { years: [2024] });
+    const checks = res.issues.map(i => `${i.check}:${i.detail.split(' ')[0]}`);
+    assert.ok(checks.includes('yard-disconnected:island'), checks.join());
+    assert.ok(checks.includes('yard-on-road:onroad'), checks.join());
+    assert.ok(checks.some(c => c.startsWith('yard-overlap')), checks.join());
+    assert.ok(!res.issues.some(i => i.detail.startsWith('clean (') && i.check !== 'yard-overlap'));
+    assert.equal(validateYards({ graph: g, yards: [clean] }, { years: [2024] }).issues.length, 0);
 });
