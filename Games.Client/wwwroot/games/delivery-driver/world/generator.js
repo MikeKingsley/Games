@@ -4,7 +4,7 @@
 import { seededRng, hashSeed, range, intRange, pick, chance, valueNoise } from '../engine/rng.js';
 import { waterAt, moorAt, nearestTown } from './region.js';
 import { pointAt } from './geom.js';
-import { ROAD_CLASS, clearOfRoads, alwaysOpen } from './roadgraph.js';
+import { ROAD_CLASS, clearOfRoads, alwaysOpen, runsBesideRoad } from './roadgraph.js';
 import { obb, sat, createSpatialHash } from '../sim/collision.js';
 import { torSite } from './terrain.js';
 import { chunkFurniture, maxHalfWidth, mouthRadius } from './furniture.js';
@@ -107,6 +107,7 @@ export function findStreetYardSpot(world, town, rng, placed, depth = 28, width =
         return { e, score: Math.abs(q - 0.45) + rng() * 0.25 };
     }).sort((a, b) => a.score - b.score);
     for (const { e } of scored) {
+        if (runsBesideRoad(graph, e)) continue; // splitting a street that grazes a neighbouring road would leave overlapping strips
         // a few positions along the street, clear of its ends (the junction mouths), on either side
         for (const f of [0.5, 0.3, 0.7, 0.4, 0.6, 0.2, 0.8]) {
             const at = e.len * f;

@@ -297,15 +297,20 @@ Key decisions and what the next agent needs:
 - `npm test`: 360 pass, 0 fail (345 before, 15 new)
 
 ## Phase 5: Runtime rescale (towns, terrain, yards, camera)
-Status: Not started
+Status: Complete
 Model: sonnet
 Effort: medium
 
-- [ ] Fix every constant tuned for 1:13 so the game plays at 1:4: `world/region.js` town radii and bounds, `world/roadgraph.js` town centres/farms/site attachment distances, `world/terrain.js` (town pads, `pinTownNodes`, coast distance lattice, height range up to ~150 m), `world/generator.js` (yard and building placement counts), `world/world.js` (yard rings), ferries (`addFerry`; the Tamar is now ~60 m wide so Dartmouth may still be dry; leave unless trivial), chunk generation budgets
-- [ ] Check `render/gl/camera3d.js`, fog, shadows and sky for distances and a far plane that suit mountains of ~150 m and a 53 x 40 km world (`gl-renderer.js`, `shaders.js`, `terrain-mesh.js` LOD rings); fix pop-in or clipping
-- [ ] Check minimaps (`render/minimap.js`, `render/gl/minimap-gl.js`) and the full-screen map for the new extents: zoom levels, tile caching, road colours; the 2D map must look like today's without the town warping (capture a before/after screenshot at Exeter and Plymouth)
-- [ ] Measure start-up (world build in Node and in the browser), JS heap and world-ready time; the bigger graph must stay within ~2x today's numbers (2.4 s ready, 143 MB); if not, make town street tiles lazy (the loader is tile-based)
-- [ ] Update unit tests that assert 1:13 numbers (positions, distances, heights, counts); run `validate-roads.mjs --area all --check-yards --furniture --strict` and fix hard failures
+- ✅ Fix every constant tuned for 1:13 so the game plays at 1:4: `world/region.js` town radii and bounds, `world/roadgraph.js` town centres/farms/site attachment distances, `world/terrain.js` (town pads, `pinTownNodes`, coast distance lattice, height range up to ~150 m), `world/generator.js` (yard and building placement counts), `world/world.js` (yard rings), ferries (`addFerry`; the Tamar is now ~60 m wide so Dartmouth may still be dry; leave unless trivial), chunk generation budgets
+  - Note: most constants are real-metre sized (roads, yards, farms, buildings) or already derive from `WORLD_SCALE` (moors, relief heights, `TOWN_RADIUS`), so they needed no change. The one real 1:4 problem was the coast distance lattice: `nearestGridSq` in `world/terrain.js` used a 128 m grid with a 4 km cap, so far-inland queries scanned ~4,000 cells each; `GRID` is now 512 and the Node world build fell from 22.7 s to 3.8 s (results identical, the ring search is exact). Yard placement now skips streets that run within 11.5 m of a road they only share a distant node with (`runsBesideRoad` in `roadgraph.js`, used by `findStreetYardSpot` and the edge-of-town site/farm lane search), which removed the last hard `overlap-same-layer` in the game world (a depot split a street beside a junction cluster). Ferries unchanged.
+- ✅ Check `render/gl/camera3d.js`, fog, shadows and sky for distances and a far plane that suit mountains of ~150 m and a 53 x 40 km world (`gl-renderer.js`, `shaders.js`, `terrain-mesh.js` LOD rings); fix pop-in or clipping
+  - Note: nothing here depends on the world extent: draw distance is 400-720 m (`QUALITY.viewDistance`), fog ends just beyond it, the far plane is `radius * 1.6 + 400`, and the 96-cell far field (now ~640 m cells over the 61 km region) is drawn under the chunk meshes without writing depth and is fully fogged, so its coarseness is invisible. Checked in the browser (Princetown on Dartmoor, ground 105 m): no clipping or pop-in; screenshot `test-results/p5-princetown.png`. No code change.
+- ✅ Check minimaps (`render/minimap.js`, `render/gl/minimap-gl.js`) and the full-screen map for the new extents: zoom levels, tile caching, road colours; the 2D map must look like today's without the town warping (capture a before/after screenshot at Exeter and Plymouth)
+  - Note: the small minimap is a local view (110-420 world m by speed) and needed no change. Changed: full-map start range 2200 -> 7000 world m (same ~28 km real span) and max zoom-out 9000 -> 32000 (the region is 51.7 x 38.1 km), the east-of-region land fill in `render/minimap.js` and `render/gl/minimap-gl.js` now spans the region's full height (it was a fixed 30 km), and the relief raster cell is `60 * LEGACY_DISTANCE` (195 m) so it stays about 80k texels instead of ~800k. Before/after at the same real extent (before = commit bcd60fe in a worktree, Canvas map drawn through a harness): `test-results/p5-map-before-exeter.png` / `p5-map-after-exeter.png`, `p5-map-before-plymouth.png` / `p5-map-after-plymouth.png`, whole region `p5-map-after-full.png`. The warped lens disc is gone and roads follow the real geometry. Towns now look small on the map because the baked town street footprints are still the cached 505-1210 real m (see Phase 3).
+- ✅ Measure start-up (world build in Node and in the browser), JS heap and world-ready time; the bigger graph must stay within ~2x today's numbers (2.4 s ready, 143 MB); if not, make town street tiles lazy (the loader is tile-based)
+  - Note: Node `createWorld(seedWithBaked())` 22.7 s (Phase 3 state) -> 3.8 s (1:13 commit bcd60fe: 2.1 s). Browser (Playwright Chromium, same harness, both versions): world-ready 4.6 s now vs 6.7 s for the 1:13 build in the same cold run (the old 2.4 s figure was a warm-cache run; in the real app the `createWorld` call alone takes 3.4 s now, region fetch+decode 0.13 s). JS heap used at ready: 341 MB now vs 111 MB at 1:13, but after a forced GC (CDP `HeapProfiler.collectGarbage`) it is 120 MB vs 89 MB (1.35x), i.e. the rest is uncollected build garbage that V8 frees on demand. Memory fix made here: the road segment index (`createSegmentIndex`) stored millions of `{edge, seg}` objects and per-edge Sets, now packed numbers (`segment * 2^20 + edge`) in right-sized arrays, which cut the retained world heap in Node from 170 MB to 132 MB (the 1:13 world is 117 MB). Town street tiles did not need to be lazy.
+- ✅ Update unit tests that assert 1:13 numbers (positions, distances, heights, counts); run `validate-roads.mjs --area all --check-yards --furniture --strict` and fix hard failures
+  - Note: no existing test asserted 1:13 numbers any more (Phase 3 updated them). Added `tests/js/delivery-driver.segment-index.test.mjs` (packed segment index follows a split; `runsBesideRoad`). `node scripts/validate-roads.mjs --area all --check-yards --furniture --strict` exits 0 (0 hard failures; the one `overlap-same-layer` from a depot split beside a junction cluster is fixed).
 
 ### Verification Plan
 - `npm test` passes
@@ -313,7 +318,33 @@ Effort: medium
 - Playwright load of `/play/delivery-driver` reaches a drivable state with no console errors; recorded start-up time and heap
 
 ### Phase Summary
-_(write when phase completes)_
+Done (2026-11-05). The game runs at 1:4 with sane start-up and a correct 2D map; most 1:13-tuned constants turned out to be real-metre or already derived from `WORLD_SCALE`.
+
+What changed:
+- `world/terrain.js`: `GRID` 128 -> 512. The coast-distance grid (`nearestGridSq`, 4 km cap) scanned ~4,000 cells per far-inland query at 1:4; world build in Node 22.7 s -> 3.8 s, results identical. This was the 1:4 start-up problem Phase 3 flagged.
+- `world/roadgraph.js`: segment index entries are packed numbers (`segment * 2^20 + edge`) in right-sized arrays, with edge-cell keys in plain arrays (was `{edge, seg}` objects and Sets, ~61 MB); `near()` still returns `{edge, seg}` objects so callers are unchanged. New exported `runsBesideRoad(graph, edge)` (an edge within 11.5 m of another road away from any node they share, ignoring the first 18 m around a shared node). Used by `findStreetYardSpot` (generator.js) and the edge-of-town site/farm lane search, which removed the last hard `overlap-same-layer` in the full game world (a depot split a street beside a junction cluster). Yard counts unchanged (24 depots, 23 sites, 110 farms, 39 garages).
+- Map: `ui/menus.js` full-map start range 2200 -> 7000 and max zoom-out 9000 -> 32000 world m; east-of-region land fill in `render/minimap.js` and `render/gl/minimap-gl.js` spans the region's full height; relief raster cell `60 * LEGACY_DISTANCE`. The small minimap (110-420 m) is unchanged.
+- Camera/fog/far plane/far field/chunk budgets: reviewed, extent-independent (draw distance 400-720 m, far plane radius*1.6+400, far field under the chunks and fogged); no change. Town radii, farm spacing, moors and relief heights already read `WORLD_SCALE` or are real metres. Ferries untouched.
+- Test: `tests/js/delivery-driver.segment-index.test.mjs` (2 tests).
+
+Numbers (Playwright Chromium, software GL, one harness for both):
+- Node `createWorld`: 22.7 s (Phase 3 state) -> 3.8 s now (1:13 build: 2.1 s). Live heap after world in Node 132 MB (1:13: 117 MB; was 170 MB before the index fix).
+- Browser: world ready 4.6-5.3 s now (the `createWorld` call 3.4 s, region fetch+decode 0.13 s) vs 6.7 s for the 1:13 build in the same cold run (the plan's 2.4 s was a warm run, so about 1.9x of it). JS heap used at ready 341 MB vs 111 MB, but after forced GC 120 MB vs 89 MB (1.35x); the remainder is uncollected build garbage. Town street tiles were not made lazy.
+- `npm test` takes about 20 s now (was ~190 s) because of the grid fix.
+- Region bounds 51.7 x 38.1 km; Dartmoor ground at Princetown 105 m.
+
+Screenshots (test-results/, gitignored): 2D map before (1:13 + lens, commit bcd60fe via a temporary worktree and harness) and after at the same real extent: `p5-map-before-exeter.png`, `p5-map-after-exeter.png`, `p5-map-before-plymouth.png`, `p5-map-after-plymouth.png`; whole region `p5-map-after-full.png`; 3D `p5-princetown.png`, `p5-drivable.png`.
+
+Things the next agent should know:
+- Towns look small on the 2D map: baked town street footprints are still the cached 505-1210 real m (Phase 3 decision); a fresh Overpass fetch with bigger `townBoxes` (user approval needed) would fill them out.
+- `LEGACY_DISTANCE` is still a stop-gap for offer ranges (Phase 6 replaces it). Pay per mile and fuel are not yet rebalanced.
+- After any JS change the dev server must be rebuilt (`dotnet build Games.Client`) AND restarted: the Blazor static asset manifest holds file integrity hashes, so a running server rejects edited files (symptom: "Failed to find a valid digest in the 'integrity' attribute"). `restart.ps1`-style steps: stop the process on port 5210, `dotnet build`, `dotnet run --no-build --project Games.Client/Games.Client.csproj --no-launch-profile --urls http://0.0.0.0:5210` from the Games.Client directory with `ASPNETCORE_ENVIRONMENT=Development`.
+- Validator: `node scripts/validate-roads.mjs --area all --check-yards --furniture --strict` exit 0; soft counts unchanged (bridge-clearance 267 soft until Phase 7, junction-cluster ~235, etc.).
+
+### Verification Results
+- `npm test`: 362 pass, 0 fail (360 + 2 new)
+- `node scripts/validate-roads.mjs --area all --check-yards --furniture --strict` exits 0 (0 hard failures)
+- Playwright load of `/play/delivery-driver` on the rebuilt dev server: world ready, new game, throttle gave 6.5 m/s, 0 console errors, 0 GL errors; start-up and heap recorded above
 
 ## Phase 6: Economy and timing rebalance
 Status: Not started

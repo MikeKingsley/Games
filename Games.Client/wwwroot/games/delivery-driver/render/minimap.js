@@ -49,7 +49,7 @@ export function drawMap(ctx, session, { w, h, cx, cy, range = RANGE, rot = 0, pl
     }
     ctx.fillStyle = '#5b7a45';
     ctx.fill(world._mapLand);
-    ctx.fillRect(world.region.bounds.maxX - 2, world.region.bounds.minY - 9000, 60000, 30000);
+    ctx.fillRect(world.region.bounds.maxX - 2, world.region.bounds.minY - 9000, 60000, world.region.bounds.maxY - world.region.bounds.minY + 18000);
     ctx.fillStyle = '#7f7a52';
     ctx.fill(world._mapMoor);
     // a hint of relief: the hillshaded raster over the land only

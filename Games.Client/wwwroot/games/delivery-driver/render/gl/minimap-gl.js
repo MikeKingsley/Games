@@ -1,6 +1,7 @@
 // Map rendering for the minimap and the full map. The pure half (view transform, hillshade, relief raster, road
 // selection, map mesh) is testable in Node; the GL half draws it on a private WebGL2 canvas that the 2D map code
 // blits onto the HUD / full-map canvas and decorates with labels and the player arrow.
+import { LEGACY_DISTANCE } from '../../config.js';
 import { terrainHeight } from '../../world/terrain.js';
 import { edgeOpen, edgeClass } from '../../world/roadgraph.js';
 import { createBuilder, addStrip } from './meshes.js';
@@ -84,7 +85,7 @@ export function reliefColour(region, x, y, step = 60) {
 const reliefCache = new WeakMap();
 
 /** The whole region as a coarse RGBA raster (`cell` metres per texel), built once per world. */
-export function reliefRaster(world, cell = 60) {
+export function reliefRaster(world, cell = 60 * LEGACY_DISTANCE) {
     const cached = reliefCache.get(world);
     if (cached && cached.cell === cell) return cached;
     const region = world.region, b = region.bounds;
@@ -157,7 +158,7 @@ export function buildMapMesh(world, year, { cx, cy, range = RANGE, scale }) {
     const region = world.region;
     // the land east of the seed area (the Canvas map fills it the same way)
     const bx = region.bounds.maxX - 2, land = unit(LAND);
-    const y0 = region.bounds.minY - 9000, y1 = y0 + 30000;
+    const y0 = region.bounds.minY - 9000, y1 = region.bounds.maxY + 9000;
     const q = [[bx, y0], [bx + 60000, y0], [bx + 60000, y1], [bx, y1]].map(([x, y]) => b.vertex(x, y, 0, 0, 0, 1, land[0], land[1], land[2]));
     b.tri(q[0], q[1], q[2]); b.tri(q[0], q[2], q[3]);
     const river = unit(RIVER);

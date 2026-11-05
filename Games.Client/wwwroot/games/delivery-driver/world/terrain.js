@@ -87,7 +87,7 @@ function nearestSq(segs, x, y) {
     return best;
 }
 
-const GRID = 128;
+const GRID = 512;
 /**
  * A grid over a segment list (the baked coast has ~20,000 segments): cells hold the segments passing within `reach`
  * of them, so a nearest query only looks in the rings around the point.

@@ -2,7 +2,7 @@
 // of each edge's centreline; lanes are offsets from it. Built once per region from the baked OpenStreetMap network
 // (world/baked-loader.js) plus the farm lanes and site access roads (deterministic from the region seed).
 import { polyLength, pointAt, closestOnPoly, splitPoly, bbox } from './geom.js';
-import { crossesWater, waterAt, moorAt, nearestTown } from './region.js';
+import { crossesWater, waterAt, moorAt, nearestTown, segDistance } from './region.js';
 import { seededRng, hashSeed, range, chance } from '../engine/rng.js';
 import { obb } from '../sim/collision.js';
 import { MPH } from '../config.js';
@@ -132,10 +132,13 @@ function pick(edge) {
     return { cls, name, ref, road, opened, closed, upgrades, ferry, bridge, tunnel, town, oneway, link, lit, dual, maxspeed, tag };
 }
 
+/** Cell entries are packed numbers (segment * PACK + edge id): millions of small objects cost ~60 MB at 1:4. */
+const PACK = 1 << 20;
+
 /** Spatial index of edge segments on a coarse grid, for nearest-road and clearance queries. */
 export function createSegmentIndex(graph, cell = 48) {
     const cells = new Map();
-    const edgeCells = new Map(); // edge id -> the cell keys holding its segments
+    const edgeCells = new Map(); // edge id -> the cell keys holding its segments (a number array)
     const key = (i, j) => i * 100003 + j;
     const index = {
         cell,
@@ -143,9 +146,9 @@ export function createSegmentIndex(graph, cell = 48) {
             // remove stale entries for a split edge, then re-add every segment
             for (const k of edgeCells.get(edge.id) ?? []) {
                 const list = cells.get(k);
-                for (let n = list.length - 1; n >= 0; n--) if (list[n].edge === edge.id) list.splice(n, 1);
+                for (let n = list.length - 1; n >= 0; n--) if (list[n] % PACK === edge.id) list.splice(n, 1);
             }
-            const mine = new Set();
+            const mine = []; // may repeat a key (a bend inside one cell): removal copes
             edgeCells.set(edge.id, mine);
             const pts = edge.pts;
             for (let s = 0; s < pts.length / 2 - 1; s++) {
@@ -156,8 +159,8 @@ export function createSegmentIndex(graph, cell = 48) {
                     const k = key(i, j);
                     let list = cells.get(k);
                     if (!list) cells.set(k, (list = []));
-                    list.push({ edge: edge.id, seg: s });
-                    mine.add(k);
+                    list.push(s * PACK + edge.id);
+                    mine.push(k);
                 }
             }
         },
@@ -168,7 +171,7 @@ export function createSegmentIndex(graph, cell = 48) {
             const j0 = Math.floor((y - r) / cell), j1 = Math.floor((y + r) / cell);
             for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
                 const list = cells.get(key(i, j));
-                if (list) for (const s of list) out.push(s);
+                if (list) for (const v of list) out.push({ edge: v % PACK, seg: Math.floor(v / PACK) });
             }
             return out;
         },
@@ -178,13 +181,16 @@ export function createSegmentIndex(graph, cell = 48) {
             for (let i = Math.floor(minX / cell); i <= Math.floor(maxX / cell); i++) {
                 for (let j = Math.floor(minY / cell); j <= Math.floor(maxY / cell); j++) {
                     const list = cells.get(key(i, j));
-                    if (list) for (const s of list) ids.add(s.edge);
+                    if (list) for (const v of list) ids.add(v % PACK);
                 }
             }
             return ids;
         },
     };
     for (const e of graph.edges) index.add(e);
+    // push() leaves ~17 slots per list; most cells hold one or two segments, so trim them to size
+    for (const [k, list] of cells) cells.set(k, list.slice());
+    for (const [id, keys] of edgeCells) edgeCells.set(id, keys.slice());
     return index;
 }
 
@@ -204,6 +210,24 @@ export function nearestEdge(graph, x, y, maxD = 200, year = 2100, filter = null)
         if (best) return best;
     }
     return best;
+}
+
+/** True if an edge comes within a carriageway-plus-pavement of another road away from any node they share (every 6 m). */
+export function runsBesideRoad(graph, e) {
+    const near = 11.5, n = Math.max(1, Math.ceil(e.len / 6));
+    for (let i = 0; i <= n; i++) {
+        const p = pointAt(e.pts, (e.len * i) / n);
+        for (const seg of graph.index.near(p.x, p.y, near + 8)) {
+            if (seg.edge === e.id) continue;
+            const f = graph.edges[seg.edge];
+            // roads that meet at a node run together near it; farther along they must keep their distance
+            const shared = [e.a, e.b].find(id => id === f.a || id === f.b);
+            if (shared !== undefined && Math.hypot(graph.nodes[shared].x - p.x, graph.nodes[shared].y - p.y) < 18) continue;
+            const ax = f.pts[2 * seg.seg], ay = f.pts[2 * seg.seg + 1], bx = f.pts[2 * seg.seg + 2], by = f.pts[2 * seg.seg + 3];
+            if (segDistance(p.x, p.y, ax, ay, bx, by).d < near) return true;
+        }
+    }
+    return false;
 }
 
 /** True if a box (obb) is clear of every road's carriageway plus a margin (pavement). */
@@ -318,7 +342,7 @@ export function buildRoadGraph(region) {
         let placed = false;
         for (let attempt = 0; attempt < 14 && !placed; attempt++) {
             const near = nearestEdge(g, s.x, s.y, 700, 1919, e => !skip.has(e.id) && (e.cls === 'A' || e.cls === 'B' || e.cls === 'street' || e.cls === 'lane')
-                && !e.oneway && !e.link && !e.dual && alwaysOpen(e) && !e.bridge && !e.tunnel && e.len >= 14);
+                && !e.oneway && !e.link && !e.dual && alwaysOpen(e) && !e.bridge && !e.tunnel && e.len >= 14 && !runsBesideRoad(g, e));
             if (!near) break;
             skip.add(near.edge.id);
             // keep the mouth clear of the junctions at the ends of short edges
