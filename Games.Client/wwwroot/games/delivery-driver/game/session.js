@@ -1,7 +1,7 @@
 // The running game: owns the player vehicle, the world, the clock and the career state, and steps them each tick.
 // DOM-free apart from what it is handed in attach(), so the step logic can be driven from tests.
 import { createVehicle, stepVehicle, vehicleObb, collideVehicle, bodyCentre, wheelbaseCentre, totalMass } from '../sim/vehicle.js';
-import { slopeAt, groundZ, terrainHeight } from '../world/terrain.js';
+import { slopeAt, groundZ, terrainHeight, gradeLimit, roadHeightAt } from '../world/terrain.js';
 import { climbModel } from '../sim/slope.js';
 import { shift } from '../sim/gearbox.js';
 import { vehicleById, trailerById } from './catalogue.js';
@@ -123,19 +123,38 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
 
     const footprint = { x: 0, y: 0 };
     /**
-     * The ground under a vehicle (world/terrain.js slopeAt over its wheelbase and track): {grade, pitch, roll, nx,
-     * ny, nz, z} plus rearZ, the height under the rear axle (the pose point).
+     * Roads are layered (a deck over a road, a tunnel under a hill): a vehicle's own height says which surface it is
+     * on. The height at its footprint's centre from its rear-axle height and pitch, or undefined before it has one.
+     * (One hint for every wheel: carrying it along the pitch fed back on itself where a front wheel met a lower layer.)
      */
-    function groundUnder(v) {
+    function heightHint(z, pitch, length) {
+        return Number.isFinite(z) ? z + (Math.tan(pitch ?? 0) * length) / 2 : undefined;
+    }
+
+    /**
+     * The ground under a vehicle (world/terrain.js slopeAt over its wheelbase and track, on the layer at its own
+     * height, or at `hint` m there): {grade, pitch, roll, nx, ny, nz, z} plus rearZ, the height under the rear axle.
+     */
+    function groundUnder(v, hint = heightHint(v.z, v.pitch, v.spec.wheelbase)) {
         const c = wheelbaseCentre(v, footprint);
-        const s = slopeAt(session.world, c.x, c.y, v.heading, v.spec.wheelbase, Math.max(1, v.spec.width - 0.3));
+        const s = slopeAt(session.world, c.x, c.y, v.heading, v.spec.wheelbase, Math.max(1, v.spec.width - 0.3), hint);
         s.rearZ = s.z - (s.grade * v.spec.wheelbase) / 2;
         return s;
     }
 
+    /**
+     * The surface height to place a vehicle on at (x, y): the carriageway it stands on (the deck, not the road under
+     * it, where it was put on a bridge), or undefined off the roads (then the topmost surface).
+     */
+    function surfaceHint(x, y) {
+        const near = nearestEdge(session.world.graph, x, y, 30, session.year ?? 2100);
+        return near?.edge.z && near.d <= near.edge.zHalf ? roadHeightAt(near.edge, near.along) : undefined;
+    }
+
     /** Puts a vehicle on the ground where it stands (height, pitch and roll at once, no suspension lag). */
     function settle(v) {
-        const s = groundUnder(v);
+        const c = wheelbaseCentre(v, footprint);
+        const s = groundUnder(v, surfaceHint(c.x, c.y));
         v.z = v.prevZ = s.rearZ;
         v.pitch = s.pitch;
         v.roll = s.roll;
@@ -143,9 +162,10 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
     }
 
     /** The ground under a trailer between its axle and kingpin (grade along its heading); rearZ is under the axle. */
-    function trailerGround(t) {
+    function trailerGround(t, hint = heightHint(t.z, t.pitch, t.spec.axle)) {
         const L1 = t.spec.axle;
-        const s = slopeAt(session.world, t.x + (Math.cos(t.heading) * L1) / 2, t.y + (Math.sin(t.heading) * L1) / 2, t.heading, L1, Math.max(1, t.spec.width - 0.3));
+        const cx = t.x + (Math.cos(t.heading) * L1) / 2, cy = t.y + (Math.sin(t.heading) * L1) / 2;
+        const s = slopeAt(session.world, cx, cy, t.heading, L1, Math.max(1, t.spec.width - 0.3), hint);
         s.rearZ = s.z - (s.grade * L1) / 2;
         return s;
     }
@@ -159,8 +179,8 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         return s;
     }
 
-    /** The driven surface as a height function (coupling heights). */
-    const ground = (x, y) => groundZ(session.world, x, y);
+    /** The driven surface as a height function (coupling heights), on the player's layer. */
+    const ground = (x, y) => groundZ(session.world, x, y, session.player?.z);
 
     session.attach = ({ input, camera }) => {
         session.input = input;
@@ -416,7 +436,9 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         t.id = id;
         t.legsDown = true;
         Object.assign(t, extra);
-        settleTrailer(t);
+        // (a fresh trailer has no height yet: it goes on the carriageway it stands on)
+        const L1 = t.spec.axle;
+        settleTrailer(t, trailerGround(t, surfaceHint(t.x + (Math.cos(t.heading) * L1) / 2, t.y + (Math.sin(t.heading) * L1) / 2)));
         t.prevZ = t.z;
         session.trailerObjs.set(id, t);
         return t;
@@ -1000,8 +1022,9 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         setPlayerSpec(id) { const spec = vehicleById(id); if (spec) session.player.spec = spec; return !!spec; },
         /** Terrain (plan 0007): the heightfield, the driven surface (roads, yards) and the slope under a footprint. */
         terrainHeight: (x, y) => terrainHeight(session.world.region, x, y),
-        groundZ: (x, y) => groundZ(session.world, x, y),
-        slopeAt: (x, y, heading, length, width) => slopeAt(session.world, x, y, heading, length, width),
+        /** (layered roads: `hint` is a height on the layer wanted, as world/terrain.js groundZ; omitted, the topmost) */
+        groundZ: (x, y, hint) => groundZ(session.world, x, y, hint),
+        slopeAt: (x, y, heading, length, width, hint, hintGrade) => slopeAt(session.world, x, y, heading, length, width, hint, hintGrade),
         /**
          * A pose in the nearside lane at the foot of the steepest `span`-metre stretch of an open A or B road (at least
          * `minGrade`), facing up it: {x, y, heading, grade, edge}, or null.
@@ -1011,6 +1034,7 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
             let best = null;
             for (const e of session.world.graph.edges) {
                 if (!e.z || e.zBridges?.length || !edgeOpen(e, year) || !['A', 'B'].includes(edgeClass(e, year))) continue;
+                if (e.maxGrade > gradeLimit(session.world.region, e) + 1e-9) continue; // an interchange link relaxed for a bridge's clearance
                 const k = Math.max(1, Math.round(span / e.zStep));
                 for (let i = 0; i + k < e.z.length; i++) {
                     const g = (e.z[i + k] - e.z[i]) / (k * e.zStep);

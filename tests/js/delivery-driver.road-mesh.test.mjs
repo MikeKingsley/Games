@@ -125,7 +125,9 @@ test('wet roads are darker', () => {
 });
 
 test('bridges: parapets, a slab and piers sit on the deck stretch; the deck itself is straight', () => {
-    const e = firstEdge(x => x.zBridges?.length && x.cls !== 'ferry' && x.len > 60 && !x.opened && x.spans?.some(sp => sp.type === 'bridge' && sp.to - sp.from > 20));
+    // (a deck not lifted over another road: those ramp up to their clearance, plan 0009 phase 7)
+    const lifted = new Set(world.layers.raised);
+    const e = firstEdge(x => x.zBridges?.length && x.cls !== 'ferry' && x.len > 60 && !x.opened && !lifted.has(x.id) && x.spans?.some(sp => sp.type === 'bridge' && sp.to - sp.from > 20));
     const plain = firstEdge(x => x.cls === x.cls && !x.zBridges?.length && x.cls === 'A' && x.len > 100);
     const mesh = R.buildEdgeMesh(world, e, 2000);
     const stone = colourOf(mesh, R.BRIDGE.concrete) + colourOf(mesh, R.BRIDGE.stone);

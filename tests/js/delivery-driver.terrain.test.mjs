@@ -109,15 +109,21 @@ test('the Exeter depot yard, its loading bay, the practice yard and every loadin
 });
 
 test('no road is ever steeper than its class allows (and none climbs over 12% for 100 m)', () => {
+    // (plan 0009 phase 7: a few interchange links too short for a life-size clearance at 1:4 are relaxed, smoothly,
+    // to at most twice their class limit; world.layers lists them)
+    const relaxed = new Map(world.layers.relaxed.map(r => [r.edge, r]));
+    assert.ok(relaxed.size <= 80, `${relaxed.size} relaxed edges`);
     const bad = [];
     for (const e of graph.edges) {
-        const limit = region.maxGrade[e.cls];
-        assert.ok(limit > 0 && e.maxGrade <= limit, `edge ${e.id} ${e.cls}`);
+        const cls = region.maxGrade[e.cls], r = relaxed.get(e.id);
+        assert.ok(!r || (r.relaxedTo <= 2 * r.limit + 1e-9 && r.limit <= cls), `edge ${e.id} relaxed within twice its limit`);
+        const limit = r ? r.relaxedTo : cls;
+        assert.ok(limit > 0 && e.maxGrade <= limit + 1e-9, `edge ${e.id} ${e.cls}`);
         const { z, zStep } = e;
         for (let i = 1; i < z.length; i++) if (Math.abs(z[i] - z[i - 1]) / zStep > limit + 1e-4) bad.push(`${e.id}@${i}`);
         // between the samples too (roadHeightAt interpolates)
         for (let t = 0; t + 1 <= e.len; t += 2.3) if (Math.abs(roadHeightAt(e, t + 1) - roadHeightAt(e, t)) > limit + 1e-4) bad.push(`${e.id}@${t}m`);
-        for (let t = 0; t + 100 <= e.len; t += 10) if (Math.abs(roadHeightAt(e, t + 100) - roadHeightAt(e, t)) / 100 > 0.12 + 1e-4) bad.push(`${e.id} sustained@${t}m`);
+        if (!r) for (let t = 0; t + 100 <= e.len; t += 10) if (Math.abs(roadHeightAt(e, t + 100) - roadHeightAt(e, t)) / 100 > 0.12 + 1e-4) bad.push(`${e.id} sustained@${t}m`);
     }
     assert.deepEqual(bad.slice(0, 10), []);
     // the relief makes some real hills: a share of the A-roads climb at 4% or more
@@ -135,7 +141,9 @@ test('town streets are level (< 2%)', () => {
         const m = pointAt(e.pts, e.len / 2);
         return t && Math.hypot(m.x - t.x, m.y - t.y) < t.radius * 0.6;
     };
-    for (const e of graph.edges.filter(x => x.cls === 'street' && inPad(x))) {
+    // (a street ramping up to a bridge over another road leaves the pad: plan 0009 phase 7)
+    const raised = new Set(world.layers.raised);
+    for (const e of graph.edges.filter(x => x.cls === 'street' && inPad(x) && !raised.has(x.id))) {
         for (let i = 1; i < e.z.length; i++) assert.ok(Math.abs(e.z[i] - e.z[i - 1]) / e.zStep < 0.02, `street ${e.id} in ${e.town}`);
     }
 });
@@ -151,15 +159,22 @@ test('every junction is one height: the roads meeting at a node agree within 1 c
 });
 
 test('bridge decks are straight between their abutments and clear the water', () => {
-    let spans = 0, wet = 0;
+    // (plan 0009 phase 7: a baked bridge or tunnel is straight over its span only, the approaches follow the land; a
+    // deck lifted over another road ramps up to its clearance instead, so only decks that were not lifted are straight)
+    const raised = new Set(world.layers.raised);
+    let spans = 0, wet = 0, straight = 0;
     for (const e of graph.edges) {
         const last = e.z.length - 1;
-        if (e.bridge || e.cls === 'ferry') assert.deepEqual(e.zBridges, [[0, last]], `edge ${e.id} is one straight deck`);
+        const whole = e.cls === 'ferry' || (e.bridge && !Array.isArray(e.spans));
+        if (whole) assert.deepEqual(e.zBridges, [[0, last]], `edge ${e.id} is one straight deck`);
         for (const [a, b] of e.zBridges) {
             spans++;
             for (let k = a; k <= b; k++) {
-                const straight = e.z[a] + ((e.z[b] - e.z[a]) * (k - a)) / (b - a);
-                assert.ok(Math.abs(e.z[k] - straight) < 0.01, `edge ${e.id} deck sample ${k}`);
+                if (!raised.has(e.id)) {
+                    const line = e.z[a] + ((e.z[b] - e.z[a]) * (k - a)) / (b - a);
+                    assert.ok(Math.abs(e.z[k] - line) < 0.01, `edge ${e.id} deck sample ${k}`);
+                    straight++;
+                }
                 const p = pointAt(e.pts, k * e.zStep);
                 if (e.cls === 'ferry' || k === a || k === b || !(waterAt(region, p.x, p.y) > 0)) continue;
                 wet++;
@@ -167,16 +182,20 @@ test('bridge decks are straight between their abutments and clear the water', ()
             }
         }
         // anywhere a graded road crosses water, it is on a straight deck
-        if (e.bridge || e.cls === 'ferry') continue;
+        if (whole) continue;
         for (let k = 1; k < last; k++) {
             const p = pointAt(e.pts, k * e.zStep);
             if (waterAt(region, p.x, p.y) > 0) assert.ok(e.zBridges.some(([a, b]) => a < k && k < b), `edge ${e.id} sample ${k} over water`);
         }
     }
-    assert.ok(spans > 50 && wet > 50, `${spans} spans, ${wet} deck samples over water`);
+    assert.ok(spans > 50 && wet > 50 && straight > 500, `${spans} spans, ${wet} deck samples over water, ${straight} straight`);
+    // the Tamar Bridge: one straight deck over its whole span, clear of the river
     const tamar = graph.edges.find(e => e.road === 'a38-tamar-bridge' && e.bridge && e.len > 25);
     assert.ok(tamar, 'the Tamar Bridge');
-    assert.deepEqual(tamar.zBridges, [[0, tamar.z.length - 1]]);
+    const span = tamar.spans.find(sp => sp.to - sp.from > 100);
+    assert.equal(tamar.zBridges.length, 1);
+    const [a, b] = tamar.zBridges[0];
+    assert.ok(a * tamar.zStep <= span.from + tamar.zStep && b * tamar.zStep >= span.to - tamar.zStep, 'the deck covers the span');
 });
 
 test('slopeAt: grade, pitch and roll signs on a plane, and on a steady road climb', () => {

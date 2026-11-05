@@ -2,7 +2,7 @@
 // and street furniture (lamps, signs) that sits on the carriageway or inside buildings.
 //
 //   node scripts/validate-roads.mjs [--area exeter|plymouth|truro|penzance|all|<town id>[,...]] [--year 2024]
-//        [--radius 1500] [--furniture] [--strict] [--json] [--baked] [--hard-clearance]
+//        [--radius 1500] [--furniture] [--strict] [--json] [--baked] [--soft-clearance]
 //
 // --baked validates the baked OSM graph (world/seed/baked/, see scripts/bake-roads/bake.mjs) instead of the seeded
 // world, with the baked coast for water, and adds the trunk chain check (M5, A30 and A38 form one network).
@@ -11,8 +11,11 @@
 // Layer checks (plan 0009): overlap-same-layer (hard: carriageway-plus-pavement strips of two roads at the same ground
 // level overlap, apart from beside a junction node of either road; a stretch within RAMP_MARGIN of a bridge or tunnel
 // counts as on its approach ramp; overlaps at a bridge or tunnel level are the soft deck-overlap), junction-cluster (soft: junction footprints overlap), roundabout-arm-gap
-// (hard: an arm that does not reach the ring or ends inside it) and bridge-clearance (a higher level crossing a lower
-// road with less than 5.5 m under the deck; report-only until --hard-clearance, which phase 7 makes the default).
+// (hard: an arm that does not reach the ring or ends inside it) and bridge-clearance (hard since plan 0009 phase 7: a
+// higher level crossing a lower road with less than 5.5 m under the deck, on the graded heights; --soft-clearance
+// reports it only). A crossing world/terrain.js gradeRoads had to take at road level (a structure's end joined to the
+// road it crosses, or an interchange link too short to ramp at 1:4: graph.crossings[].atGrade) is the soft
+// crossing-at-grade instead.
 // Exit code is 0 unless --strict is given and a hard check fails.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -71,7 +74,7 @@ function segCross(ax, ay, bx, by, cx, cy, dx, dy) {
  * Structural checks on a road graph. `world` needs `graph` (with `index`); `region` is optional (water and grade
  * checks are skipped without it). Returns {counts, issues}: each issue is {check, hard, edge?, node?, x, y, detail}.
  */
-export function validateGraph(world, { year = 2024, box = null, hardClearance = false } = {}) {
+export function validateGraph(world, { year = 2024, box = null, hardClearance = true } = {}) {
     const { graph, region } = world;
     const issues = [];
     const add = (check, hard, x, y, detail, extra = {}) => issues.push({ check, hard, x, y, detail, ...extra });
@@ -243,9 +246,27 @@ function alongNear(e, s, p) {
 const midAlong = (e, s) => { const a = vertexAlong(e); return (a[s] + a[s + 1]) / 2; };
 const segOf = (e, s) => [[e.pts[2 * s], e.pts[2 * s + 1]], [e.pts[2 * s + 2], e.pts[2 * s + 3]]];
 
+/** Key of a crossing by its two edges and (to 4 m) its point, for matching graph.crossings records. */
+const crossingKey = (a, b, x, y) => `${Math.min(a, b)}:${Math.max(a, b)}:${Math.round(x / 4)}:${Math.round(y / 4)}`;
+
+/** The crossings gradeRoads took at road level (graph.crossings[].atGrade), by crossingKey (with the neighbouring cells). */
+function atGradeKeys(graph) {
+    const keys = new Set();
+    for (const c of graph.crossings ?? []) {
+        if (!c.atGrade) continue;
+        for (const dx of [-4, 0, 4]) for (const dy of [-4, 0, 4]) keys.add(crossingKey(c.upper.edge, c.lower.edge, c.x + dx, c.y + dy));
+    }
+    return keys;
+}
+
 /** Clearance of the upper road over the lower one at a crossing point; records it in `clearance`, reports a short one. */
-function checkClearance(up, low, hit, clearance, add, hard) {
+function checkClearance(up, low, hit, clearance, add, hard, atGrade) {
     clearance.crossings++;
+    if (atGrade.has(crossingKey(up.id, low.id, hit.x, hit.y))) {
+        clearance.atGrade++;
+        add('crossing-at-grade', false, hit.x, hit.y, `edge ${up.id} (${up.cls}) crosses ${low.id} (${low.cls}) at road level (no room to ramp)`, { edge: up.id, other: low.id });
+        return;
+    }
     if (!(up.z && low.z && up.zStep > 0 && low.zStep > 0)) return;
     clearance.measured++;
     const zu = roadHeightAt(up, closestOnPoly(up.pts, hit.x, hit.y).along), zl = roadHeightAt(low, closestOnPoly(low.pts, hit.x, hit.y).along);
@@ -261,8 +282,8 @@ function scanSegments(graph, open, openIds, year, box, add, hardClearance) {
     const half = e => edgeWidth(e, year) / 2 + PAVEMENT;
     const maxHalf = ROAD_CLASS.M.width / 2 + PAVEMENT;
     const pairs = new Map();
-    const clearance = { crossings: 0, measured: 0, short: 0 };
-    const seenCross = new Set();
+    const clearance = { crossings: 0, measured: 0, short: 0, atGrade: 0 };
+    const seenCross = new Set(), atGrade = atGradeKeys(graph);
     for (const e of open) {
         if (e.cls === 'ferry' || !edgeInBox(box, e)) continue;
         const he = half(e);
@@ -282,7 +303,7 @@ function scanSegments(graph, open, openIds, year, box, add, hardClearance) {
                     if (seenCross.has(key)) continue;
                     seenCross.add(key);
                     const [up, low] = le > lf ? [e, f] : [f, e];
-                    checkClearance(up, low, hit, clearance, add, hardClearance);
+                    checkClearance(up, low, hit, clearance, add, hardClearance, atGrade);
                     continue;
                 }
                 // a stretch within RAMP_MARGIN of a bridge or tunnel is on its approach ramp (phase 7 raises it off the ground)
@@ -370,7 +391,7 @@ function checkLayers(graph, open, openIds, year, box, add, hardClearance) {
         add('junction-cluster', false, (a.n.x + b.n.x) / 2, (a.n.y + b.n.y) / 2, `junctions at nodes ${a.n.id} and ${b.n.id} are ${d.toFixed(0)} m apart; their footprints (${a.r.toFixed(0)} + ${b.r.toFixed(0)} m) overlap`, { node: a.n.id, other: b.n.id });
     }
     const rings = roundaboutArmGaps(graph, openIds, year, box, add);
-    return { overlapPairs: pairs.size, junctionClusters: clusters.length, roundabouts: rings, gradeSeparatedCrossings: clearance.crossings, clearanceMeasured: clearance.measured };
+    return { overlapPairs: pairs.size, junctionClusters: clusters.length, roundabouts: rings, gradeSeparatedCrossings: clearance.crossings, clearanceMeasured: clearance.measured, crossingsAtGrade: clearance.atGrade };
 }
 
 /**
@@ -593,7 +614,8 @@ function parseArgs(argv) {
         else if (a === '--json') o.json = true;
         else if (a === '--baked') o.baked = true;
         else if (a === '--check-yards') o.yards = true;
-        else if (a === '--hard-clearance') o.hardClearance = true;
+        else if (a === '--soft-clearance') o.softClearance = true;
+        else if (a === '--hard-clearance') o.softClearance = false; // (the default since plan 0009 phase 7)
         else throw new Error(`unknown argument ${a}`);
     }
     return o;
@@ -628,7 +650,7 @@ async function main() {
     let hard = 0;
     for (const area of areas) {
         const box = area?.box ?? null;
-        const g = validateGraph(world, { year: opts.year, box, hardClearance: !!opts.hardClearance });
+        const g = validateGraph(world, { year: opts.year, box, hardClearance: !opts.softClearance });
         let issues = g.issues;
         let furnitureCounts = null;
         if (opts.furniture) {

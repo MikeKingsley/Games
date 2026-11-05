@@ -151,7 +151,7 @@ test('roundabout-arm-gap: arms shorter than the ring, or ending off the centre, 
     assert.equal(count(validateGraph(graphOf(mini)), 'roundabout-arm-gap'), 0);
 });
 
-test('bridge-clearance: a deck less than 5.5 m over the road below is reported, hard only on request', () => {
+test('bridge-clearance: a deck less than 5.5 m over the road below is a hard failure (soft on request)', () => {
     const cross = (deckZ, withZ = true) => {
         const w = graphOf([{ pts: [-100, 0, 100, 0], cls: 'A' }, { pts: [0, -100, 0, 100], cls: 'B', bridge: true }]);
         if (withZ) {
@@ -163,8 +163,16 @@ test('bridge-clearance: a deck less than 5.5 m over the road below is reported, 
     };
     const low = validateGraph(cross(4));
     assert.equal(count(low, 'bridge-clearance'), 1);
-    assert.equal(low.issues.find(i => i.check === 'bridge-clearance').hard, false);
-    assert.equal(validateGraph(cross(4), { hardClearance: true }).issues.find(i => i.check === 'bridge-clearance').hard, true);
+    assert.equal(low.issues.find(i => i.check === 'bridge-clearance').hard, true);
+    assert.equal(validateGraph(cross(4), { hardClearance: false }).issues.find(i => i.check === 'bridge-clearance').hard, false);
+    // a crossing the grading took at road level is the soft crossing-at-grade, not a clearance failure
+    const atGrade = cross(4);
+    atGrade.graph.crossings = [{ upper: { edge: 1 }, lower: { edge: 0 }, x: 0, y: 0, atGrade: true }];
+    const ag = validateGraph(atGrade);
+    assert.equal(count(ag, 'bridge-clearance'), 0);
+    assert.equal(count(ag, 'crossing-at-grade'), 1);
+    assert.equal(ag.issues.find(i => i.check === 'crossing-at-grade').hard, false);
+    assert.equal(ag.counts.crossingsAtGrade, 1);
     assert.equal(count(validateGraph(cross(7)), 'bridge-clearance'), 0); // 7 - 0.6 slab = 6.4 m >= 5.5
     const unmeasured = validateGraph(cross(0, false));
     assert.equal(count(unmeasured, 'bridge-clearance'), 0);

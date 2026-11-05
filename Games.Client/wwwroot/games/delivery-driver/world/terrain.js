@@ -12,6 +12,7 @@ import { sat } from '../sim/collision.js';
 import { seededRng, hashSeed, range, smoothNoise } from '../engine/rng.js';
 import { CHUNK_SIZE } from '../config.js';
 import { sampleElevation } from './elevation-format.js';
+import { findCrossings, structureZones, spansOf, zoneAt, CLEARANCE, SLAB } from './crossings.js';
 
 // ---- Tuning (world metres) ---------------------------------------------------------------------------------------
 
@@ -598,14 +599,16 @@ function createHeap() {
  * gives the lower envelope min_u(t(u) + dist(u, v)), sign -1 the upper one max_u(t(u) - dist(u, v)). Dijkstra
  * with every node as a source.
  */
-function envelope(target, adj, sign) {
+function envelope(target, adj, sign, blocked = null) {
     const val = target.map(t => sign * t);
     const heap = createHeap();
-    val.forEach((v, id) => heap.push(v, id));
+    // (nodes at the +-1e9 "no bound" value are never sources: only real bounds spread)
+    val.forEach((v, id) => { if (v < 1e8) heap.push(v, id); });
     while (heap.size) {
         const v = heap.pop();
         if (heap.top > val[v]) continue;
         for (const [u, w] of adj[v]) {
+            if (blocked?.[u]) continue; // a held node keeps its own value
             const c = val[v] + w;
             if (c < val[u]) { val[u] = c; heap.push(c, u); }
         }
@@ -713,42 +716,78 @@ function pinToTown(target, pinned, lo, hi, dz) {
  * mean of the lower and upper Lipschitz envelopes of the target (cutting and filling equally), smoothed (+-16 m)
  * and clamped back into the cones. Every step keeps the grade <= g, so the stored profile never exceeds it.
  */
-function gradeEdge(region, e, zA, zB, { g, la, lb, linear }) {
+/** While gradeRoads runs: the land under each edge, kept between its regrades (the land never changes). */
+let landCache = null;
+
+/**
+ * What an edge is graded against, from the land alone: sample positions and ground heights; and (not for a straight
+ * edge) the road target at each interior sample, the town-pad pins, and the runs of samples over water or on a span
+ * ([first, last, water level or -Infinity]). Cached while gradeRoads runs.
+ */
+function landUnder(region, e, n, linear) {
+    const hit = landCache?.get(e.id);
+    if (hit && hit.n === n && hit.linear === linear) return hit;
+    const step = e.len / n;
+    const xs = new Float64Array(n + 1), ys = new Float64Array(n + 1), ground = new Float64Array(n + 1);
+    samplePolyline(e.pts, e.len, n, xs, ys);
+    for (let i = 0; i <= n; i++) ground[i] = terrainHeight(region, xs[i], ys[i]);
+    const out = { n, linear, xs, ys, ground, land: null, pinned: null, runs: [] };
+    if (!linear) {
+        const land = new Float64Array(n + 1), pinned = new Uint8Array(n + 1), wet = new Uint8Array(n + 1), pin = { on: false };
+        // samples on a bridge or tunnel span (baked spans): they leave the land and run straight between its ends
+        const onSpan = new Uint8Array(n + 1);
+        for (const s of spansOf(e)) {
+            for (let i = Math.max(1, Math.ceil(s.from / step)); i <= Math.min(n - 1, Math.floor(s.to / step)); i++) onSpan[i] = 1;
+        }
+        for (let i = 1; i < n; i++) {
+            wet[i] = waterAt(region, xs[i], ys[i]) > 0 ? 1 : 0;
+            land[i] = roadTarget(region, xs[i], ys[i], pin, ground[i]);
+            pinned[i] = pin.on && !wet[i] && !onSpan[i] ? 1 : 0;
+        }
+        for (let i = 1; i < n; i++) {
+            if (!wet[i] && !onSpan[i]) continue;
+            let j = i;
+            while (j + 1 < n && (wet[j + 1] || onSpan[j + 1])) j++;
+            let lvl = -Infinity;
+            for (let k = i; k <= j; k++) if (wet[k]) lvl = Math.max(lvl, waterLevel(region, xs[k], ys[k]) ?? 0);
+            out.runs.push([i, j, lvl]);
+            i = j;
+        }
+        out.land = land;
+        out.pinned = pinned;
+    }
+    landCache?.set(e.id, out);
+    return out;
+}
+
+function gradeEdge(region, e, zA, zB, { g, la, lb, linear }, bounds = null) {
     const L = e.len;
     const n = Math.max(1, Math.ceil(L / ROAD_STEP));
     const step = L / n;
-    const xs = new Float64Array(n + 1), ys = new Float64Array(n + 1), ground = new Float64Array(n + 1);
-    samplePolyline(e.pts, L, n, xs, ys);
-    for (let i = 0; i <= n; i++) ground[i] = terrainHeight(region, xs[i], ys[i]);
+    const under = landUnder(region, e, n, linear);
+    const ground = under.ground;
     const z = new Float64Array(n + 1);
     let spans = [];
     if (linear) {
         for (let i = 0; i <= n; i++) z[i] = zA + ((zB - zA) * i) / n;
         spans = [[0, n]];
     } else {
-        const target = new Float64Array(n + 1), pinned = new Uint8Array(n + 1), wet = new Uint8Array(n + 1), pin = { on: false };
-        for (let i = 1; i < n; i++) {
-            wet[i] = waterAt(region, xs[i], ys[i]) > 0 ? 1 : 0;
-            target[i] = roadTarget(region, xs[i], ys[i], pin, ground[i]);
-            pinned[i] = pin.on && !wet[i] ? 1 : 0;
-        }
+        const target = Float64Array.from(under.land), pinned = under.pinned.slice();
         target[0] = zA;
         target[n] = zB;
-        // bridges: runs of samples over water get a straight deck between the banks (the ends are nodes, never runs)
+        // bridges and tunnels: runs of samples over water or on a span get a straight deck (or tube) between their
+        // ends (the ends are nodes, never runs); over water the deck stands clear of it
         const runs = [];
-        for (let i = 1; i < n; i++) {
-            if (!wet[i]) continue;
-            let j = i;
-            while (j + 1 < n && wet[j + 1]) j++;
-            let lvl = 0;
-            for (let k = i; k <= j; k++) lvl = Math.max(lvl, waterLevel(region, xs[k], ys[k]) ?? 0);
-            // abutments: the higher of the two dry samples nearest the water (the bank's foot can be a low strip)
-            const ia = i - 1, ib = j + 1, deck = lvl + DECK_CLEARANCE;
-            if (ia > 0) target[ia] = Math.max(target[ia], target[ia - 1], deck);
-            if (ib < n) target[ib] = Math.max(target[ib], target[ib + 1], deck);
+        for (const [i, j, lvl] of under.runs) {
+            const ia = i - 1, ib = j + 1;
+            if (lvl > -Infinity) {
+                // abutments: the higher of the two dry samples nearest the water (the bank's foot can be a low strip)
+                const deck = Math.max(0, lvl) + DECK_CLEARANCE;
+                if (ia > 0) target[ia] = Math.max(target[ia], target[ia - 1], deck);
+                if (ib < n) target[ib] = Math.max(target[ib], target[ib + 1], deck);
+            }
             for (let k = i; k <= j; k++) target[k] = target[ia] + ((target[ib] - target[ia]) * (k - ia)) / (ib - ia);
             runs.push([ia, ib]);
-            i = j;
         }
         // a bridge landing on a junction: the junction's flat starts at the abutment (the deck can then stay
         // straight; the node heights allowed for the longer ramp, so this always fits)
@@ -764,6 +803,28 @@ function gradeEdge(region, e, zA, zB, { g, la, lb, linear }) {
             lo[i] = Math.max(zA - ra, zB - rb);
             hi[i] = Math.min(zA + ra, zB + rb);
             if (lo[i] > hi[i]) lo[i] = hi[i] = (lo[i] + hi[i]) / 2; // only if the node heights were infeasible
+        }
+        lo[0] = hi[0] = zA; // the ends are the nodes, always (every road at a junction meets at one height)
+        lo[n] = hi[n] = zB;
+        // clearance at grade-separated crossings (gradeRoads): the profile stays above (sign 1) or below (sign -1)
+        // `z` over [from, to], ramping away from it at g; the ends stay at the node heights, and where a bound and
+        // the node cones disagree the bound wins (gradeRoads then raises or lowers the nodes in its next round)
+        if (bounds?.length) {
+            // (lowering bounds first, so where an edge is both a tunnel under one road and a bridge over another and
+            // the two disagree, the bridge's clearance wins)
+            for (const bd of [...bounds].sort((p, q) => p.sign - q.sign)) {
+                for (let i = 1; i < n; i++) {
+                    // (one sample beyond the stretch holds the bound too, so the profile between samples keeps it)
+                    const s = i * step, dist = Math.max(0, (s < bd.from ? bd.from - s : s > bd.to ? s - bd.to : 0) - step);
+                    if (bd.sign > 0) {
+                        const v = bd.z - g * dist;
+                        if (v > lo[i]) { lo[i] = v; if (hi[i] < v) hi[i] = v; }
+                    } else {
+                        const v = bd.z + g * dist;
+                        if (v < hi[i]) { hi[i] = v; if (lo[i] > v) lo[i] = v; }
+                    }
+                }
+            }
         }
         const dz = g * step;
         pinToTown(target, pinned, lo, hi, dz);
@@ -904,20 +965,45 @@ function placePads(world, pads) {
  * `world.terrain` (used by groundZ).
  */
 export function gradeRoads(world) {
+    landCache = new Map();
+    try {
+        return gradeNetwork(world);
+    } finally {
+        landCache = null;
+    }
+}
+
+function gradeNetwork(world) {
     const { region, graph } = world;
     const { nodes, edges } = graph;
+    // levels: grade-separated crossings and the stretches lifted off (or sunk under) the ground. A crossing a few
+    // metres from a node the two roads share cannot be grade-separated at any grade (they meet at that node: a bake
+    // artefact where a structure's end was joined to the road it crosses); it is taken at road level (`atGrade`)
+    const crossings = findCrossings(graph);
+    for (const c of crossings) c.atGrade = unseparable(region, graph, c);
+    const separated = crossings.filter(c => !c.atGrade);
+    const zones = structureZones(graph, separated);
+    graph.crossings = crossings;
+    for (const e of edges) {
+        e.zones = zones.get(e.id) ?? null;
+        e.underGround = !!e.zones?.some(zn => zn.kind === 'tunnel');
+    }
     const landing = nodes.map(n => {
         if (n.edges.length >= 3) return Math.max(...n.edges.map(id => halfWidthOf(edges[id]))) + JUNCTION_FLAT;
         if (n.edges.length === 1 && (n.kind === 'depot' || n.kind === 'site' || n.kind === 'farm')) return YARD_FLAT;
         return 0;
     });
     const info = edges.map(e => {
-        const linear = !!e.bridge || e.cls === 'ferry';
+        // a ferry, or an edge flagged a bridge as a whole (hand-made seeds; baked edges carry spans instead), is one
+        // straight deck between its nodes
+        const linear = e.cls === 'ferry' || (!!e.bridge && !Array.isArray(e.spans));
         const la = linear ? 0 : Math.min(landing[e.a], 0.4 * e.len), lb = linear ? 0 : Math.min(landing[e.b], 0.4 * e.len);
         const g = gradeLimit(region, e);
         // the stretch on a town pad stays on it (pinned in gradeEdge), so only the rest can climb
         const town = linear ? 0 : townLength(region, e);
-        return { g, la, lb, linear, w: NODE_SLACK * g * Math.max(0, e.len - la - lb - town) + TOWN_SWELL * town };
+        // w: the most the edge's two nodes may differ for the land fit (level along a town pad); wr: what it can ramp
+        // when a structure's clearance asks (a pad gives way to an approach ramp)
+        return { g, la, lb, linear, w: NODE_SLACK * g * Math.max(0, e.len - la - lb - town) + TOWN_SWELL * town, wr: NODE_SLACK * g * Math.max(0, e.len - la - lb) };
     });
     const target = nodes.map(n => nodeTarget(region, n.x, n.y));
     // a bridge over water has a straight deck between its two end nodes, so both must stand clear of the water
@@ -935,25 +1021,288 @@ export function gradeRoads(world) {
     for (const [a, b, w] of links) { adj[a].push([b, w]); adj[b].push([a, w]); }
     pinTownNodes(region, nodes, target, adj);
     const lo = envelope(target, adj, 1), hi = envelope(target, adj, -1);
-    for (const n of nodes) n.z = (lo[n.id] + hi[n.id]) / 2;
+    const base = Float64Array.from(nodes, n => (lo[n.id] + hi[n.id]) / 2);
+    for (const n of nodes) n.z = base[n.id];
     edges.forEach((e, k) => gradeEdge(region, e, nodes[e.a].z, nodes[e.b].z, info[k]));
+    // clearance spreads over the network at each road's own grade (towns included), the yard links as before
+    const ramps = nodes.map(n => n.edges.map(id => [graph.other(edges[id], n.id), info[id].wr]));
+    for (const [a, b, w] of links) { ramps[a].push([b, w]); ramps[b].push([a, w]); }
+    world.layers = clearWithRelief(world, crossings, separated, info, ramps, base);
     world.terrain = placePads(world, pads);
     return world.terrain;
+}
+
+/** Attempts at relieving steep edges, the factor per attempt, and the most an edge's limit may be relaxed to (x). */
+const RELIEF_TRIES = 3, RELIEF_STEP = 1.45, RELIEF_MAX = 2;
+/** A crossing within this of a link still too steep after the relief is taken at road level (m). */
+const RELIEF_REACH = 150;
+/** Rounds of taking crossings at road level after the relief. */
+const AT_GRADE_TRIES = 6;
+
+/** Steepest rise per metre between neighbouring samples of an edge's profile. */
+function worstGrade(e) {
+    let w = 0;
+    for (let i = 1; i < e.z.length; i++) w = Math.max(w, Math.abs(e.z[i] - e.z[i - 1]) / e.zStep);
+    return w;
+}
+
+/**
+ * clearCrossings, then relief where clearance could only be had with a cliff: at an interchange packed tighter than
+ * its ramps (the 1:4 map squeezes real slip roads to a quarter of their length while clearances stay life-size), an
+ * edge whose profile ends up over its limit has that limit relaxed (x1.45 a try, at most twice the class limit) and
+ * everything is graded again from the land fit, so it ramps steeply but smoothly instead. Crossings near a link still
+ * too steep after RELIEF_TRIES are taken at road level, and the rest graded once more. Returns world.layers' report.
+ */
+function clearWithRelief(world, crossings, separated, info, adj, base) {
+    const { region, graph } = world;
+    const { nodes, edges } = graph;
+    let report = null;
+    const relaxed = new Set();
+    const steepOf = r => [...r.touched].filter(id => worstGrade(edges[id]) > info[id].g + 1e-4);
+    const reset = r => {
+        for (const n of nodes) n.z = base[n.id];
+        for (const id of r.touched) gradeEdge(region, edges[id], nodes[edges[id].a].z, nodes[edges[id].b].z, info[id]);
+    };
+    for (let attempt = 0; ; attempt++) {
+        report = clearCrossings(world, separated, info, adj, base);
+        const steep = steepOf(report);
+        if (!steep.length || attempt >= RELIEF_TRIES + AT_GRADE_TRIES) break;
+        if (attempt >= RELIEF_TRIES) {
+            // last resort, a few at a time: the crossing nearest each link still too steep is taken at road level
+            for (const id of steep) {
+                const e = edges[id];
+                let best = null, bd = RELIEF_REACH;
+                for (const c of separated) {
+                    if (c.atGrade) continue;
+                    const d = c.upper.edge === id || c.lower.edge === id ? 0 : Math.min(...[e.a, e.b].map(v => Math.hypot(nodes[v].x - c.x, nodes[v].y - c.y)));
+                    if (d < bd) { bd = d; best = c; }
+                }
+                if (best) best.atGrade = true;
+            }
+            separated = separated.filter(c => !c.atGrade);
+            const zones = structureZones(graph, separated);
+            for (const e of edges) { e.zones = zones.get(e.id) ?? null; e.underGround = !!e.zones?.some(zn => zn.kind === 'tunnel'); }
+        } else {
+            for (const id of steep) {
+                const e = edges[id], i = info[id], cap = RELIEF_MAX * gradeLimit(region, e);
+                if (i.g >= cap - 1e-9) continue;
+                const g2 = Math.min(cap, i.g * RELIEF_STEP);
+                i.wr *= g2 / i.g;
+                i.w *= g2 / i.g;
+                i.g = g2;
+                relaxed.add(id);
+                for (const end of [e.a, e.b]) for (const link of adj[end]) if (link[0] === graph.other(e, end)) link[1] = i.wr;
+            }
+        }
+        reset(report); // back to the land fit before the next attempt
+    }
+    report.crossings = crossings.length;
+    report.atGrade = crossings.filter(c => c.atGrade).length;
+    report.relaxed = [...relaxed].map(id => ({ edge: id, cls: edges[id].cls, limit: gradeLimit(region, edges[id]), relaxedTo: info[id].g, worst: worstGrade(edges[id]) }));
+    report.overLimit = edges.filter(e => e.z && e.cls !== 'ferry' && worstGrade(e) > gradeLimit(region, e) * 1.05).length;
+    delete report.touched;
+    return report;
+}
+
+/**
+ * True when two roads sharing a node cross so near it that even with both climbing apart at their grade limits
+ * (the upper one up, the lower one down) they could not open CLEARANCE plus the slab between them by the crossing.
+ */
+function unseparable(region, graph, c) {
+    const U = graph.edges[c.upper.edge], L = graph.edges[c.lower.edge];
+    let best = Infinity;
+    for (const s of [U.a, U.b]) {
+        if (s !== L.a && s !== L.b) continue;
+        const su = s === U.a ? c.upper.d : U.len - c.upper.d, sl = s === L.a ? c.lower.d : L.len - c.lower.d;
+        best = Math.min(best, gradeLimit(region, U) * su + gradeLimit(region, L) * sl);
+    }
+    return best < CLEARANCE + SLAB;
+}
+
+/** Rounds of clearance grading at most (each regrades only the edges it changed). */
+const CLEAR_ROUNDS = 12;
+/** The most a crossing that stays short may ask of its nodes beyond what its own ramp needs (m). */
+const MAX_BOOST = 8;
+const FREE = 1e9;
+
+/** Highest (sign 1) or lowest (sign -1) point of an edge's graded profile over [from, to] (every metre). */
+function profileExtreme(e, from, to, sign) {
+    let best = sign > 0 ? -Infinity : Infinity;
+    const a = Math.max(0, from), b = Math.min(e.len, to);
+    const n = Math.max(1, Math.ceil(b - a));
+    for (let i = 0; i <= n; i++) {
+        const v = roadHeightAt(e, a + ((b - a) * i) / n);
+        best = sign > 0 ? Math.max(best, v) : Math.min(best, v);
+    }
+    return best;
+}
+
+/**
+ * Clearance at grade-separated crossings: the road on a structure moves, the road it crosses stays where it was
+ * graded. A bridge (or any higher road over a ground or tunnel road) is raised so its deck clears the lower road's
+ * own graded height by CLEARANCE plus the slab over the whole stretch above that road's carriageway; a tunnel under
+ * a ground road is lowered the same way. Each crossing becomes a bound on the moved edge's profile (ramping away at
+ * its grade limit) and on its end nodes (what the edge can ramp from them); node bounds spread over the network by
+ * Lipschitz envelopes at each road's ramp rate, except into the held end nodes of the roads being crossed. What a
+ * crossing asks for is read from the other road as first graded (from its current height only when that road is a
+ * structure that moves too, i.e. stacked decks, by at most one more deck), so no chain of crossings feeds on itself.
+ * Each round regrades what changed and checks every crossing; one still short asks for the difference on top
+ * (`boost`) and, from the third round, has the other road give way by it where they cross (`dig`), up to MAX_BOOST
+ * each. A link between a held node and a lifted one may end up steeper than its limit: clearWithRelief deals with it.
+ */
+function clearCrossings(world, crossings, info, adj, base) {
+    const { region, graph } = world;
+    const { nodes, edges } = graph;
+    const report = { crossings: crossings.length, rounds: 0, raisedEdges: 0, raisedNodes: 0, largestRamp: 0, worstGrade: 0, short: [], touched: new Set(), raised: [] };
+    if (!crossings.length) return report;
+    const N = nodes.length;
+    const before = new Map(); // edge id -> its profile before any clearance work
+    const boost = new Float64Array(crossings.length), dig = new Float64Array(crossings.length);
+    const raises = crossings.map(c => c.levels[0] > 0 || c.levels[1] >= 0);
+    const movers = new Set(crossings.map((c, k) => (raises[k] ? c.upper.edge : c.lower.edge)));
+    const firstOther = crossings.map((c, k) => {
+        const o = raises[k] ? c.lower : c.upper;
+        return profileExtreme(edges[o.edge], o.d - o.half, o.d + o.half, raises[k] ? 1 : -1);
+    });
+    const STACK = CLEARANCE + SLAB + 2;
+    // the road a structure crosses is held where it is: its end nodes never take up a bound spreading through the
+    // network (else a bridge lifted at an interchange would lift the road under it through the slip roads); nodes a
+    // structure of their own must move are not held
+    const holdUp = new Uint8Array(N), holdDown = new Uint8Array(N), moves = new Uint8Array(N);
+    crossings.forEach((c, k) => {
+        const M = edges[raises[k] ? c.upper.edge : c.lower.edge], O = edges[raises[k] ? c.lower.edge : c.upper.edge];
+        const hold = raises[k] ? holdUp : holdDown;
+        hold[O.a] = hold[O.b] = 1;
+        moves[M.a] = moves[M.b] = 1;
+    });
+    for (let i = 0; i < N; i++) if (moves[i]) holdUp[i] = holdDown[i] = 0;
+    let lastKey = new Map();
+    let lastShort = [];
+    for (let round = 1; round <= CLEAR_ROUNDS; round++) {
+        report.rounds = round;
+        const bounds = new Map(), nodeLo = new Float64Array(N).fill(-FREE), nodeHi = new Float64Array(N).fill(FREE);
+        const addBound = (id, b) => (bounds.get(id) ?? bounds.set(id, []).get(id)).push(b);
+        // a profile bound z over [from, to] on edge E also bounds its end nodes by what E can ramp from them
+        const boundEnds = (E, from, to, z, sign, skip = null) => {
+            const i = info[E.id], g = NODE_SLACK * i.g;
+            // (gradeEdge holds the bound one sample beyond the stretch, so the ramp starts that much sooner)
+            const ends = [[E.a, g * Math.max(0, from - ROAD_STEP - i.la)], [E.b, g * Math.max(0, E.len - to - ROAD_STEP - i.lb)]];
+            for (const [id, r] of ends) {
+                if (skip && (id === skip.a || id === skip.b)) continue;
+                if (sign > 0) nodeLo[id] = Math.max(nodeLo[id], z - r);
+                else nodeHi[id] = Math.min(nodeHi[id], z + r);
+            }
+        };
+        crossings.forEach((c, k) => {
+            const raise = raises[k], sm = raise ? 1 : -1;
+            const m = raise ? c.upper : c.lower, o = raise ? c.lower : c.upper;
+            const M = edges[m.edge], O = edges[o.edge];
+            let zo = firstOther[k];
+            if (movers.has(O.id)) {
+                const now = profileExtreme(O, o.d - o.half, o.d + o.half, sm);
+                zo = raise ? Math.min(now, zo + STACK) : Math.max(now, zo - STACK);
+            }
+            const need = zo + sm * (CLEARANCE + SLAB + boost[k]);
+            const from = Math.max(0, m.d - m.half), to = Math.min(M.len, m.d + m.half);
+            addBound(M.id, { from, to, z: need, sign: sm });
+            if (!info[M.id].linear) boundEnds(M, from, to, need, sm);
+            // a crossing still short from the third round has the other road give way by `dig` where they cross
+            if (info[O.id].linear || !dig[k]) return;
+            const zs = firstOther[k] - sm * (dig[k] - 0.02);
+            const of = Math.max(0, o.d - o.half), ot = Math.min(O.len, o.d + o.half);
+            addBound(O.id, { from: of, to: ot, z: zs, sign: -sm });
+            boundEnds(O, of, ot, zs, -sm, M);
+        });
+        // node heights: the land fit, pulled down under lowering bounds and up over raising ones (raising wins)
+        const zPrev = Float64Array.from(nodes, n => n.z);
+        const lbEnv = envelope(Array.from(nodeLo), adj, -1, holdUp), ubEnv = envelope(Array.from(nodeHi), adj, 1, holdDown);
+        for (const n of nodes) n.z = Math.max(Math.min(base[n.id], ubEnv[n.id]), lbEnv[n.id]);
+        // regrade the edges whose bounds or end heights changed
+        const key = new Map();
+        for (const [id, list] of bounds) key.set(id, list.map(b => `${b.from.toFixed(1)}:${b.to.toFixed(1)}:${b.z.toFixed(2)}:${b.sign}`).join('|'));
+        for (const e of edges) {
+            const moved = Math.abs(nodes[e.a].z - zPrev[e.a]) > 1e-3 || Math.abs(nodes[e.b].z - zPrev[e.b]) > 1e-3;
+            if (!moved && key.get(e.id) === lastKey.get(e.id)) continue;
+            if (!before.has(e.id)) before.set(e.id, e.z);
+            gradeEdge(region, e, nodes[e.a].z, nodes[e.b].z, info[e.id], bounds.get(e.id));
+        }
+        lastKey = key;
+        // check every crossing on the new heights
+        lastShort = [];
+        crossings.forEach((c, k) => {
+            const gap = crossingGap(edges, c);
+            if (gap < CLEARANCE - 0.01) {
+                boost[k] = Math.min(MAX_BOOST, boost[k] + CLEARANCE - gap);
+                if (round >= 3) dig[k] = Math.min(MAX_BOOST, dig[k] + CLEARANCE - gap);
+                lastShort.push({ x: c.x, y: c.y, upper: c.upper.edge, lower: c.lower.edge, gap });
+            }
+        });
+        // (the check follows the regrade, so a round with nothing short leaves every crossing clear)
+        if (!lastShort.length) break;
+    }
+    report.short = lastShort;
+    report.touched = new Set(before.keys());
+    for (const [id, z0] of before) {
+        const e = edges[id];
+        let run = 0, longest = 0, raised = false;
+        for (let i = 0; i < e.z.length; i++) {
+            if (Math.abs(e.z[i] - (z0?.[i] ?? e.z[i])) > 0.3) { run++; raised = true; longest = Math.max(longest, run); } else run = 0;
+        }
+        if (raised) { report.raisedEdges++; report.raised.push(id); }
+        report.largestRamp = Math.max(report.largestRamp, longest * e.zStep);
+        report.worstGrade = Math.max(report.worstGrade, worstGrade(e));
+    }
+    report.raisedNodes = nodes.filter(n => Math.abs(n.z - base[n.id]) > 0.3).length;
+    return report;
+}
+
+/**
+ * Clear height at a crossing on the graded profiles: the lowest point of the upper road over the lower road's
+ * stretch, less the slab, less the highest point of the lower road under it (m).
+ */
+export function crossingGap(edges, c) {
+    const U = edges[c.upper.edge], L = edges[c.lower.edge];
+    return profileExtreme(U, c.upper.d - c.upper.half, c.upper.d + c.upper.half, -1) - SLAB - profileExtreme(L, c.lower.d - c.lower.half, c.lower.d + c.lower.half, 1);
 }
 
 // ---- The driven surface --------------------------------------------------------------------------------------------
 
 const near = [];
 const hitEdge = [], hitD = [], hitAlong = [];
+const layerZ = [], layerTunnel = [], hitZ = [], hitLayer = [];
+/**
+ * How much a road or pad counts in a vehicle's own surface by its height against the vehicle's: fully at the
+ * vehicle's height, hardly at all a metre off (roads meeting at a junction share one height and blend as ever; a slip
+ * road on its embankment overlapping the carriageway the vehicle is on does not lift it).
+ */
+const affinity = dz => 1 / (1 + (dz / 0.4) ** 4);
+/**
+ * A carriageway over a point this far above another ground-level carriageway at or within SEPARATE_REACH of it is a
+ * layer of its own there, not ground (m).
+ */
+const SEPARATE = 2.5, SEPARATE_REACH = 3;
 
 /**
- * Height of the surface vehicles drive on: the road deck on a road (bridges included), the pad in a yard, the land
- * elsewhere, blended smoothly across road shoulders and yard edges. With `decks` false, water is never bridged (the
- * river bed or sea floor under a bridge), for the ground mesh. Needs gradeRoads (createWorld runs it).
+ * A surface no more than this above a vehicle's height is one it can be on (a kerb, or the far wheels of a long rig
+ * on a steep ramp; never a deck, which stands at least CLEARANCE plus the slab over the road below).
  */
-export function groundZ(world, x, y, decks = true) {
+export const STEP_UP = 1;
+
+/**
+ * Height of the surface vehicles drive on at (x, y). Roads are layered (plan 0009): the stretches of a road on a
+ * bridge deck or in a tunnel (edge.zones) are surfaces of their own; everything else (roads on the ground, yard pads,
+ * the land) blends into one ground surface, smoothly across road shoulders and yard edges. `hint` picks the layer:
+ * - a number (a vehicle's own height): the surface closest to it and not more than STEP_UP above it, so a vehicle on
+ *   a deck stays on it, one on the road below stays below, and one that leaves a deck's edge lands on whatever is
+ *   under it; with nothing at or below it (a vehicle placed under the ground), the lowest surface;
+ * - false: the ground alone, never a deck or tunnel, and over water the river bed or sea floor (the ground mesh);
+ * - omitted: the topmost surface (a deck over the road below it, the ground over a tunnel), for props and cameras.
+ * Needs gradeRoads (createWorld runs it).
+ */
+export function groundZ(world, x, y, hint) {
     const T = world.terrain, region = world.region;
-    if (!T || (!decks && waterAt(region, x, y) > 0)) return terrainHeight(region, x, y);
+    const mesh = hint === false;
+    if (!T || (mesh && waterAt(region, x, y) > 0)) return terrainHeight(region, x, y);
     // each edge's nearest point within reach
     let m = 0;
     const graph = world.graph;
@@ -971,40 +1320,93 @@ export function groundZ(world, x, y, decks = true) {
         if (h === m) { hitEdge[m] = s.edge; hitD[m] = Infinity; m++; }
         if (d < hitD[h]) { hitD[h] = d; hitAlong[h] = e.zCum[s.seg] + Math.sqrt(l2) * u; }
     }
-    let wmax = 0, osum = 0, zsum = 0;
+    // two blends: the ground (every ground-level road, yard pad and the land), and for a vehicle (a numeric hint)
+    // its own: only the roads and pads within SEPARATE of its height, so a road at another height beside or across
+    // its carriageway never mixes into the surface it drives on
+    const vehicle = typeof hint === 'number';
+    let layers = 0;
+    const G = { wmax: 0, osum: 0, zsum: 0 }, V = { wmax: 0, osum: 0, zsum: 0 };
     // `out`: metres beyond the flat surface (<= 0 on it); the surface you are on dominates, nearer ones next, and a
     // yard pad outranks a road that strays onto it so the yard stays level
-    const add = (z, out, blend, rank) => {
+    const add = (acc, z, out, blend, rank) => {
         if (out >= blend) return;
         const w = out <= 0 ? 1 : 1 - smoothstep(0, blend, out);
         const o = (rank * w) / (Math.max(out, 0) + 0.25) ** 4;
-        wmax = Math.max(wmax, w);
-        osum += o;
-        zsum += o * z;
+        acc.wmax = Math.max(acc.wmax, w);
+        acc.osum += o;
+        acc.zsum += o * z;
     };
+    // the lowest ground-level carriageway at (or just beside) the point: one standing well above it here (the ramp of a
+    // deck that spills past its edge's end or its zone) is a layer of its own too, not ground
+    let floor = Infinity;
     for (let h = 0; h < m; h++) {
         const e = graph.edges[hitEdge[h]];
-        const fill = sampleProfile(e.zFill, e.zStep, hitAlong[h]);
-        add(roadHeightAt(e, hitAlong[h]), hitD[h] - e.zHalf, Math.min(BLEND_MAX, BLEND_MIN + 1.5 * Math.abs(fill)), 1);
+        hitZ[h] = roadHeightAt(e, hitAlong[h]);
+        hitLayer[h] = e.zones && zoneAt(e.zones, hitAlong[h]) ? 1 : 0;
+        if (!hitLayer[h] && hitD[h] <= e.zHalf + SEPARATE_REACH) floor = Math.min(floor, hitZ[h]);
+    }
+    for (let h = 0; h < m; h++) {
+        const e = graph.edges[hitEdge[h]];
+        const blend = hitLayer[h] ? 0 : Math.min(BLEND_MAX, BLEND_MIN + 1.5 * Math.abs(sampleProfile(e.zFill, e.zStep, hitAlong[h])));
+        if (vehicle && !hitLayer[h] && Math.abs(hitZ[h] - hint) <= SEPARATE) add(V, hitZ[h], hitD[h] - e.zHalf, blend, affinity(hitZ[h] - hint));
+        if (hitLayer[h] || (hitD[h] <= e.zHalf && hitZ[h] > floor + SEPARATE)) {
+            // a deck or tunnel stretch: a surface of its own across the carriageway, no part of the ground
+            if (hitD[h] <= e.zHalf) {
+                layerTunnel[layers] = hitLayer[h] && zoneAt(e.zones, hitAlong[h]).kind === 'tunnel' ? 1 : 0;
+                layerZ[layers++] = hitZ[h];
+            }
+            continue;
+        }
+        add(G, hitZ[h], hitD[h] - e.zHalf, blend, 1);
     }
     const list = T.cells.get(padKey(Math.floor(x / PAD_CELL), Math.floor(y / PAD_CELL)));
     if (list) {
         for (const pad of list) {
             let out = Infinity;
             for (const b of pad.boxes) out = Math.min(out, obbDistance(b, x, y));
-            add(pad.z, out, pad.blend, PAD_RANK);
+            add(G, pad.z, out, pad.blend, PAD_RANK);
+            if (vehicle && Math.abs(pad.z - hint) <= SEPARATE) add(V, pad.z, out, pad.blend, PAD_RANK * affinity(pad.z - hint));
         }
     }
-    if (wmax === 0) return terrainHeight(region, x, y);
-    const z = zsum / osum;
-    if (wmax >= 1) return z;
-    const land = terrainHeight(region, x, y);
-    return land + wmax * (z - land);
+    let land = Number.NaN;
+    const surface = acc => {
+        if (acc.wmax >= 1) return acc.zsum / acc.osum;
+        if (Number.isNaN(land)) land = terrainHeight(region, x, y);
+        return acc.wmax === 0 ? land : land + acc.wmax * (acc.zsum / acc.osum - land);
+    };
+    const ground = surface(G);
+    if (mesh) return ground;
+    if (!vehicle) {
+        let top = ground;
+        for (let i = 0; i < layers; i++) top = Math.max(top, layerZ[i]);
+        return top;
+    }
+    const own = V.wmax > 0 ? surface(V) : Number.NaN;
+    if (!layers && !Number.isNaN(own) && Math.abs(own - hint) <= STEP_UP) return own;
+    // in a tunnel (its road within reach of the vehicle's height), the tunnel, whatever the hill above does
+    let tunnel = Number.NaN;
+    for (let i = 0; i < layers; i++) {
+        const z = layerZ[i];
+        if (layerTunnel[i] && z <= hint + STEP_UP && z >= hint - STEP_UP && (Number.isNaN(tunnel) || Math.abs(z - hint) < Math.abs(tunnel - hint))) tunnel = z;
+    }
+    if (!Number.isNaN(tunnel)) return tunnel;
+    // else the highest surface its wheels can reach (a kerb's step, a ramp's rise under a long rig), so it stays on a
+    // deck and drops off one only past its edge: its own road blend (or the ground where no road is near its height)
+    // and the decks; with none at or below it, the lowest surface
+    let best = -Infinity, lowest = Number.isNaN(own) ? ground : Math.min(own, ground);
+    const consider = z => {
+        lowest = Math.min(lowest, z);
+        if (z <= hint + STEP_UP && z > best) best = z;
+    };
+    consider(Number.isNaN(own) ? ground : own);
+    for (let i = 0; i < layers; i++) if (!layerTunnel[i]) consider(layerZ[i]);
+    return best === -Infinity ? lowest : best;
 }
 
 /**
- * The deck height of the road under or within `reach` m of the carriageway edge at (x, y), or null when none is that
- * close (the nearest road wins). The ground mesh uses it to keep its coarse cells from rising above a road.
+ * The height of the ground-level road under or within `reach` m of the carriageway edge at (x, y), or null when none
+ * is that close (the nearest road wins; decks and tunnels are not the ground). The ground mesh uses it to keep its
+ * coarse cells from rising above a road.
  */
 export function roadDeckNear(world, x, y, reach) {
     const graph = world.graph;
@@ -1017,7 +1419,11 @@ export function roadDeckNear(world, x, y, reach) {
         const l2 = dx * dx + dy * dy;
         const u = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
         const out = Math.hypot(ax + dx * u - x, ay + dy * u - y) - e.zHalf;
-        if (out < reach && out < bestOut) { bestOut = out; best = roadHeightAt(e, e.zCum[s.seg] + Math.sqrt(l2) * u); }
+        if (!(out < reach && out < bestOut)) continue;
+        const along = e.zCum[s.seg] + Math.sqrt(l2) * u;
+        if (e.zones && zoneAt(e.zones, along)) continue;
+        bestOut = out;
+        best = roadHeightAt(e, along);
     }
     return best;
 }
@@ -1050,17 +1456,29 @@ const memos = new WeakMap();
 
 /**
  * Ground slope under a vehicle (see slopeFrom), on the driven surface (groundZ). Footprint defaults suit a car;
- * pass a vehicle's wheelbase/track. The last few results are memoised by exact arguments, so the physics, the HUD
+ * pass a vehicle's wheelbase/track. `hint` (the vehicle's height at the footprint's centre) and `hintGrade` (its
+ * pitch as a grade) pick the layer at each sample as groundZ does, the hint carried along the heading by the grade;
+ * without a hint the topmost surface. The last few results are memoised by exact arguments, so the physics, the HUD
  * and the renderer asking about the same pose in one frame pay once.
  */
-export function slopeAt(world, x, y, heading, length = 4, width = 2) {
+export function slopeAt(world, x, y, heading, length = 4, width = 2, hint = undefined, hintGrade = 0) {
     let memo = memos.get(world);
-    if (!memo) memos.set(world, (memo = { list: [], sample: (px, py) => groundZ(world, px, py) }));
-    for (const m of memo.list) {
-        if (m.x === x && m.y === y && m.heading === heading && m.length === length && m.width === width) return { ...m.result };
+    if (!memo) {
+        memo = { list: [], hint: undefined, grade: 0, x: 0, y: 0, c: 1, s: 0 };
+        memo.sample = (px, py) => groundZ(world, px, py, memo.hint === undefined ? undefined : memo.hint + memo.grade * ((px - memo.x) * memo.c + (py - memo.y) * memo.s));
+        memos.set(world, memo);
     }
+    for (const m of memo.list) {
+        if (m.x === x && m.y === y && m.heading === heading && m.length === length && m.width === width && m.hint === hint && m.hintGrade === hintGrade) return { ...m.result };
+    }
+    memo.hint = hint;
+    memo.grade = hintGrade;
+    memo.x = x;
+    memo.y = y;
+    memo.c = Math.cos(heading);
+    memo.s = Math.sin(heading);
     const result = slopeFrom(memo.sample, x, y, heading, length, width);
-    memo.list.unshift({ x, y, heading, length, width, result });
+    memo.list.unshift({ x, y, heading, length, width, hint, hintGrade, result });
     if (memo.list.length > MEMO) memo.list.pop();
     return { ...result };
 }

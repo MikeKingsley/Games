@@ -15,7 +15,9 @@ for (let x = r.bounds.minX; x < r.bounds.maxX; x += 60) for (let y = r.bounds.mi
 }
 console.log(`land ${landMin.toFixed(1)} .. ${landMax.toFixed(1)} world m (${(landMax / WORLD_SCALE).toFixed(0)} real m), sea floor down to ${seaMin.toFixed(1)}`);
 const brackets = [0.03, 0.05, 0.08, 0.1, 0.12, 0.15], above = Object.fromEntries(brackets.map(b => [b, 0]));
-let total = 0, over = 0, moved = 0, maxMove = 0, edges = 0;
+// (plan 0009 phase 7: interchange links too short to ramp to a bridge's clearance at 1:4 are relaxed, at most 2x)
+const relaxed = new Map((w.layers?.relaxed ?? []).map(x => [x.edge, x]));
+let total = 0, over = 0, overRelaxed = 0, worstRelaxed = 0, moved = 0, maxMove = 0, edges = 0;
 for (const e of w.graph.edges) {
     if (!e.z || e.cls === 'ferry' || e.bridge) continue;
     edges++;
@@ -27,9 +29,11 @@ for (const e of w.graph.edges) {
         move = Math.max(move, Math.abs(e.z[k] - terrainHeight(r, p.x, p.y)));
     }
     total += e.len;
-    if (worst > lim * 1.05) over++;
+    if (worst > lim * 1.05) {
+        if (relaxed.has(e.id) && worst <= relaxed.get(e.id).relaxedTo + 1e-4) { overRelaxed++; worstRelaxed = Math.max(worstRelaxed, worst / lim); } else over++;
+    }
     if (move > 1.5) moved++;
     maxMove = Math.max(maxMove, move);
 }
-console.log(`roads: ${edges} edges, ${(total / 1000).toFixed(0)} world km; over their class limit: ${over}; cut/fill > 1.5 m: ${moved}; largest cut/fill ${maxMove.toFixed(1)} m`);
+console.log(`roads: ${edges} edges, ${(total / 1000).toFixed(0)} world km; over their class limit: ${over} (and ${overRelaxed} interchange links relaxed for a bridge's clearance, worst ${worstRelaxed.toFixed(2)}x); cut/fill > 1.5 m: ${moved}; largest cut/fill ${maxMove.toFixed(1)} m`);
 console.log('share of road length steeper than', brackets.map(b => `${(b * 100).toFixed(0)}%: ${((100 * above[b]) / total).toFixed(1)}%`).join('  '));
