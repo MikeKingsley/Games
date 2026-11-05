@@ -4,6 +4,8 @@
 import { slopeAt, roadHeightAt, roadGradeAt, crossingGap } from '../../../Games.Client/wwwroot/games/delivery-driver/world/terrain.js';
 import { lanePoint, laneOffset, edgeOpen } from '../../../Games.Client/wwwroot/games/delivery-driver/world/roadgraph.js';
 import { CLEARANCE } from '../../../Games.Client/wwwroot/games/delivery-driver/world/crossings.js';
+import { railsNear, railTouches } from '../../../Games.Client/wwwroot/games/delivery-driver/world/rails.js';
+import { obb, sat } from '../../../Games.Client/wwwroot/games/delivery-driver/sim/collision.js';
 
 /**
  * How much steeper than its own road (and than 0.15 m per metre) a vehicle's height step may be: the blend across a
@@ -86,4 +88,28 @@ export function driveThroughCrossing(world, c, { reach = 50, year = crossingYear
         }
     }
     return { gap, runs, failures };
+}
+
+/** Body lengths (m) of the rigs, for the parapet check. */
+const BODY = { car: 4.2, lorry: 8 };
+
+/**
+ * Drives `rig` along `edge` over [from, to] m in its nearside lane, as driveAlong does, and counts the steps where its
+ * body overlaps a bridge parapet on its own layer (phase 10: a vehicle in its lane must never touch a rail, at a deck's
+ * ends or anywhere on it, nor one on the deck above when it drives the road below). Returns {steps, hits: [{along, z}]}.
+ */
+export function railHitsAlong(world, edge, from, to, { forward = true, year = 2024, rig = RIGS[0], step = 1 } = {}) {
+    const off = laneOffset(edge, year), p = { x: 0, y: 0, angle: 0 }, buf = [];
+    const out = { steps: 0, hits: [] };
+    for (let s = forward ? from : edge.len - to; s <= (forward ? to : edge.len - from); s += step) {
+        const along = forward ? s : edge.len - s;
+        lanePoint(edge, s, forward, off, p);
+        const z = roadHeightAt(edge, along);
+        const box = obb(p.x, p.y, BODY[rig.name], rig.width, p.angle);
+        for (const r of railsNear(world, p.x, p.y, 10, year, buf)) {
+            if (railTouches(r, z) && sat(box, r.box)) { out.hits.push({ along, z, rail: r }); break; }
+        }
+        out.steps++;
+    }
+    return out;
 }

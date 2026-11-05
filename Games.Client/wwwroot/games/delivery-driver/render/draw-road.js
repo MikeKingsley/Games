@@ -5,6 +5,7 @@ import { layoutJunction } from '../world/junction-layout.js';
 import { polylinePath } from './sprite-cache.js';
 import { waterAt } from '../world/region.js';
 import { resample } from '../world/geom.js';
+import { drawLevel } from '../world/crossings.js';
 
 export function roadStyle(year) {
     if (year < 1926) return { surface: '#b5a685', kerb: '#8d8068', centre: null, edge: null };
@@ -75,6 +76,19 @@ export function drawBridges(ctx, graph, edgeIds, year, region) {
 }
 
 export function drawRoads(ctx, graph, edgeIds, year, detail = true, region = null, wet = false) {
+    // layers in turn (tunnels under the ground roads, bridges over them), each with all its passes, so a deck's surface
+    // and markings are never overdrawn by the markings of the road below it
+    const levels = [[], [], []];
+    for (const id of edgeIds) {
+        const e = graph.edges[id];
+        if (edgeOpen(e, year)) levels[drawLevel(e) + 1].push(id);
+    }
+    const used = levels.filter(l => l.length);
+    if (used.length <= 1) return drawRoadLayer(ctx, graph, edgeIds, year, detail, region, wet);
+    for (const ids of used) drawRoadLayer(ctx, graph, ids, year, detail, region, wet);
+}
+
+function drawRoadLayer(ctx, graph, edgeIds, year, detail, region, wet) {
     const style = { ...roadStyle(year) };
     // wet roads are darker with a faint sheen down the middle
     if (wet) { style.surface = darken(style.surface); style.sheen = 'rgba(200, 215, 235, 0.12)'; }

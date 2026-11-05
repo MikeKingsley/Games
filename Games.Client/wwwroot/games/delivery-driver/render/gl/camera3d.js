@@ -123,14 +123,15 @@ export function clearTerrain(eye, look, ground, clearance = 2.5, margin = 1.2, m
  * point and the eye: `solidTop(x, y)` is the roof height there (-Infinity for open ground). It snaps in at once so the
  * lens never passes through a wall, and eases back out once the way is clear (`out.boom` holds the fraction).
  */
-export function clearSolids(out, solidTop, margin = 1.2, minFrac = 0.22) {
+export function clearSolids(out, solidTop, margin = 1.2, minFrac = 0.22, blocked = null) {
     const { eye, look } = out;
     const dx = eye[0] - look[0], dy = eye[1] - look[1], dz = eye[2] - look[2];
     const samples = Math.max(8, Math.ceil(Math.hypot(dx, dy, dz) / 1.5));
     let frac = 1;
     for (let i = 1; i <= samples; i++) {
         const s = i / samples;
-        if (solidTop(look[0] + dx * s, look[1] + dy * s) + margin > look[2] + dz * s) { frac = Math.max(minFrac, (i - 1) / samples); break; }
+        const x = look[0] + dx * s, y = look[1] + dy * s, z = look[2] + dz * s;
+        if (solidTop(x, y) + margin > z || (blocked && blocked(x, y, z, look))) { frac = Math.max(minFrac, (i - 1) / samples); break; }
     }
     const prev = out.boom ?? 1;
     const boom = frac < prev ? frac : prev + (frac - prev) * 0.08;
@@ -138,14 +139,17 @@ export function clearSolids(out, solidTop, margin = 1.2, minFrac = 0.22) {
     eye[0] = look[0] + dx * boom; eye[1] = look[1] + dy * boom; eye[2] = look[2] + dz * boom;
 }
 
+const noSolid = () => -Infinity;
+
 /**
  * Builds the perspective camera for a view `{tx, ty, tz, az, distance, tilt, ahead}` (see engine/camera.js): it looks
  * along world heading `az` (0 = east, +y south) at the point `ahead` metres in front of (tx, ty), from `distance` metres
  * away at `tilt` radians above the horizon. Writes `vp` (including the y flip), `eye`, `view`, `proj`, `inv`, `look`.
- * `opts.ground` enables terrain clearance, `opts.solidTop` keeping out of buildings (see clearSolids); `opts.far` is
- * the far plane.
+ * `opts.ground` enables terrain clearance (`opts.cameraGround`, if given, is the surface to clear instead: the one the
+ * vehicle drives on, so a bridge deck above it does not lift the camera), `opts.solidTop` keeping out of buildings and
+ * `opts.blocked` out of bridge slabs (see clearSolids); `opts.far` is the far plane.
  */
-export function cameraFromView(out, v, aspect, { ground = null, solidTop = null, far = 3000, near = 0.5 } = {}) {
+export function cameraFromView(out, v, aspect, { ground = null, solidTop = null, blocked = null, cameraGround = null, far = 3000, near = 0.5 } = {}) {
     out.vp ??= mat4.create(); out.inv ??= mat4.create(); out.proj ??= mat4.create(); out.view ??= mat4.create();
     out.eye ??= [0, 0, 0]; out.look ??= [0, 0, 0];
     const ca = Math.cos(v.az), sa = Math.sin(v.az), ct = Math.cos(v.tilt), st = Math.sin(v.tilt);
@@ -153,8 +157,8 @@ export function cameraFromView(out, v, aspect, { ground = null, solidTop = null,
     out.eye[0] = out.look[0] - ca * v.distance * ct;
     out.eye[1] = out.look[1] - sa * v.distance * ct;
     out.eye[2] = out.look[2] + v.distance * st;
-    if (solidTop) clearSolids(out, solidTop);
-    if (ground) clearTerrain(out.eye, out.look, ground);
+    if (solidTop || blocked) clearSolids(out, solidTop ?? noSolid, 1.2, 0.22, blocked);
+    if (ground) clearTerrain(out.eye, out.look, cameraGround ?? ground);
     out.fov = fovFor(aspect);
     mat4.perspective(out.proj, out.fov, aspect, near, far);
     mat4.lookAt(out.view, [out.eye[0], -out.eye[1], out.eye[2]], [out.look[0], -out.look[1], out.look[2]], [0, 0, 1]);

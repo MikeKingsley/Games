@@ -5,7 +5,7 @@
 // cell at a time so field edges stay crisp: each cell has its own four vertices (positions on the shared grid, so
 // neighbouring cells and chunks meet exactly) with smooth normals from the height grid.
 import { createBuilder, extrudeStrip, mergeMeshes } from './meshes.js';
-import { GRID_N, gridHeight, terrainHeight, waterLevel, roadDeckNear } from '../../world/terrain.js';
+import { GRID_N, gridHeight, terrainHeight, waterLevel, roadDeckNear, tunnelFloorNear } from '../../world/terrain.js';
 import { moorAt } from '../../world/region.js';
 import { CHUNK_SIZE } from '../../config.js';
 
@@ -27,6 +27,8 @@ const hash = (x, y) => { const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.54
 
 /** How far under a road's deck the ground mesh is held beside it, metres (the road ribbons sit 0.04-0.1 m above the deck). */
 const ROAD_SINK = 0.15;
+/** How far beside a tunnel's carriageway edge the ground is cut down to the road, metres (a little more than the walls and the grid's half cell). */
+const TUNNEL_CUT = 5.5;
 
 /** Water surface tint used for both the sea and rivers is set by the shader; these are the vertex colours. */
 export const WATER_ALPHA = 0.78;
@@ -136,6 +138,12 @@ export function buildChunkMesh(world, chunk, { lod = 0 } = {}) {
         if (v === undefined) {
             const deck = roadDeckNear(world, grid.x0 + gi * grid.step, grid.y0 + gj * grid.step, span * 1.45);
             v = deck === null ? z : Math.min(z, deck - ROAD_SINK);
+            // a tunnel is a covered cutting: the hill is cut down to the road beside and over it (full detail only; far chunks keep the hill)
+            if (stride === 1) {
+                const floor = tunnelFloorNear(world, grid.x0 + gi * grid.step, grid.y0 + gj * grid.step, TUNNEL_CUT);
+                // (a tunnel under the sea level, such as a drowned crossing, stays buried: cutting it would flood the cutting)
+                if (floor !== null && floor > 0.3) v = Math.min(v, floor - ROAD_SINK);
+            }
             sunk.set(key, v);
         }
         return v;

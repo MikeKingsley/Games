@@ -19,6 +19,7 @@ import { updateDrivers, aiPosition, hirePool, hireDriver, fireDriver, assignVehi
 import { takeLoan, repayLoan } from './economy.js';
 import { createTraffic, agentDrawSpec, TRAFFIC_TYPES } from '../traffic/traffic.js';
 import { obb, sat } from '../sim/collision.js';
+import { railsNear, railTouches } from '../world/rails.js';
 import { stepTrailer, trailerObb, createTrailer, attach, underRun, stepLooseTrailer } from '../sim/trailer.js';
 import { couple, uncouple, nearestTrailer, couplingCheck, couplingHint, unbrakedTrailerNear } from '../sim/coupling.js';
 import { drawVehicle } from '../render/draw-vehicles.js';
@@ -296,6 +297,13 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
             if (impact > 0.5) { session.lastImpact = impact; session.onImpact?.(impact, col); }
             return;
         }
+        for (const rail of railsNear(session.world, t.x, t.y, 14 + t.spec.length / 2, session.year, railBuf)) {
+            if (!railTouches(rail, t.z ?? p.z ?? 0) || !sat(box, rail.box)) continue;
+            const impact = Math.abs(p.speed);
+            undoStep(p);
+            if (impact > 0.5) { session.lastImpact = impact; session.onImpact?.(impact, rail); }
+            return;
+        }
         for (const other of session.looseTrailers?.() ?? []) {
             if (other === t || !sat(box, trailerObb(other))) continue;
             const impact = Math.abs(p.speed);
@@ -412,6 +420,7 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
     function trailerBlocked(t, p) {
         const box = trailerObb(t);
         for (const col of session.world.colliders.query(box)) if (col.kind !== 'cone' && sat(box, col.box)) return col;
+        for (const rail of railsNear(session.world, t.x, t.y, 14 + t.spec.length / 2, session.year, railBuf)) if (railTouches(rail, t.z ?? 0) && sat(box, rail.box)) return rail;
         if (sat(box, vehicleObb(p))) return 'player';
         for (const o of session.trailerObjs.values()) if (o !== t && sat(box, trailerObb(o))) return 'trailer';
         const end = Math.sign(t.speed) > 0 ? t.spec.axle + t.spec.kingpin : -t.spec.rearOverhang;
@@ -935,9 +944,15 @@ export function createSession({ options = {}, sound, regionId = 'sw-england', wo
         .filter(v => v.pose && v.id !== session.career.activeVehicle && !session.career.drivers.some(d => d.vehicle === v.id && d.job))
         .map(v => ({ rec: v, spec: vehicleById(v.model), pose: v.pose }));
 
-    /** Static obstacles (buildings, trees, rocks) and the sea/estuaries (wide water is a wall unless on a road). */
+    /** Static obstacles (buildings, trees, rocks), bridge parapets on the vehicle's own layer, and the sea/estuaries (wide water is a wall unless on a road). */
+    const railBuf = [];
     function collide(p) {
         const box = vehicleObb(p);
+        for (const rail of railsNear(session.world, p.x, p.y, 14 + p.spec.length / 2, session.year, railBuf)) {
+            if (!railTouches(rail, p.z ?? 0)) continue;
+            const impact = collideVehicle(p, rail.box);
+            if (impact > 0.5) { session.lastImpact = impact; session.onImpact?.(impact, rail); }
+        }
         for (const col of session.world.colliders.query(box)) {
             if (col.kind === 'cone') { if (sat(box, col.box)) knockCone(col.ref); continue; }
             const impact = collideVehicle(p, col.box);

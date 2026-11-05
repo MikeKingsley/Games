@@ -153,3 +153,13 @@ export function zoneAt(list, along) {
     for (const z of list) if (along >= z.from && along <= z.to) return z;
     return null;
 }
+
+/**
+ * Which layer an edge is drawn on in plan views (minimaps, the Canvas fallback): 1 for an edge with a bridge deck, -1 for
+ * one in a tunnel, else 0. Drawn in ascending order, so a road on a deck lies over the road below it and a tunnel under
+ * the ground roads. Uses the zones `gradeRoads` sets, else the baked bridge/tunnel flags.
+ */
+export function drawLevel(e) {
+    if (e.zones) return e.zones.some(z => z.kind === 'deck') ? 1 : e.zones.some(z => z.kind === 'tunnel') ? -1 : 0;
+    return e.bridge ? 1 : e.tunnel ? -1 : 0;
+}

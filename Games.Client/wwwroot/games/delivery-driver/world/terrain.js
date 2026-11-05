@@ -1428,6 +1428,68 @@ export function roadDeckNear(world, x, y, reach) {
     return best;
 }
 
+/** Embankment height of the road at `t` m along an edge: the deck above the land beside it (+ fill, - cutting; 0 ungraded). */
+export function roadFillAt(edge, t) {
+    return sampleProfile(edge.zFill, edge.zStep, t);
+}
+
+/**
+ * The road height of a tunnel under (x, y) when the point is within `reach` m of the tunnel's carriageway edge, else null.
+ * The ground mesh is cut down to it, so a tunnel is a covered cutting the camera can see into.
+ */
+export function tunnelFloorNear(world, x, y, reach) {
+    const graph = world.graph;
+    let best = null, bestOut = Infinity;
+    for (const s of graph.index.near(x, y, reach + ROAD_CLASS.M.width / 2 + 1, near)) {
+        const e = graph.edges[s.edge];
+        if (!e.z || !e.underGround) continue;
+        const p = e.pts, k = 2 * s.seg;
+        const ax = p[k], ay = p[k + 1], dx = p[k + 2] - ax, dy = p[k + 3] - ay;
+        const l2 = dx * dx + dy * dy;
+        const u = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+        const out = Math.hypot(ax + dx * u - x, ay + dy * u - y) - e.zHalf;
+        if (!(out < reach && out < bestOut)) continue;
+        const along = e.zCum[s.seg] + Math.sqrt(l2) * u;
+        const zone = zoneAt(e.zones, along);
+        if (!zone || zone.kind !== 'tunnel') continue;
+        bestOut = out;
+        best = roadHeightAt(e, along);
+    }
+    return best;
+}
+
+/**
+ * The tops of the bridge decks covering (x, y) (the carriageway plus the slab's overhang), pushed onto `out` (cleared
+ * first). The chase camera uses it to stay out of the slab when the vehicle drives beneath a deck.
+ */
+export function decksAt(world, x, y, out = []) {
+    out.length = 0;
+    const graph = world.graph;
+    for (const s of graph.index.near(x, y, ROAD_CLASS.M.width / 2 + 2, near)) {
+        const e = graph.edges[s.edge];
+        if (!e.z || !e.zones) continue;
+        const p = e.pts, k = 2 * s.seg;
+        const ax = p[k], ay = p[k + 1], dx = p[k + 2] - ax, dy = p[k + 3] - ay;
+        const l2 = dx * dx + dy * dy;
+        const u = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+        if (Math.hypot(ax + dx * u - x, ay + dy * u - y) > e.zHalf + 0.8) continue;
+        const along = e.zCum[s.seg] + Math.sqrt(l2) * u;
+        const zone = zoneAt(e.zones, along);
+        if (zone && zone.kind === 'deck') out.push(roadHeightAt(e, along));
+    }
+    return out;
+}
+
+/**
+ * The height the chase camera must stay above at (x, y) for a vehicle at height `hint`: the surface it drives on (never a
+ * deck above it) and, over a tunnel, the road floor (the ground mesh is cut down to it).
+ */
+export function cameraGroundZ(world, x, y, hint) {
+    const g = groundZ(world, x, y, hint);
+    const t = tunnelFloorNear(world, x, y, 5.5);
+    return t !== null ? Math.min(g, t) : g;
+}
+
 // ---- Slopes --------------------------------------------------------------------------------------------------------
 
 /**

@@ -4,6 +4,7 @@
 import { TRIP_RATE } from '../../config.js';
 import { terrainHeight } from '../../world/terrain.js';
 import { edgeOpen, edgeClass } from '../../world/roadgraph.js';
+import { drawLevel } from '../../world/crossings.js';
 import { createBuilder, addStrip } from './meshes.js';
 import { createContext } from './context.js';
 import { createProgram } from './program.js';
@@ -129,7 +130,8 @@ export function visibleRoads(world, year, { cx, cy, range = RANGE }) {
         if (big && (cls === 'street' || cls === 'lane' || cls === 'access')) continue;
         out.push({ edge: e, cls });
     }
-    return out;
+    // bridges over roads, tunnels under them: drawn in layer order (a stable sort keeps the rest as it was)
+    return out.some(r => drawLevel(r.edge) !== 0) ? out.sort((a, b) => drawLevel(a.edge) - drawLevel(b.edge)) : out;
 }
 
 const edgePoints = (pts, out = []) => { for (let i = 0; i < pts.length; i += 2) out.push({ x: pts[i], y: pts[i + 1], z: 0 }); return out; };

@@ -10,6 +10,7 @@ import { roadHeightAt, groundZ } from '../../world/terrain.js';
 import { waterAt } from '../../world/region.js';
 import { pointAt, closestOnPoly } from '../../world/geom.js';
 import { roadStyle, offsetPolyline } from '../draw-road.js';
+import { BRIDGE, addDeck, addTunnel, deckRuns, tunnelRuns } from './structure-mesh.js';
 
 const hex = h => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
 const dim = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
@@ -19,9 +20,7 @@ export const LAYER = { kerb: 0.04, surface: 0.06, reservation: 0.08, marking: 0.
 /** Sample spacing along an edge, metres. */
 export const STEP = 4;
 
-export const BRIDGE = {
-    parapet: 0.9, parapetWidth: 0.6, slab: 0.8, stone: hex('#a59b88'), concrete: hex('#c4c2bb'), under: hex('#6f685c'),
-};
+export { BRIDGE };
 export const MARK = { yard: hex('#a49d8d'), yardLine: hex('#f2efe4'), bay: hex('#f2b33d'), practice: hex('#b9b5ab'), quay: hex('#a7a196') };
 
 /** Colours for a year (matches `roadStyle` in draw-road.js), as 0..1 triples. */
@@ -141,8 +140,10 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
     if (samples.length < 2) return null;
     const b = createBuilder();
     const surface = edge.cls === 'lane' ? col.lane : edge.cls === 'access' ? col.access : col.surface;
-    const bridges = (edge.zBridges ?? []).map(([ia, ib]) => [ia * edge.zStep, ib * edge.zStep]).filter(([t0, t1]) => !window || (t1 > window[0] && t0 < window[1]));
-    const bridge = (t0, t1) => addBridge(b, world, edge, all, t0, t1, width, year, window, tA, tB);
+    // bridge decks and tunnels: the stretches that touch this window (the parts outside it belong to another chunk)
+    const near_ = ([t0, t1]) => !window || (t1 + 60 > window[0] && t0 - 60 < window[1]);
+    const decks = deckRuns(edge).filter(near_), tunnels = tunnelRuns(edge).filter(near_);
+    const helpers = { trimSamples, offsetSamples };
     if (cls === 'ferry') {
         // dry approaches as road; the crossing as a dashed route on the water
         const wet2 = wetRuns(samples, region, 15);
@@ -201,7 +202,8 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
         }
     }
     if (detail && year >= 1950 && col.centre) addZebra(b, edge, width, window, tA, tB);
-    for (const [t0, t1] of bridges) bridge(t0, t1);
+    for (const [t0, t1] of decks) addDeck(b, helpers, world, edge, all, t0, t1, width, year, window, tA, tB);
+    for (const [t0, t1] of tunnels) addTunnel(b, helpers, world, edge, all, t0, t1, width, year, window, tA, tB);
     return b.finish();
 }
 
@@ -244,44 +246,6 @@ function addZebra(b, edge, width, window, tA, tB) {
     for (let k = -4; k < 4; k++) {
         const c = { x: p.x + tx * (k + 0.5) * 1.0, y: p.y + ty * (k + 0.5) * 1.0 };
         addStrip(b, [{ x: c.x + nx * half, y: c.y + ny * half, z }, { x: c.x - nx * half, y: c.y - ny * half, z }], 0.5, undefined, white, { bias: LAYER.marking });
-    }
-}
-
-/** Parapets either side, a stone slab under the deck, and piers or abutments down to the bed. */
-function addBridge(b, world, edge, samples, t0, t1, width, year, win = null, tA = 0, tB = 0) {
-    const whole = samples.filter(s => s.d >= t0 - 1e-6 && s.d <= t1 + 1e-6);
-    if (whole.length < 2) return;
-    // the parapets and slab stop at the junction surface at either end, so they never cut through the roads meeting there;
-    // within a chunk's window only that stretch is built
-    const part = trimSamples(samples, Math.max(t0, win?.[0] ?? 0, tA), Math.min(t1, win?.[1] ?? edge.len, edge.len - tB));
-    const stone = year < 1960 ? BRIDGE.stone : BRIDGE.concrete;
-    const half = width / 2 + 0.5;
-    for (const side of part.length < 2 ? [] : [1, -1]) {
-        const rail = offsetSamples(part, side * half);
-        for (let i = 0; i < rail.length - 1; i++) {
-            const p = rail[i], q = rail[i + 1];
-            const ex = q.x - p.x, ey = q.y - p.y, len = Math.hypot(ex, ey) || 1, nx = -ey / len * BRIDGE.parapetWidth / 2, ny = ex / len * BRIDGE.parapetWidth / 2;
-            const poly = [{ x: p.x + nx, y: p.y + ny }, { x: q.x + nx, y: q.y + ny }, { x: q.x - nx, y: q.y - ny }, { x: p.x - nx, y: p.y - ny }];
-            const zLow = Math.min(p.z, q.z);
-            compose.prism(b, poly, BRIDGE.parapet + Math.abs(q.z - p.z), stone, { z0: zLow + LAYER.surface });
-        }
-    }
-    // slab under the deck, the same width as the kerb strip
-    for (let i = 0; i < part.length - 1; i++) {
-        const p = part[i], q = part[i + 1];
-        const ex = q.x - p.x, ey = q.y - p.y, len = Math.hypot(ex, ey) || 1, nx = -ey / len * (width / 2 + 0.8), ny = ex / len * (width / 2 + 0.8);
-        const poly = [{ x: p.x + nx, y: p.y + ny }, { x: q.x + nx, y: q.y + ny }, { x: q.x - nx, y: q.y - ny }, { x: p.x - nx, y: p.y - ny }];
-        compose.prism(b, poly, BRIDGE.slab + Math.abs(q.z - p.z), BRIDGE.under, { z0: Math.min(p.z, q.z) - BRIDGE.slab, roofColor: BRIDGE.under, cap: false });
-    }
-    // abutments at both ends and a pier every ~14 m between, down to the river bed
-    const piers = [whole[0], whole[whole.length - 1]];
-    const span = t1 - t0;
-    for (let k = 1; k < Math.floor(span / 14); k++) piers.push(whole[Math.min(whole.length - 1, Math.round((whole.length - 1) * (k / Math.floor(span / 14))))]);
-    for (const s of piers) {
-        if (win && !(s.d >= win[0] - 1e-6 && (s.d < win[1] - 1e-6 || (win[1] >= edge.len - 1e-6 && s.d >= edge.len - 1e-6)))) continue; // another chunk's
-        const bed = groundZ(world, s.x, s.y, false);
-        const bottom = Math.min(bed, s.z - 1) - 0.3;
-        compose.cylinder(b, s.x, s.y, bottom, Math.min(1.2, width / 5), s.z - BRIDGE.slab - bottom + 0.05, 8, BRIDGE.under);
     }
 }
 

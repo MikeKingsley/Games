@@ -7,7 +7,8 @@ import { createProgram } from './program.js';
 import { SCENE, WATER, INSTANCED, SKY, RAIN } from './shaders.js';
 import * as mat4 from './mat4.js';
 import { QUALITY, CHUNK_SIZE } from '../../config.js';
-import { groundZ } from '../../world/terrain.js';
+import { groundZ, decksAt, cameraGroundZ } from '../../world/terrain.js';
+import { SLAB } from '../../world/crossings.js';
 import { uploadMesh, drawMesh, deleteMesh, ATTRIB_SLOTS, INSTANCE_SLOTS, uploadInstances, drawInstances, deleteInstances, createStream } from './gpu-mesh.js';
 import { buildChunkMesh, buildFarField, WATER_ALPHA } from './terrain-mesh.js';
 import { buildChunkRoads, chunkRoadSignature } from './road-mesh.js';
@@ -21,7 +22,7 @@ import { currentStop } from '../../game/contracts.js';
 import { createVehicleDrawer } from './gl-vehicles.js';
 import { isLive } from '../../world/furniture.js';
 import { createChunkCache } from './chunk-cache.js';
-import { obliqueCamera, cameraFromView, frustumPlanes, visibleChunks, lodFor, viewDistance } from './camera3d.js';
+import { obliqueCamera, cameraFromView, frustumPlanes, visibleChunks, lodFor, viewDistance, LOOK_HEIGHT } from './camera3d.js';
 
 /** Head lamp colours by era (the Canvas renderer's tints) and street lamp light by era: gas, sodium, white. */
 const HEADLIGHT = [[1, 0.84, 0.59], [1, 0.89, 0.67], [1, 0.94, 0.78], [0.98, 0.97, 0.9], [0.92, 0.95, 1]];
@@ -90,6 +91,18 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
             top = Math.max(top, (it.ref.z ?? 0) + h);
         }
         return top;
+    };
+
+    /** The slab of a bridge deck above the look point blocks the camera boom (a deck the vehicle stands on does not). */
+    const deckTops = [];
+    const deckBlocks = (x, y, z, look) => {
+        decksAt(world, x, y, deckTops);
+        const base = look[2] - LOOK_HEIGHT;
+        for (const top of deckTops) {
+            if (Math.abs(top - base) < 1.5) continue;
+            if (top > base && z > top - SLAB - 0.6 && z < top + 1.4) return true;
+        }
+        return false;
     };
 
     function build() {
@@ -391,7 +404,8 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
                 const radius = viewDistance(q);
                 if (camera.view3d) {
                     const ground = (x, y) => groundZ(world, x, y);
-                    cameraFromView(cam, camera.view3d, aspect, { ground, solidTop, far: radius * 1.6 + 400 });
+                    const hint = player.z ?? 0;
+                    cameraFromView(cam, camera.view3d, aspect, { ground, solidTop, blocked: deckBlocks, cameraGround: (x, y) => cameraGroundZ(world, x, y, hint), far: radius * 1.6 + 400 });
                     camera.gl = { vp: cam.vp, inv: cam.inv, width: canvas.clientWidth || canvas.width, height: canvas.clientHeight || canvas.height, ground };
                 } else obliqueCamera(cam, target, aspect);
                 frustumPlanes(cam.vp, planes);
