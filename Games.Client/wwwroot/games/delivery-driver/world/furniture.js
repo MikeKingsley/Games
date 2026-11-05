@@ -11,6 +11,7 @@
 import { ROAD_CLASS } from './roadgraph.js';
 import { waterAt } from './region.js';
 import { pointAt, closestOnPoly } from './geom.js';
+import { layoutJunction, trimFor } from './junction-layout.js';
 
 const KERB = 0.5;          // kerb + gutter beyond the carriageway edge
 const LAMP_SET = 0.6;      // a lamp stands this far beyond the kerb
@@ -31,22 +32,74 @@ export function maxHalfWidth(edge) {
     return w / 2;
 }
 
-/** Distance from a junction node at which kerbs and stop lines sit: nothing but road lies closer. */
+/**
+ * Furniture is year independent, so it keeps clear of the biggest junction a node ever has: the junction layout
+ * (world/junction-layout.js) is taken in a spread of years and the largest trim or reach wins.
+ */
+const LAYOUT_YEARS = [1919, 1940, 1960, 1980, 2100];
+
+/** Distance along an edge from the given end ('a' | 'b') at which the junction surface ends in every year: nothing but road lies closer. */
+export function trimMax(graph, edge, end) {
+    let t = 0;
+    for (const y of LAYOUT_YEARS) t = Math.max(t, trimFor(graph, edge, end, y));
+    return t;
+}
+
+/** Farthest distance from a junction node that its surface (kerbs, mouths, ring) ever reaches. */
 export function mouthRadius(graph, node) {
+    let r = 0;
+    for (const y of LAYOUT_YEARS) r = Math.max(r, layoutJunction(graph, node, y).reach);
+    if (r > 0) return r;
     let hw = 0;
     for (const id of node.edges) hw = Math.max(hw, maxHalfWidth(graph.edges[id]));
-    if (node.edges.length >= 3 && node.junction === 'roundabout') return 7.2 + 2 * hw + 1 + 1;
     return hw + 3.5;
 }
 
-/** The arms of a node: [{edge, bearing (outward from the node), hw}], bearing from the edge's first segment. */
+/** True if (x, y) lies on the surface of either end's junction, or within `margin` of it (kerb and pavement bands included), in any year. */
+export function onJunctionSurface(graph, edge, x, y, margin = 0, years = LAYOUT_YEARS) {
+    for (const nid of [edge.a, edge.b]) {
+        const node = graph.nodes[nid];
+        if (node.edges.length < 3 || Math.hypot(node.x - x, node.y - y) > mouthRadius(graph, node) + Math.abs(margin)) continue;
+        for (const yr of years) {
+            const lay = layoutJunction(graph, node, yr);
+            if (lay.boundary.length >= 3 && nearPolygon(lay.boundary, x, y, margin)) return true;
+        }
+    }
+    return false;
+}
+
+/** onJunctionSurface for the junctions of every road within 30 m of the point (a road can pass close to another road's junction). */
+export function onAnyJunction(graph, x, y, margin = 0, years = LAYOUT_YEARS) {
+    const seen = new Set();
+    for (const sg of graph.index.near(x, y, 30)) {
+        if (seen.has(sg.edge)) continue;
+        seen.add(sg.edge);
+        if (onJunctionSurface(graph, graph.edges[sg.edge], x, y, margin, years)) return true;
+    }
+    return false;
+}
+
+/** Inside a polygon, or within `margin` of its border. */
+function nearPolygon(poly, x, y, margin) {
+    let inside = false, best = Infinity;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const a = poly[i], b = poly[j];
+        if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+        const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1;
+        const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / l2));
+        best = Math.min(best, Math.hypot(a.x + dx * t - x, a.y + dy * t - y));
+    }
+    return inside || best <= margin;
+}
+
+/** The arms of a node: [{edge, bearing (outward from the node), hw, end}], bearing from the edge's first segment. */
 export function armsOf(graph, node) {
     return node.edges.map(id => {
         const e = graph.edges[id];
         const atA = e.a === node.id;
         const p = pointAt(e.pts, atA ? Math.min(6, e.len / 2) : Math.max(e.len - 6, e.len / 2));
         const bearing = Math.atan2(p.y - node.y, p.x - node.x);
-        return { edge: e, bearing, hw: maxHalfWidth(e) };
+        return { edge: e, bearing, hw: maxHalfWidth(e), end: atA ? 'a' : 'b' };
     });
 }
 
@@ -102,13 +155,15 @@ function edgeLamps(world, e) {
     const gap = LAMP_GAP[cls] ?? 36;
     const hw = maxHalfWidth(e);
     const off = hw + KERB + LAMP_SET;
-    const a = mouthRadius(graph, graph.nodes[e.a]) + 2, b = e.len - mouthRadius(graph, graph.nodes[e.b]) - 2;
+    const a = trimMax(graph, e, 'a') + 2, b = e.len - trimMax(graph, e, 'b') - 2;
     for (let d = a + 3, k = 0; d <= b; d += gap, k++) {
         if (inSpan(e, d)) continue;
         const p = pointAt(e.pts, d);
         const side = (k + e.id) % 2 ? 1 : -1;
         const [nx, ny] = leftOf(p.angle);
-        list.push({ x: p.x + nx * off * side, y: p.y + ny * off * side, angle: p.angle + (side > 0 ? Math.PI / 2 : -Math.PI / 2), edge: e.id, from, until });
+        const x = p.x + nx * off * side, y = p.y + ny * off * side;
+        if (onAnyJunction(graph, x, y, 2.4)) continue; // never on a junction surface, its kerb or pavement return
+        list.push({ x, y, angle: p.angle + (side > 0 ? Math.PI / 2 : -Math.PI / 2), edge: e.id, from, until });
     }
     return list;
 }
@@ -116,6 +171,23 @@ function edgeLamps(world, e) {
 /** True where distance d along an edge is on a bridge or tunnel span (with a margin). */
 function inSpan(e, d) {
     return (e.spans ?? []).some(sp => d > sp.from - 4 && d < sp.to + 4);
+}
+
+/** Farthest distance along a bearing from the node at which any year's junction surface ends (0 when there is none). */
+function boundaryRadius(graph, node, bearing) {
+    let best = 0;
+    const dx = Math.cos(bearing), dy = Math.sin(bearing);
+    for (const yr of LAYOUT_YEARS) {
+        const poly = layoutJunction(graph, node, yr).boundary;
+        for (let i = 0; i < poly.length; i++) {
+            const a = poly[i], b = poly[(i + 1) % poly.length];
+            const ex = b.x - a.x, ey = b.y - a.y, den = dx * ey - dy * ex;
+            if (Math.abs(den) < 1e-9) continue;
+            const t = ((a.x - node.x) * ey - (a.y - node.y) * ex) / den, u = ((a.x - node.x) * dy - (a.y - node.y) * dx) / den;
+            if (t > 0 && u >= 0 && u <= 1) best = Math.max(best, t);
+        }
+    }
+    return best;
 }
 
 /** A lamp on the kerb corner of a town junction, between the first pair of adjacent arms that leave room. */
@@ -135,9 +207,14 @@ function cornerLamp(world, node) {
         if (!best || gap > best.gap) best = { gap, mid: m.bearing + gap / 2, hw: Math.max(m.hw, n.hw) };
     }
     if (!best) return null;
-    const r = (best.hw + KERB + LAMP_SET) / Math.sin(Math.min(best.gap / 2, Math.PI / 2)) + 1;
+    // stand just outside the junction surface along the bisector of the gap (the layout boundary), else by the old rule
+    let r = (best.hw + KERB + LAMP_SET) / Math.sin(Math.min(best.gap / 2, Math.PI / 2)) + 1;
+    const hit = boundaryRadius(graph, node, best.mid);
+    if (hit > 0) r = hit + KERB + LAMP_SET;
     const from = Math.min(...lit.map(m => m.edge.opened ?? 0));
-    return { x: node.x + Math.cos(best.mid) * r, y: node.y + Math.sin(best.mid) * r, angle: best.mid + Math.PI, node: node.id, from, until: Infinity };
+    const x = node.x + Math.cos(best.mid) * r, y = node.y + Math.sin(best.mid) * r;
+    if (onAnyJunction(graph, x, y, 0.3)) return null;
+    return { x, y, angle: best.mid + Math.PI, node: node.id, from, until: Infinity };
 }
 
 // ---- Signs and signals -----------------------------------------------------------------------------------------
@@ -154,7 +231,6 @@ function nodeSigns(world, node, out) {
     if (node.edges.length < 3) return;
     const arms = armsOf(graph, node).filter(m => SIGN_CLASSES.has(m.edge.cls) && !m.edge.link && !m.edge.bridge && !m.edge.tunnel);
     if (arms.length < 3) return;
-    const R = mouthRadius(graph, node);
     const rank = m => ROAD_CLASS[m.edge.cls]?.rank ?? 1;
     const top = Math.max(...arms.map(rank));
     const born = Math.min(...arms.map(m => m.edge.opened ?? 0));
@@ -162,8 +238,10 @@ function nodeSigns(world, node, out) {
         const h = m.bearing + Math.PI; // heading of traffic arriving along this arm
         const [nx, ny] = leftOf(h);
         const off = m.hw + KERB + 0.9;
-        const d = R + dist;
+        const d = trimMax(graph, m.edge, m.end) + dist; // beyond the junction surface on this arm
         if (d > m.edge.len - 3) return;
+        const sx = node.x + Math.cos(m.bearing) * d + nx * off, sy = node.y + Math.sin(m.bearing) * d + ny * off;
+        if (onAnyJunction(graph, sx, sy, 1)) return; // (a bend or a close neighbour can swing the verge onto a corner)
         out.push({ kind, x: node.x + Math.cos(m.bearing) * d + nx * off, y: node.y + Math.sin(m.bearing) * d + ny * off, angle: m.bearing, node: node.id, edge: m.edge.id, from: Math.max(born, from), until: Infinity });
     };
     if (!node.town && top >= 3 && node.junction !== 'roundabout') {
@@ -185,18 +263,26 @@ function nodeSigns(world, node, out) {
  * signalGroup), `face` the direction the head looks (back along the arm toward oncoming traffic).
  */
 export function signalPoles(graph, node) {
-    const R = mouthRadius(graph, node);
+    // the layout puts a pole beside the stop line of every signalled approach (year 2100, when signals exist wherever they will)
+    const lay = layoutJunction(graph, node, 2100);
+    if (lay.poles.length) {
+        return lay.poles.map((p, k) => {
+            const a = lay.arms[p.arm], h = a.mouth.heading + Math.PI; // heading of traffic arriving along this arm
+            return { k, x: p.x, y: p.y, face: a.mouth.heading, group: Math.abs(Math.cos(h)) > 0.707 ? 0 : 1, edge: a.edge.id };
+        });
+    }
     return armsOf(graph, node).filter(m => !m.edge.link).map((m, k) => {
         const h = m.bearing + Math.PI;
         const [nx, ny] = leftOf(h);
         const off = m.hw + KERB + 0.6;
+        const R = trimMax(graph, m.edge, m.end);
         return { k, x: node.x + Math.cos(m.bearing) * (R + 0.5) + nx * off, y: node.y + Math.sin(m.bearing) * (R + 0.5) + ny * off, face: m.bearing, group: Math.abs(Math.cos(h)) > 0.707 ? 0 : 1, edge: m.edge.id };
     });
 }
 
 /** The signal poles of a node that fit (clear of water and of the other arms' roads); cached on the node. */
 export function signalPolesOf(world, node) {
-    return (node.signalPoles ??= signalPoles(world.graph, node).filter(p => standable(world, p.x, p.y, { boxes: [], trees: [] }, 0)));
+    return (node.signalPoles ??= signalPoles(world.graph, node).filter(p => standable(world, p.x, p.y, { boxes: [], trees: [] }, 0) && !onJunctionSurface(world.graph, world.graph.edges[p.edge], p.x, p.y, -0.01, [2024, 2100])));
 }
 
 // ---- A chunk's furniture ---------------------------------------------------------------------------------------

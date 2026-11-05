@@ -4,10 +4,11 @@
 // only through `roadKey(edge, year)`, so an era change rebuilds just the edges whose key changed.
 import { createBuilder, addStrip, compose, mergeMeshes } from './meshes.js';
 import { CHUNK_SIZE } from '../../config.js';
-import { edgeClass, edgeOpen, edgeWidth, junctionType, ROAD_CLASS, LANE_WIDTH } from '../../world/roadgraph.js';
+import { edgeClass, edgeOpen, edgeWidth, ROAD_CLASS, LANE_WIDTH } from '../../world/roadgraph.js';
+import { layoutJunction, junctionSignature, trimFor } from '../../world/junction-layout.js';
 import { roadHeightAt, groundZ } from '../../world/terrain.js';
 import { waterAt } from '../../world/region.js';
-import { pointAt } from '../../world/geom.js';
+import { pointAt, closestOnPoly } from '../../world/geom.js';
 import { roadStyle, offsetPolyline } from '../draw-road.js';
 
 const hex = h => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
@@ -21,7 +22,6 @@ export const STEP = 4;
 export const BRIDGE = {
     parapet: 0.9, parapetWidth: 0.6, slab: 0.8, stone: hex('#a59b88'), concrete: hex('#c4c2bb'), under: hex('#6f685c'),
 };
-export const ROUNDABOUT = { island: 7.2 };
 export const MARK = { yard: hex('#a49d8d'), yardLine: hex('#f2efe4'), bay: hex('#f2b33d'), practice: hex('#b9b5ab'), quay: hex('#a7a196') };
 
 /** Colours for a year (matches `roadStyle` in draw-road.js), as 0..1 triples. */
@@ -77,12 +77,14 @@ function trimSamples(samples, d0, d1) {
     return out;
 }
 
-/** Radius of the junction patch at a node in a year: markings of the edges meeting there stop short of it. */
-export function junctionRadius(graph, node, year) {
-    const open = node.edges.filter(id => edgeOpen(graph.edges[id], year));
-    if (open.length < 3) return 0;
-    const half = Math.max(...open.map(id => edgeWidth(graph.edges[id], year))) / 2;
-    return junctionType(node, year) === 'roundabout' ? ROUNDABOUT.island + 2 * half + 1 : half + 2;
+/** True if (x, y) lies on the carriageway of an open road other than `except` (pavements and kerbs never run over one). */
+function onOtherRoad(graph, year, x, y, except = null) {
+    for (const sg of graph.index.near(x, y, 12)) {
+        const e = graph.edges[sg.edge];
+        if (e === except || e.cls === 'ferry' || !edgeOpen(e, year)) continue;
+        if (closestOnPoly(e.pts, x, y).d < edgeWidth(e, year) / 2 - 0.3) return true;
+    }
+    return false;
 }
 
 /** The dry stretches of a ferry edge, as runs of sample indices [from, to] (the rest is the crossing). */
@@ -133,12 +135,14 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
     const cls = edgeClass(edge, year), width = edgeWidth(edge, year);
     const col = roadColours(year, wet);
     const all = samplesOf(edge);
-    const samples = window ? all.filter(s => s.d >= window[0] - 1e-6 && s.d <= window[1] + 1e-6) : all;
+    // the strips start and end where the junction layouts at either end hand over to the road (`trimFor`)
+    const g = world.graph, tA = trimFor(g, edge, 'a', year), tB = trimFor(g, edge, 'b', year);
+    const samples = trimSamples(all, Math.max(tA, window ? window[0] : 0), Math.min(edge.len - tB, window ? window[1] : edge.len));
     if (samples.length < 2) return null;
     const b = createBuilder();
     const surface = edge.cls === 'lane' ? col.lane : edge.cls === 'access' ? col.access : col.surface;
     const bridges = (edge.zBridges ?? []).map(([ia, ib]) => [ia * edge.zStep, ib * edge.zStep]).filter(([t0, t1]) => !window || (t1 > window[0] && t0 < window[1]));
-    const bridge = (t0, t1) => addBridge(b, world, edge, all, t0, t1, width, year, window);
+    const bridge = (t0, t1) => addBridge(b, world, edge, all, t0, t1, width, year, window, tA, tB);
     if (cls === 'ferry') {
         // dry approaches as road; the crossing as a dashed route on the water
         const wet2 = wetRuns(samples, region, 15);
@@ -161,18 +165,23 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
     addStrip(b, samples, width + 1.6, undefined, col.kerb, { bias: LAYER.kerb });
     addStrip(b, samples, width, undefined, surface, { bias: LAYER.surface });
     if (detail && cls !== 'lane' && cls !== 'access' && cls !== 'M' && !edge.bridge && !edge.tunnel) {
-        // pavements (town streets and roads) or a grassy verge (country roads) beside the kerb, stopping at the junction patches
-        const ps = trimSamples(samples, junctionRadius(world.graph, world.graph.nodes[edge.a], year), edge.len - junctionRadius(world.graph, world.graph.nodes[edge.b], year));
+        // pavements (town streets and roads) or a grassy verge (country roads) beside the kerb, stopping at the junction surfaces
+        const ps = samples;
         if (ps.length >= 2) {
             const town = !!edge.town && !edge.link;
             const off = width / 2 + 0.8 + (town ? 0.6 : 0.7), w = town ? 1.2 : 1.4;
-            for (const side of [1, -1]) addStrip(b, offsetSamples(ps, side * off), w, undefined, town ? col.pavement : col.verge, { bias: town ? LAYER.pavement : LAYER.kerb });
+            for (const side of [1, -1]) {
+                // the ends beside a junction can swing over a neighbouring road: the strip stops before it
+                let run = offsetSamples(ps, side * off);
+                while (run.length > 1 && onOtherRoad(g, year, run[0].x, run[0].y, edge)) run = run.slice(1);
+                while (run.length > 1 && onOtherRoad(g, year, run[run.length - 1].x, run[run.length - 1].y, edge)) run = run.slice(0, -1);
+                if (run.length >= 2) addStrip(b, run, w, undefined, town ? col.pavement : col.verge, { bias: town ? LAYER.pavement : LAYER.kerb });
+            }
         }
     }
     if (detail && cls !== 'lane' && cls !== 'access') {
-        // markings stop at the junction patches at either end
-        const ms = trimSamples(samples, junctionRadius(world.graph, world.graph.nodes[edge.a], year), edge.len - junctionRadius(world.graph, world.graph.nodes[edge.b], year));
-        if (ms.length < 2) { for (const [t0, t1] of bridges) bridge(t0, t1); return b.vertexCount ? b.finish() : null; }
+        // markings run to the junction surfaces at either end
+        const ms = samples;
         if (cls === 'dual' || cls === 'M') {
             const lanes = ROAD_CLASS[cls].lanes, median = width - 2 * lanes * LANE_WIDTH;
             if (median > 0) addStrip(b, ms, median, undefined, col.reservation[cls], { bias: LAYER.reservation });
@@ -191,7 +200,7 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
             }
         }
     }
-    if (detail && year >= 1950 && col.centre) addZebra(b, world, edge, samples, width, year, window);
+    if (detail && year >= 1950 && col.centre) addZebra(b, edge, width, window, tA, tB);
     for (const [t0, t1] of bridges) bridge(t0, t1);
     return b.finish();
 }
@@ -223,11 +232,11 @@ function centreLine(b, ms, cls, year, col) {
 }
 
 /** A zebra crossing across the middle of some long town streets from 1950: eight bars across the carriageway. */
-function addZebra(b, world, edge, samples, width, year, window) {
+function addZebra(b, edge, width, window, tA, tB) {
     if (!edge.town || edge.link || edge.oneway || edge.bridge || edge.tunnel || (edge.cls !== 'street' && edge.cls !== 'B') || edge.len < 50) return;
     if ((edge.id * 2654435761 >>> 0) % 5 !== 0) return;
-    const g = world.graph, d = edge.len / 2;
-    if (d < junctionRadius(g, g.nodes[edge.a], year) + 5 || d > edge.len - junctionRadius(g, g.nodes[edge.b], year) - 5) return;
+    const d = edge.len / 2;
+    if (d < tA + 5 || d > edge.len - tB - 5) return;
     if (window && !(d >= window[0] && d < window[1])) return;
     const p = pointAt(edge.pts, d, { x: 0, y: 0, angle: 0 });
     const z = roadHeightAt(edge, d), nx = Math.sin(p.angle), ny = -Math.cos(p.angle), tx = Math.cos(p.angle), ty = Math.sin(p.angle);
@@ -239,13 +248,12 @@ function addZebra(b, world, edge, samples, width, year, window) {
 }
 
 /** Parapets either side, a stone slab under the deck, and piers or abutments down to the bed. */
-function addBridge(b, world, edge, samples, t0, t1, width, year, win = null) {
+function addBridge(b, world, edge, samples, t0, t1, width, year, win = null, tA = 0, tB = 0) {
     const whole = samples.filter(s => s.d >= t0 - 1e-6 && s.d <= t1 + 1e-6);
     if (whole.length < 2) return;
-    // the parapets and slab stop short of a junction at either end, so they never cut through the roads meeting there;
+    // the parapets and slab stop at the junction surface at either end, so they never cut through the roads meeting there;
     // within a chunk's window only that stretch is built
-    const graph = world.graph;
-    const part = trimSamples(samples, Math.max(t0, win?.[0] ?? 0, junctionRadius(graph, graph.nodes[edge.a], year)), Math.min(t1, win?.[1] ?? edge.len, edge.len - junctionRadius(graph, graph.nodes[edge.b], year)));
+    const part = trimSamples(samples, Math.max(t0, win?.[0] ?? 0, tA), Math.min(t1, win?.[1] ?? edge.len, edge.len - tB));
     const stone = year < 1960 ? BRIDGE.stone : BRIDGE.concrete;
     const half = width / 2 + 0.5;
     for (const side of part.length < 2 ? [] : [1, -1]) {
@@ -277,131 +285,141 @@ function addBridge(b, world, edge, samples, t0, t1, width, year, win = null) {
     }
 }
 
-/** Directions (radians) leaving a node along each open edge, with the half width of that edge, sorted by angle. */
-function armsOf(graph, node, year) {
-    const arms = [];
-    const tmp = { x: 0, y: 0, angle: 0 };
-    for (const id of node.edges) {
-        const e = graph.edges[id];
-        if (!edgeOpen(e, year) || e.a === e.b) continue;
-        const reach = Math.min(e.len, 8);
-        pointAt(e.pts, e.a === node.id ? reach : e.len - reach, tmp);
-        arms.push({ angle: Math.atan2(tmp.y - node.y, tmp.x - node.x), hw: edgeWidth(e, year) / 2, edge: e });
+// ---- junctions ---------------------------------------------------------------------------------------------------
+// A junction's surface is the layout's `boundary` (world/junction-layout.js) fanned from the node: the edge strips stop at
+// the layout's trims, so nothing overlaps. A kerb band and a pavement (or verge) band follow the boundary except across
+// the arm mouths, where the edge strips' own kerbs and pavements carry on.
+
+/** Height of a junction vertex: an arm's mouth corner takes that arm's height exactly, the rest blend the mouths and the node (inverse distance). */
+function junctionHeights(node, lay) {
+    const pts = [{ x: node.x, y: node.y, z: node.z }];
+    const corners = [];
+    for (const a of lay.arms) {
+        const e = a.edge, z = roadHeightAt(e, a.end === 'a' ? a.trim : e.len - a.trim);
+        pts.push({ x: a.mouth.x, y: a.mouth.y, z });
+        corners.push({ x: a.mL.x, y: a.mL.y, z }, { x: a.mR.x, y: a.mR.y, z });
     }
-    return arms.sort((p, q) => p.angle - q.angle);
+    return (x, y) => {
+        for (const c of corners) if (Math.abs(c.x - x) < 1e-6 && Math.abs(c.y - y) < 1e-6) return c.z;
+        let w = 0, s = 0;
+        for (const p of pts) { const k = 1 / ((p.x - x) ** 2 + (p.y - y) ** 2 + 0.25); w += k; s += k * p.z; }
+        return s / w;
+    };
 }
 
-/** Fills the gap between each pair of neighbouring arms: a kite from the node centre out to where their sides meet. */
-function addCorners(b, node, arms, grow, z, colour) {
-    const n = arms.length;
-    for (let i = 0; i < n; i++) {
-        const A = arms[i], B = arms[(i + 1) % n];
-        const ua = [Math.cos(A.angle), Math.sin(A.angle)], ub = [Math.cos(B.angle), Math.sin(B.angle)];
-        const ha = A.hw + grow, hb = B.hw + grow;
-        // A's left side and B's right side (left of u is (-uy, ux))
-        const la = [node.x - ua[1] * ha, node.y + ua[0] * ha], rb = [node.x + ub[1] * hb, node.y - ub[0] * hb];
-        const det = ua[0] * -ub[1] - ua[1] * -ub[0];
-        let corner = null;
-        if (Math.abs(det) > 0.15) {
-            const rx = rb[0] - la[0], ry = rb[1] - la[1];
-            const t = (rx * -ub[1] - ry * -ub[0]) / det, s2 = (ua[0] * ry - ua[1] * rx) / det;
-            const cap = 2.2 * Math.max(ha, hb);
-            if (t >= 0 && s2 >= 0 && t <= cap && s2 <= cap) corner = [la[0] + ua[0] * t, la[1] + ua[1] * t];
-        }
-        // sides that never meet (a near-straight or very wide gap): bridge them with a point out along the bisector
-        if (!corner) {
-            const reach = Math.max(ha, hb) * 1.1;
-            corner = [(la[0] + rb[0]) / 2 + (ua[0] + ub[0]) * 0.5 * reach * 0.35, (la[1] + rb[1]) / 2 + (ua[1] + ub[1]) * 0.5 * reach * 0.35];
-            const gap = ((B.angle - A.angle) + Math.PI * 2) % (Math.PI * 2);
-            if (gap > Math.PI * 0.95) corner = [(la[0] + rb[0]) / 2, (la[1] + rb[1]) / 2];
-        }
-        // the kerb return: a quadratic curve from A's side to B's side with the sharp corner as its control point, fanned
-        // from the node; arms nearly opposite (sides that never meet) keep the plain kite through the bridging point
-        const v = (x, y) => b.vertex(x, y, z, 0, 0, 1, colour[0], colour[1], colour[2]);
-        const c0 = v(node.x, node.y);
-        if (Math.abs(det) > 0.15) {
-            let prev = v(la[0], la[1]);
-            for (let k = 1; k <= 5; k++) {
-                const t = k / 5, u = 1 - t;
-                const cur = v(u * u * la[0] + 2 * u * t * corner[0] + t * t * rb[0], u * u * la[1] + 2 * u * t * corner[1] + t * t * rb[1]);
-                b.tri(c0, prev, cur);
-                prev = cur;
-            }
-        } else {
-            const c1 = v(la[0], la[1]), c2 = v(corner[0], corner[1]), c3 = v(rb[0], rb[1]);
-            b.tri(c0, c1, c2);
-            b.tri(c0, c2, c3);
-        }
-    }
-}
-
-/** A junction patch (the corners between the roads meeting there) and, for a roundabout, its ring road and island. Null for plain two-way nodes. */
-export function buildNodeMesh(world, node, year, { wet = false } = {}) {
-    const graph = world.graph;
-    const open = node.edges.filter(id => edgeOpen(graph.edges[id], year));
-    if (open.length < 3 || node.z === undefined) return null;
-    const col = roadColours(year, wet);
-    const widest = open.map(id => graph.edges[id]).sort((p, q) => edgeWidth(q, year) - edgeWidth(p, year))[0];
-    const half = edgeWidth(widest, year) / 2;
-    const surface = widest.cls === 'lane' ? col.lane : widest.cls === 'access' ? col.access : col.surface;
-    const b = createBuilder();
-    const type = junctionType(node, year);
-    const z = node.z;
-    if (type === 'roundabout') {
-        const ring = (r, zz, colour) => compose.cylinder(b, node.x, node.y, zz, r, 0.04, 28, colour, { caps: true });
-        const outer = ROUNDABOUT.island + 2 * half;
-        ring(outer + 0.8, z + LAYER.kerb, col.kerb);
-        ring(outer, z + LAYER.junction, surface);
-        compose.cylinder(b, node.x, node.y, z + LAYER.junction, ROUNDABOUT.island, 0.18, 20, hex('#8d8b84'));
-        compose.cylinder(b, node.x, node.y, z + LAYER.junction + 0.14, ROUNDABOUT.island - 1, 0.1, 20, hex('#6f9a4a'));
-        // a splitter island in the middle of each arm just outside the ring, tapering away from it
-        for (const arm of armsOf(graph, node, year)) {
-            if (arm.hw < 3) continue;
-            const c = Math.cos(arm.angle), s2 = Math.sin(arm.angle), n = [-s2, c];
-            const r0 = outer + 1.2, r1 = outer + 9, w0 = Math.min(1.1, arm.hw * 0.25);
-            const poly = [{ x: node.x + c * r0 + n[0] * w0, y: node.y + s2 * r0 + n[1] * w0 }, { x: node.x + c * r1, y: node.y + s2 * r1 }, { x: node.x + c * r0 - n[0] * w0, y: node.y + s2 * r0 - n[1] * w0 }];
-            compose.prism(b, poly, 0.12, hex('#8d8b84'), { z0: z + LAYER.junction, roofColor: hex('#9a9890') });
-        }
-        addStopLines(b, graph, node, year, col, 'roundabout');
-        return b.finish();
-    }
-    const arms = armsOf(graph, node, year);
-    if (arms.length < 3) return null;
-    addCorners(b, node, arms, 0.8, z + LAYER.kerb, col.kerb);
-    addCorners(b, node, arms, 0, z + LAYER.junction, surface);
-    addStopLines(b, graph, node, year, col, type);
-    return b.finish();
+/** True when the boundary segment p -> q is an arm mouth (across the carriageway), where the road strips take over. */
+function isMouth(lay, p, q) {
+    const near = (u, v) => Math.abs(u.x - v.x) < 1e-6 && Math.abs(u.y - v.y) < 1e-6;
+    return lay.arms.some(a => (near(p, a.mL) && near(q, a.mR)) || (near(p, a.mR) && near(q, a.mL)));
 }
 
 /**
- * Stop and give-way lines across the approaching lane of each arm, just outside the junction patch: a solid line at
- * signals (from 1935), a dashed give-way line on the minor arms of a priority junction and on every roundabout arm
- * (from 1960). One-way arms that leave the junction get none.
+ * Adds a band along the non-mouth boundary segments, from `o0` to `o1` metres outside the boundary, at the vertex heights
+ * plus `bias`. Offsets at a vertex follow the mean of its two kerb normals (a mouth end keeps its single kerb's normal).
  */
-function addStopLines(b, graph, node, year, col, type) {
+function addBand(b, verts, mouth, o0, o1, colour, bias, minLen = 1e-4, blocked = null) {
+    const n = verts.length;
+    let area = 0;
+    for (let i = 0; i < n; i++) { const p = verts[i], q = verts[(i + 1) % n]; area += p.x * q.y - q.x * p.y; }
+    const sgn = area >= 0 ? 1 : -1; // the outward normal of p -> q is (dy, -dx) for a counterclockwise polygon
+    const seg = verts.map((p, i) => {
+        const q = verts[(i + 1) % n], dx = q.x - p.x, dy = q.y - p.y, l = Math.hypot(dx, dy) || 1;
+        return { nx: sgn * dy / l, ny: -sgn * dx / l, len: l };
+    });
+    const at = (i, o) => {
+        const sp = mouth[(i - 1 + n) % n] ? null : seg[(i - 1 + n) % n], sn = mouth[i] ? null : seg[i];
+        let nx = 0, ny = 0, k = 1;
+        if (sp && sn) {
+            nx = sp.nx + sn.nx; ny = sp.ny + sn.ny;
+            const l = Math.hypot(nx, ny);
+            if (l < 1e-6) { nx = sn.nx; ny = sn.ny; } else { nx /= l; ny /= l; k = Math.min(2.5, 1 / Math.max(0.4, nx * sn.nx + ny * sn.ny)); }
+        } else if (sn || sp) { nx = (sn ?? sp).nx; ny = (sn ?? sp).ny; }
+        return { x: verts[i].x + nx * o * k, y: verts[i].y + ny * o * k, z: verts[i].z + bias };
+    };
+    const v = pt => b.vertex(pt.x, pt.y, pt.z, 0, 0, 1, colour[0], colour[1], colour[2]);
+    for (let i = 0; i < n; i++) {
+        if (mouth[i] || seg[i].len < minLen) continue;
+        const j = (i + 1) % n;
+        const p0 = at(i, o0), p1 = at(j, o0), q0 = at(i, o1), q1 = at(j, o1);
+        // a band that would lie on another road's carriageway (tight corners, a neighbour close by) is left out
+        if (blocked && (blocked(q0.x, q0.y) || blocked(q1.x, q1.y) || blocked((q0.x + q1.x) / 2, (q0.y + q1.y) / 2) || blocked(p0.x, p0.y) || blocked(p1.x, p1.y))) continue;
+        const a0 = v(p0), a1 = v(p1), c0 = v(q0), c1 = v(q1);
+        b.tri(a0, a1, c0);
+        b.tri(a1, c1, c0);
+    }
+}
+
+/**
+ * A junction surface from the layout (plain junctions, mini-roundabouts and roundabouts): the boundary polygon fanned from
+ * the node, kerb and pavement bands, stop and give-way lines, a roundabout's raised island with a tree on the bigger ones,
+ * splitter islands and a mini-roundabout's disc. Null for nodes with fewer than three open roads (the edge strips run
+ * through) and for dead ends.
+ */
+export function buildNodeMesh(world, node, year, { wet = false } = {}) {
+    const graph = world.graph;
+    if (node.z === undefined || node.edges.length < 3) return null;
+    const lay = layoutJunction(graph, node, year);
+    if ((lay.kind !== 'plain' && lay.kind !== 'mini' && lay.kind !== 'roundabout') || lay.boundary.length < 3) return null;
+    const col = roadColours(year, wet);
+    const widest = lay.arms.reduce((p, q) => (q.hw > p.hw ? q : p));
+    const surface = widest.edge.cls === 'lane' ? col.lane : widest.edge.cls === 'access' ? col.access : col.surface;
+    const b = createBuilder();
+    const zAt = junctionHeights(node, lay);
+    // a hull fallback (short edges, neighbours close by) can cut across an arm's mouth, leaving the road strip lying on the
+    // surface: such junctions are drawn as the mouths joined in order instead, which keeps every mouth on the border
+    const outline = lay.stats.hull ? lay.arms.flatMap(a => [a.mR, a.mL]) : lay.boundary;
+    const verts = outline.map(p => ({ x: p.x, y: p.y, z: zAt(p.x, p.y) }));
+    const n = verts.length;
+    // the surface: a fan from the node over the boundary (star-shaped about it), at the carriageway height
+    const v = (x, y, z, c) => b.vertex(x, y, z + LAYER.surface, 0, 0, 1, c[0], c[1], c[2]);
+    const c0 = v(node.x, node.y, node.z, surface);
+    const idx = verts.map(p => v(p.x, p.y, p.z, surface));
+    for (let i = 0; i < n; i++) b.tri(c0, idx[i], idx[(i + 1) % n]);
+    const mouth = verts.map((p, i) => isMouth(lay, p, verts[(i + 1) % n]));
+    // kerb, then pavement (town streets) or verge beside it, as the edge strips have
+    const blocked = (x, y) => onOtherRoad(graph, year, x, y);
+    addBand(b, verts, mouth, 0, 0.8, col.kerb, LAYER.kerb, 1e-4, blocked);
+    const wide = lay.arms.filter(a => a.cls !== 'lane' && a.cls !== 'access' && a.cls !== 'M' && !a.edge.bridge && !a.edge.tunnel);
+    // (no pavement round a hull or mouths-only outline: the corners there are too tight to hold one without crossing a neighbour)
+    if (wide.length && !lay.stats.hull) {
+        const town = wide.some(a => a.edge.town && !a.edge.link);
+        addBand(b, verts, mouth, 0.8, town ? 2.0 : 2.2, town ? col.pavement : col.verge, town ? LAYER.pavement : LAYER.kerb, 2.5, blocked);
+    }
+    const grey = hex('#8d8b84'), greyTop = hex('#9a9890');
+    const zc = node.z + LAYER.surface;
+    for (const isl of lay.islands) {
+        const cx = isl.poly.reduce((s, p) => s + p.x, 0) / isl.poly.length, cy = isl.poly.reduce((s, p) => s + p.y, 0) / isl.poly.length;
+        if (isl.kind === 'island') {
+            const r = Math.hypot(isl.poly[0].x - cx, isl.poly[0].y - cy);
+            compose.cylinder(b, cx, cy, zc, r, 0.18, 32, grey);
+            compose.cylinder(b, cx, cy, zc + 0.16, Math.max(0.5, r - 0.6), 0.1, 32, hex('#6f9a4a'));
+            if (r >= 6) {
+                compose.cylinder(b, cx, cy, zc + 0.26, 0.22, 2.2, 6, hex('#5b4630'));
+                compose.cylinder(b, cx, cy, zc + 1.8, 1.7, 3.0, 8, hex('#4a7a3a'), { radiusTop: 0.2 });
+            }
+        } else if (isl.kind === 'splitter') {
+            compose.prism(b, isl.poly, 0.12, grey, { z0: zAt(cx, cy) + LAYER.surface, roofColor: greyTop });
+        } else {
+            compose.prism(b, isl.poly, 0.07, hex('#d9d6cb'), { z0: zc, roofColor: hex('#e8e6dc') });
+        }
+    }
+    addStopLines(b, lay, col, zAt);
+    if (lay.kind === 'roundabout' && year >= 1960 && col.centre && lay.ring.width >= 8.5) {
+        // lane dividers round the bigger rings
+        const ring = Array.from({ length: 49 }, (_, k) => ({ x: node.x + Math.cos((k * Math.PI * 2) / 48) * lay.ring.rc, y: node.y + Math.sin((k * Math.PI * 2) / 48) * lay.ring.rc, z: zc }));
+        dashes(b, ring, 0.2, col.centre, LAYER.marking);
+    }
+    return b.finish();
+}
+
+/** The layout's stop and give-way lines: solid across the lane at signals (from 1935), dashed give-way lines (from 1960). */
+function addStopLines(b, lay, col, zAt) {
     if (!col.centre) return;
-    const stop = type === 'signals' && year >= 1935;
-    const yieldTo = (type === 'giveway' && node.priority || type === 'roundabout') && year >= 1960;
-    if (!stop && !yieldTo) return;
-    const r0 = junctionRadius(graph, node, year) + 0.4;
-    const open = node.edges.filter(id => edgeOpen(graph.edges[id], year));
-    const top = Math.max(...open.map(id => ROAD_CLASS[edgeClass(graph.edges[id], year)]?.rank ?? 1));
-    for (const id of open) {
-        const e = graph.edges[id];
-        if (e.link || e.a === e.b || e.len < r0 + 4) continue;
-        const atA = e.a === node.id;
-        if (e.oneway && atA) continue; // one-way runs a -> b: at its a end the road leaves the junction
-        const cls = edgeClass(e, year);
-        if (type === 'giveway' && (ROAD_CLASS[cls]?.rank ?? 1) >= top) continue; // the major road has priority
-        const d = atA ? r0 : e.len - r0;
-        const p = pointAt(e.pts, d, { x: 0, y: 0, angle: 0 });
-        const z = roadHeightAt(e, d), w = edgeWidth(e, year) / 2;
-        // the left of the approaching traffic: against the edge direction at its a end, with it at its b end
-        const sgn = atA ? -1 : 1, lx = Math.sin(p.angle) * sgn, ly = -Math.cos(p.angle) * sgn;
-        const lanes = ROAD_CLASS[cls]?.lanes ?? 1;
-        const from = lanes > 1 ? w - lanes * LANE_WIDTH + 0.1 : 0.15, to = w - 0.3;
-        const line = [{ x: p.x + lx * from, y: p.y + ly * from, z }, { x: p.x + lx * to, y: p.y + ly * to, z }];
-        if (stop) addStrip(b, line, 0.35, undefined, col.centre, { bias: LAYER.marking });
+    for (const s of lay.stopLines) {
+        const a = lay.arms[s.arm], e = a.edge;
+        const z = lay.kind === 'roundabout' ? zAt((s.x0 + s.x1) / 2, (s.y0 + s.y1) / 2) : roadHeightAt(e, a.end === 'a' ? a.trim + 0.4 : e.len - a.trim - 0.4);
+        const line = [{ x: s.x0, y: s.y0, z }, { x: s.x1, y: s.y1, z }];
+        if (s.kind === 'stop') addStrip(b, line, 0.35, undefined, col.centre, { bias: LAYER.marking });
         else dashes(b, line, 0.3, col.centre, LAYER.marking, 0.6, 0.4);
     }
 }
@@ -526,8 +544,9 @@ export const eraOf = year => ERA_YEARS.filter(y => year >= y).length;
 
 /**
  * Everything year-dependent about the static road geometry a chunk owns, as a string: the era, the wet flag, each owned
- * edge's `roadKey` (class, width, open/closed) and each owned junction's type. Two years give the same string exactly
- * when `buildChunkRoads` would produce the same mesh, so the renderer rebuilds a chunk's roads only when it changes.
+ * edge's `roadKey` (class, width, open/closed) with the trims its junctions give it, and each owned junction's layout
+ * signature (open arms, type, markings, neighbour budget). Two years give the same string exactly when `buildChunkRoads`
+ * would produce the same mesh, so the renderer rebuilds a chunk's roads only when it changes.
  */
 export function chunkRoadSignature(world, chunk, year, wet = false) {
     const graph = world.graph;
@@ -537,13 +556,14 @@ export function chunkRoadSignature(world, chunk, year, wet = false) {
         const e = graph.edges[id];
         nodes.add(e.a);
         nodes.add(e.b);
-        if (edgeWindows(e, chunk).length) parts.push(`${id}=${roadKey(e, year)}`);
+        if (edgeWindows(e, chunk).length) {
+            const open = edgeOpen(e, year);
+            parts.push(open ? `${id}=${roadKey(e, year)}:${trimFor(graph, e, 'a', year).toFixed(1)}:${trimFor(graph, e, 'b', year).toFixed(1)}` : `${id}=${roadKey(e, year)}`);
+        }
     }
     for (const id of nodes) {
         const n = graph.nodes[id];
-        if (inside(chunk, n.x, n.y) && n.edges.length >= 3) {
-            parts.push(`n${id}=${junctionType(n, year)}:${n.edges.filter(eid => edgeOpen(graph.edges[eid], year)).length >= 3 ? 1 : 0}`);
-        }
+        if (inside(chunk, n.x, n.y) && n.edges.length >= 3) parts.push(`n${junctionSignature(graph, n, year)}`);
     }
     return parts.join('|');
 }

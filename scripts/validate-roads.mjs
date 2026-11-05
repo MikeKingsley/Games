@@ -36,10 +36,20 @@ const { closestOnPoly, pointAt } = await game('world/geom.js');
 const { waterAt } = await game('world/region.js');
 const { obb, sat } = await game('sim/collision.js');
 const { gradeLimit, roadHeightAt } = await game('world/terrain.js');
-const { junctionRadius } = await game('render/gl/road-mesh.js');
 const { layoutJunction, polygonsOverlap } = await game('world/junction-layout.js');
 const { junctionType } = await game('world/roadgraph.js');
-const { isLive } = await game('world/furniture.js');
+
+/**
+ * The old circular junction footprint (the 3D mesh used it before the layout engine; the bake still mirrors it). Kept here
+ * for the soft `junction-cluster` count and as one term of the overlap exemption beside a node.
+ */
+function junctionRadius(graph, node, year) {
+    const open = node.edges.filter(id => edgeOpen(graph.edges[id], year));
+    if (open.length < 3) return 0;
+    const half = Math.max(...open.map(id => edgeWidth(graph.edges[id], year))) / 2;
+    return junctionType(node, year) === 'roundabout' ? 7.2 + 2 * half + 1 : half + 2;
+}
+const { isLive, onJunctionSurface } = await game('world/furniture.js');
 
 const SAMPLE_YEARS = [1919, 1930, 1950, 1970, 1990, 2024];
 const DEFAULT_AREAS = ['exeter', 'plymouth', 'truro', 'penzance'];
@@ -631,6 +641,11 @@ export function validateFurniture(world, props, { year = 2024, margin = 0.5, bui
         const id = `${p.kind}:${p.x.toFixed(2)}:${p.y.toFixed(2)}`;
         if (seen.has(id)) continue;
         seen.add(id);
+        // a lamp or sign on a junction surface (kerb returns, roundabout ring, islands, splitters) in any year; signal poles stand
+        // beside their stop line, at the kerb, so only the surface proper counts for them
+        for (const sid of p.kind === 'signal' && year < 1935 ? [] : done) { // (signals do not exist before 1935)
+            if (onJunctionSurface(graph, graph.edges[sid], p.x, p.y, p.kind === 'signal' ? -0.01 : 0.3, p.kind === 'signal' ? [2100] : undefined)) { issues.push({ check: 'furniture-on-junction', hard: true, x: p.x, y: p.y, edge: sid, detail: `${p.kind} on the junction surface beside edge ${sid}` }); break; }
+        }
         if (onRoad) {
             issues.push({ check: 'furniture-on-road', hard: true, x: p.x, y: p.y, edge: onRoad.edge, detail: `${p.kind} ${onRoad.d.toFixed(1)} m from edge ${onRoad.edge} centreline (carriageway + margin ${onRoad.half.toFixed(1)} m)` });
         }

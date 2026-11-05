@@ -1,6 +1,7 @@
 // Roads under the ground transform: verges/kerbs, surface, then markings, in passes so junctions blend.
 // Surfaces and markings follow the era (water-bound macadam and no lines in 1919, tarmac and white lines later).
-import { edgeClass, edgeOpen, edgeWidth, junctionType, ROAD_CLASS, LANE_WIDTH } from '../world/roadgraph.js';
+import { edgeClass, edgeOpen, edgeWidth, ROAD_CLASS, LANE_WIDTH } from '../world/roadgraph.js';
+import { layoutJunction } from '../world/junction-layout.js';
 import { polylinePath } from './sprite-cache.js';
 import { waterAt } from '../world/region.js';
 import { resample } from '../world/geom.js';
@@ -150,16 +151,30 @@ export function drawRoads(ctx, graph, edgeIds, year, detail = true, region = nul
     }
 }
 
-/** Roundabout islands and stop lines at signals, for junctions that exist in this year. */
+/**
+ * Junction surfaces from the layout (world/junction-layout.js), kept simple: the boundary polygon in the road colour over
+ * the strokes that run to the node, and a roundabout's island at its layout radius. No kerb returns beyond the polygon,
+ * markings or splitters (the WebGL renderer has those).
+ */
 export function drawJunctions(ctx, graph, nodeIds, year) {
+    const style = roadStyle(year);
     for (const id of nodeIds) {
         const n = graph.nodes[id];
-        const type = junctionType(n, year);
-        if (type === 'roundabout') {
+        if (n.edges.length < 3) continue;
+        const lay = layoutJunction(graph, n, year);
+        if (lay.kind !== 'plain' && lay.kind !== 'mini' && lay.kind !== 'roundabout') continue;
+        if (lay.boundary.length < 3) continue;
+        const widest = lay.arms.reduce((p, q) => (q.hw > p.hw ? q : p));
+        ctx.fillStyle = widest.edge.cls === 'lane' && year < 1960 ? '#a89a78' : widest.edge.cls === 'access' ? '#8e887c' : style.surface;
+        ctx.beginPath();
+        lay.boundary.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        ctx.closePath();
+        ctx.fill();
+        if (lay.kind === 'roundabout') {
             ctx.fillStyle = '#8d8b84';
-            ctx.beginPath(); ctx.arc(n.x, n.y, 7.2, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(n.x, n.y, lay.ring.ri, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = '#6f9a4a';
-            ctx.beginPath(); ctx.arc(n.x, n.y, 6.2, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(n.x, n.y, Math.max(0.5, lay.ring.ri - 1), 0, Math.PI * 2); ctx.fill();
         }
     }
 }

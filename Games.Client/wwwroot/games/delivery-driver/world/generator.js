@@ -7,7 +7,7 @@ import { pointAt } from './geom.js';
 import { ROAD_CLASS, clearOfRoads, alwaysOpen, runsBesideRoad } from './roadgraph.js';
 import { obb, sat, createSpatialHash } from '../sim/collision.js';
 import { torSite } from './terrain.js';
-import { chunkFurniture, maxHalfWidth, mouthRadius } from './furniture.js';
+import { chunkFurniture, maxHalfWidth, trimMax } from './furniture.js';
 import { CHUNK_SIZE } from '../config.js';
 
 // ---- Yards: depots, farms, industry sites ----------------------------------------------------------------------
@@ -193,9 +193,9 @@ export function generateTownBuildings(world, town) {
 
     for (const e of edges) {
         // building fronts stand 2 m beyond the widest carriageway the road ever has; plots start beyond the junction
-        // mouths (so the first plot at each end is a corner plot) and keep the pavement and lamps free
+        // surfaces (the layout trims, in any year) (so the first plot at each end is a corner plot) and keep the pavement and lamps free
         const half = maxHalfWidth(e);
-        const from = mouthRadius(graph, graph.nodes[e.a]) + 1, to = e.len - mouthRadius(graph, graph.nodes[e.b]) - 1;
+        const from = trimMax(graph, e, 'a') + 1, to = e.len - trimMax(graph, e, 'b') - 1;
         for (const side of [1, -1]) {
             let d = from + range(rng, 0, 3);
             while (d < to) {

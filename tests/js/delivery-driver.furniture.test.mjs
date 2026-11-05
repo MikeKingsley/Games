@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { seedWithBaked } from './helpers/delivery-seed.mjs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
 import { edgeOpen, edgeWidth } from '../../Games.Client/wwwroot/games/delivery-driver/world/roadgraph.js';
-import { isLive, signalPolesOf, maxHalfWidth } from '../../Games.Client/wwwroot/games/delivery-driver/world/furniture.js';
+import { isLive, signalPolesOf, maxHalfWidth, onAnyJunction, trimMax } from '../../Games.Client/wwwroot/games/delivery-driver/world/furniture.js';
 import { closestOnPoly } from '../../Games.Client/wwwroot/games/delivery-driver/world/geom.js';
 import { sat, obb } from '../../Games.Client/wwwroot/games/delivery-driver/sim/collision.js';
 import { CHUNK_SIZE } from '../../Games.Client/wwwroot/games/delivery-driver/config.js';
@@ -102,4 +102,21 @@ test('buildings: fronts keep clear of the widest carriageway of their street', (
         const gap = closestOnPoly(e.pts, b.x, b.y).d - b.dep / 2;
         assert.ok(gap >= maxHalfWidth(e) + 1, `building ${b.id} is ${gap.toFixed(1)} m from the carriageway`);
     }
+});
+
+test('furniture: no lamp or sign stands on a junction surface (kerb returns, roundabout rings, islands), and poles sit at the layout stop lines', () => {
+    for (const kind of ['lamps', 'signs']) {
+        for (const p of all(kind)) assert.ok(!onAnyJunction(graph, p.x, p.y, 0), `${kind} ${p.x.toFixed(1)},${p.y.toFixed(1)} on a junction surface`);
+    }
+    const sig = graph.nodes.filter(n => n.junction === 'signals' && n.edges.length >= 3).slice(0, 40);
+    let checked = 0;
+    for (const n of sig) {
+        for (const pole of signalPolesOf(world, n)) {
+            const e = graph.edges[pole.edge], end = e.a === n.id ? 'a' : 'b';
+            // a pole stands just beyond the junction trim of its arm: no closer than the trim to the node along the arm
+            assert.ok(Math.hypot(pole.x - n.x, pole.y - n.y) >= Math.min(trimMax(graph, e, end), 1.5) , 'pole outside the junction centre');
+            checked++;
+        }
+    }
+    assert.ok(checked > 10);
 });

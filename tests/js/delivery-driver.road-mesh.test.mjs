@@ -6,6 +6,7 @@ import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/wo
 import { roadHeightAt, groundZ } from '../../Games.Client/wwwroot/games/delivery-driver/world/terrain.js';
 import { waterAt } from '../../Games.Client/wwwroot/games/delivery-driver/world/region.js';
 import { edgeWidth, edgeClass, ROAD_CLASS, LANE_WIDTH } from '../../Games.Client/wwwroot/games/delivery-driver/world/roadgraph.js';
+import { layoutJunction, trimFor, mouthRadius, polygonsOverlap } from '../../Games.Client/wwwroot/games/delivery-driver/world/junction-layout.js';
 import * as R from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/road-mesh.js';
 import * as M from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/meshes.js';
 
@@ -28,16 +29,17 @@ test('every open edge builds a mesh whose road vertices follow the graded profil
         const mesh = R.buildEdgeMesh(world, e, 2000);
         assert.ok(mesh && M.triangleCount(mesh) > 0);
         const surface = R.roadColours(2000).surface;
+        const fine = R.edgeSamples(e, 0.25); // (the strip ends are interpolated between the 4 m samples, at the junction trims)
         for (let i = 0; i < M.vertexCount(mesh); i++) {
             if (![0, 1, 2].every(k => Math.abs(mesh.colors[i * 3 + k] - surface[k]) < 1e-4)) continue;
             // find the along-distance of this vertex from its nearest sample and compare the height there
             const x = mesh.positions[i * 3], y = mesh.positions[i * 3 + 1], z = mesh.positions[i * 3 + 2];
             let best = Infinity, bz = 0;
-            for (const s of R.edgeSamples(e)) {
+            for (const s of fine) {
                 const d = Math.hypot(s.x - x, s.y - y);
                 if (d < best) { best = d; bz = roadHeightAt(e, s.d); }
             }
-            near(z, bz + R.LAYER.surface, 1e-4);
+            near(z, bz + R.LAYER.surface, 0.05);
         }
     }
 });
@@ -160,8 +162,8 @@ test('junctions: roundabouts get an island above the node, ordinary nodes with 3
     const mesh = R.buildNodeMesh(world, ra, 2020);
     assert.ok(mesh);
     const bb = M.meshBounds(mesh);
-    assert.ok(bb.max[2] >= ra.z + R.LAYER.junction + 0.2);
-    near((bb.min[0] + bb.max[0]) / 2, ra.x, 0.5);
+    assert.ok(bb.max[2] >= ra.z + R.LAYER.surface + 0.2, 'the raised island');
+    assert.ok(bb.min[0] < ra.x && bb.max[0] > ra.x && bb.min[1] < ra.y && bb.max[1] > ra.y, 'the junction surrounds the node');
     // before its year it is a plain give-way: no island
     const early = R.buildNodeMesh(world, ra, 1919);
     if (early) assert.ok(M.triangleCount(early) < M.triangleCount(mesh));
@@ -309,32 +311,45 @@ function ownerOf(edge) {
     return [Math.floor(mid.x / CHUNK_SIZE), Math.floor(mid.y / CHUNK_SIZE)];
 }
 
-test('junction patches stay within reach of their arms and have no NaN', () => {
-    const nodes = graph.nodes.filter(n => n.edges.length >= 3 && n.z !== undefined && n.junction !== 'roundabout').slice(0, 60);
+test('junction surfaces stay within the layout reach and have no NaN', () => {
+    const nodes = graph.nodes.filter(n => n.edges.length >= 3 && n.z !== undefined).slice(0, 80);
     assert.ok(nodes.length > 20);
+    let built = 0;
     for (const n of nodes) {
         const mesh = R.buildNodeMesh(world, n, 2000);
         if (!mesh) continue;
+        built++;
         assert.ok(M.triangleCount(mesh) >= 3);
-        const reach = R.junctionRadius(graph, n, 2000) * 3;
+        // (kerb and pavement bands reach 2.2 m beyond the boundary, a ring's tree a little less)
+        const reach = mouthRadius(graph, n, 2000) + 2.2 * 2.5 + 1;
         for (let i = 0; i < M.vertexCount(mesh); i++) {
             const x = mesh.positions[i * 3], y = mesh.positions[i * 3 + 1];
             assert.ok(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(mesh.positions[i * 3 + 2]));
-            assert.ok(Math.hypot(x - n.x, y - n.y) <= reach + 1, 'corner reaches no further than the junction radius allows');
+            assert.ok(Math.hypot(x - n.x, y - n.y) <= reach, 'no vertex strays beyond the layout reach');
         }
     }
+    assert.ok(built > 15);
 });
 
-test('markings stop short of a junction patch', () => {
-    const n = graph.nodes.find(x => x.edges.length >= 3 && x.z !== undefined && x.junction !== 'roundabout' && graph.edges[x.edges[0]].cls === 'A' && graph.edges[x.edges[0]].len > 60);
+test('edge strips end at the junction trims and markings stay inside the carriageway', () => {
+    const n = graph.nodes.find(x => x.edges.length >= 3 && x.z !== undefined && x.junction !== 'roundabout' && graph.edges[x.edges[0]].cls === 'A' && graph.edges[x.edges[0]].len > 60 && graph.edges[x.edges[0]].a !== graph.edges[x.edges[0]].b);
     assert.ok(n, 'a junction on a long A road');
     const e = graph.edges[n.edges[0]];
+    const end = e.a === n.id ? 'a' : 'b';
+    const trim = trimFor(graph, e, end, 2000);
+    assert.ok(trim > 1, 'the layout trims the edge back from the node');
     const mesh = R.buildEdgeMesh(world, e, 2000);
-    const mark = R.roadColours(2000).centre;
-    const radius = R.junctionRadius(graph, n, 2000);
+    const dist = i => Math.hypot(mesh.positions[i * 3] - n.x, mesh.positions[i * 3 + 1] - n.y);
+    let nearest = Infinity;
+    for (let i = 0; i < M.vertexCount(mesh); i++) nearest = Math.min(nearest, dist(i));
+    // every strip vertex lies on or beyond the trim: the closest ones are the mouth corners, a half width off the centre line
+    assert.ok(nearest >= trim * 0.7, `strip starts at the trim (${nearest.toFixed(2)} vs ${trim.toFixed(2)})`);
+    const mark = R.roadColours(2000).centre, half = edgeWidth(e, 2000) / 2;
     for (let i = 0; i < M.vertexCount(mesh); i++) {
         if (![0, 1, 2].every(k => Math.abs(mesh.colors[i * 3 + k] - mark[k]) < 1e-4)) continue;
-        assert.ok(Math.hypot(mesh.positions[i * 3] - n.x, mesh.positions[i * 3 + 1] - n.y) >= radius - 1.5, 'centre line starts outside the patch');
+        let best = Infinity;
+        for (const s of R.edgeSamples(e, 0.5)) best = Math.min(best, Math.hypot(s.x - mesh.positions[i * 3], s.y - mesh.positions[i * 3 + 1]));
+        assert.ok(best <= half + 0.3, 'a marking vertex lies inside the carriageway');
     }
 });
 
@@ -431,4 +446,74 @@ test('double white lines on the bends of A roads from 1960, none on one-way road
     oneway._smp = bendy._smp;
     const a = R.buildEdgeMesh(world, bendy, 2000), b = R.buildEdgeMesh(world, oneway, 2000);
     assert.ok(M.triangleCount(a) > M.triangleCount(b), 'a one-way road has no centre line');
+});
+
+test('edge strips never overlap a junction surface: no strip vertex lies inside a neighbouring boundary', () => {
+    const inside = (pt, poly) => {
+        let c = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const a = poly[i], b = poly[j];
+            if ((a.y > pt.y) !== (b.y > pt.y) && pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x) c = !c;
+        }
+        return c;
+    };
+    const nodes = graph.nodes.filter(n => n.edges.length >= 3 && n.z !== undefined).slice(100, 160);
+    const surface = R.roadColours(2000).surface;
+    let checked = 0;
+    for (const n of nodes) {
+        const lay = layoutJunction(graph, n, 2000);
+        if (!['plain', 'roundabout', 'mini'].includes(lay.kind)) continue;
+        const outline = lay.stats.hull ? lay.arms.flatMap(a => [a.mR, a.mL]) : lay.boundary; // (what buildNodeMesh draws)
+        for (const a of lay.arms) {
+            const mesh = R.buildEdgeMesh(world, a.edge, 2000);
+            if (!mesh) continue;
+            checked++;
+            for (let i = 0; i < M.vertexCount(mesh); i++) {
+                if (![0, 1, 2].every(k => Math.abs(mesh.colors[i * 3 + k] - surface[k]) < 1e-4)) continue;
+                const p = { x: mesh.positions[i * 3], y: mesh.positions[i * 3 + 1] };
+                // a vertex strictly inside the junction polygon would be a coplanar overlap (mouth corners sit on its border)
+                if (!inside(p, outline)) continue;
+                const toBoundary = Math.min(...outline.map(q => Math.hypot(q.x - p.x, q.y - p.y)));
+                assert.ok(toBoundary < 0.2 || mesh.positions[i * 3 + 2] !== mesh.positions[i * 3 + 2], `strip vertex ${toBoundary.toFixed(2)} m inside junction ${n.id}`);
+            }
+        }
+    }
+    assert.ok(checked > 40);
+});
+
+test('roundabout meshes: every arm mouth lies on or outside the ring and the island rises above the ring', () => {
+    const ras = graph.nodes.filter(n => n.junction === 'roundabout' && !n.mini && n.z !== undefined && layoutJunction(graph, n, 2020).kind === 'roundabout').slice(0, 20);
+    assert.ok(ras.length > 5);
+    for (const ra of ras) {
+        const lay = layoutJunction(graph, ra, 2020);
+        for (const a of lay.arms) assert.ok(Math.hypot(a.mouth.x - ra.x, a.mouth.y - ra.y) >= lay.ring.ro - 0.05, 'arm reaches the ring');
+        const mesh = R.buildNodeMesh(world, ra, 2020);
+        assert.ok(mesh && M.meshBounds(mesh).max[2] >= ra.z + R.LAYER.surface + 0.25);
+        // a ring of 32 segments: the island's kerb is round (plenty of vertices)
+        assert.ok(M.vertexCount(mesh) > 100);
+    }
+});
+
+test('road signature follows the junction layout: a roundabout appearing or a mini disc changes the owning chunk', () => {
+    const ra = graph.nodes.find(n => n.junction === 'roundabout' && !n.mini && n.junctionFrom > 1919);
+    const node = ra ?? graph.nodes.find(n => n.junction === 'roundabout');
+    const chunk = world.chunks.get(Math.floor(node.x / CHUNK_SIZE), Math.floor(node.y / CHUNK_SIZE));
+    const sigs = [1919, 1935, 1950, 1965, 1990, 2024].map(y => chunkRoadSignature(world, chunk, y));
+    assert.ok(new Set(sigs).size >= 3, 'the chunk changes through the eras');
+    assert.equal(chunkRoadSignature(world, chunk, 2024), chunkRoadSignature(world, chunk, 2024));
+});
+
+test('canvas fallback: drawJunctions fills the layout polygon and a roundabout island at the layout radius', async () => {
+    const { drawJunctions } = await import('../../Games.Client/wwwroot/games/delivery-driver/render/draw-road.js');
+    const calls = [];
+    const ctx = new Proxy({}, { get: (_, k) => (...a) => calls.push([k, ...a]), set: () => true });
+    const ra = graph.nodes.find(n => n.junction === 'roundabout' && !n.mini && layoutJunction(graph, n, 2020).kind === 'roundabout');
+    const tee = graph.nodes.find(n => n.edges.length >= 3 && n.junction !== 'roundabout' && layoutJunction(graph, n, 2000).kind === 'plain');
+    drawJunctions(ctx, graph, [ra.id], 2020);
+    const lay = layoutJunction(graph, ra, 2020);
+    assert.ok(calls.some(c => c[0] === 'arc' && Math.abs(c[3] - lay.ring.ri) < 1e-9), 'island at the layout radius');
+    assert.equal(calls.filter(c => c[0] === 'lineTo').length, lay.boundary.length - 1, 'the boundary polygon');
+    calls.length = 0;
+    drawJunctions(ctx, graph, [tee.id], 2000);
+    assert.ok(calls.some(c => c[0] === 'fill') && !calls.some(c => c[0] === 'arc'));
 });
