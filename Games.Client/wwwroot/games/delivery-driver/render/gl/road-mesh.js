@@ -5,11 +5,11 @@
 import { createBuilder, addStrip, compose } from './meshes.js';
 import { CHUNK_SIZE } from '../../config.js';
 import { edgeClass, edgeOpen, edgeWidth, ROAD_CLASS, LANE_WIDTH } from '../../world/roadgraph.js';
-import { layoutJunction, junctionSignature, trimFor } from '../../world/junction-layout.js';
+import { layoutJunction, junctionSignature, trimFor, edgeSpline } from '../../world/junction-layout.js';
 import { roadHeightAt, groundZ } from '../../world/terrain.js';
 import { waterAt } from '../../world/region.js';
 import { closestOnPoly } from '../../world/geom.js';
-import { createSpline, sampleEven, sampleAdaptive } from '../../world/road-spline.js';
+import { sampleEven, sampleAdaptive } from '../../world/road-spline.js';
 import { roadStyle, offsetPolyline } from '../draw-road.js';
 import { BRIDGE, addDeck, addTunnel, deckRuns, tunnelRuns } from './structure-mesh.js';
 
@@ -40,24 +40,8 @@ export function roadColours(year, wet = false) {
 /** What an edge looks like in a year: its class and width, plus whether it exists. Rebuild its mesh when this changes. */
 export const roadKey = (edge, year) => (edgeOpen(edge, year) ? `${edgeClass(edge, year)}:${edgeWidth(edge, year)}` : 'closed');
 
-/** The edge's centripetal spline through its baked points (arc length, tangent and normal at any distance), built once. */
-function splineOf(edge) {
-    if (edge._spl !== undefined) return edge._spl;
-    const pts = [];
-    for (let i = 0; i < edge.pts.length; i += 2) {
-        const p = pts[pts.length - 1];
-        if (!p || Math.hypot(edge.pts[i] - p.x, edge.pts[i + 1] - p.y) > 0.01) pts.push({ x: edge.pts[i], y: edge.pts[i + 1] });
-    }
-    // the junction layouts at either end assume the road leaves along its first and last chord: a point 1 m in pins the
-    // spline's end tangent to that chord (the spline's own end extrapolation would swing it on a short edge with a corner)
-    if (pts.length >= 3) {
-        const pin = (a, c) => { const l = Math.hypot(c.x - a.x, c.y - a.y), k = Math.min(1, l / 3) / l; return { x: a.x + (c.x - a.x) * k, y: a.y + (c.y - a.y) * k }; };
-        const n = pts.length;
-        pts.splice(n - 1, 0, pin(pts[n - 1], pts[n - 2]));
-        pts.splice(1, 0, pin(pts[0], pts[1]));
-    }
-    return (edge._spl = pts.length >= 2 ? createSpline(pts) : null);
-}
+/** The edge's spline (shared with the junction layout, so arms and strips follow the same curve). */
+const splineOf = edgeSpline;
 
 /**
  * Points along an edge's graded centreline, from the `a` end to the `b` end: [{x, y, z, d, tx, ty}]. The line is a spline

@@ -28,6 +28,7 @@
 import { pointAt } from './geom.js';
 import { ROAD_CLASS, LANE_WIDTH, edgeOpen, edgeWidth, edgeClass, junctionType, laneOffset } from './roadgraph.js';
 import { levelAt } from './crossings.js';
+import { createSpline, arcSamples } from './road-spline.js';
 
 /** Kerb return radius (m) by the larger road rank at the corner: lanes 4, streets and B roads 6, A roads 8, dual and motorway 12. */
 export const CORNER_RADIUS = { 1: 4, 2: 6, 3: 6, 4: 8, 5: 12, 6: 12 };
@@ -178,6 +179,43 @@ function reachBudget(graph, node, year) {
 /** The trim (m) at which an arm's mouth corners surely lie inside the junction's disc of radius `budget` (a corner is within hw of the mouth centre, which is within the trim of the node). */
 const budgetTrim = (budget, hw) => Math.max(MIN_TRIM, budget - hw);
 
+
+// ---- arms on the edge's spline -------------------------------------------------------------------------------------
+
+/** The edge's centripetal spline through its baked points (arc length, tangent and normal at any distance), built once. */
+export function edgeSpline(edge) {
+    if (edge._spl !== undefined) return edge._spl;
+    const pts = [];
+    for (let i = 0; i < edge.pts.length; i += 2) {
+        const p = pts[pts.length - 1];
+        if (!p || Math.hypot(edge.pts[i] - p.x, edge.pts[i + 1] - p.y) > 0.01) pts.push({ x: edge.pts[i], y: edge.pts[i + 1] });
+    }
+    // a point 1 m in from each end pins the end tangent to the first/last chord (the spline's own end extrapolation would
+    // swing it on a short edge with a corner), so the road leaves a junction along the chord the layout bearing assumes
+    if (pts.length >= 3) {
+        const pin = (a, c) => { const l = Math.hypot(c.x - a.x, c.y - a.y), k = Math.min(1, l / 3) / l; return { x: a.x + (c.x - a.x) * k, y: a.y + (c.y - a.y) * k }; };
+        const n = pts.length;
+        pts.splice(n - 1, 0, pin(pts[n - 1], pts[n - 2]));
+        pts.splice(1, 0, pin(pts[0], pts[1]));
+    }
+    return (edge._spl = pts.length >= 2 ? createSpline(pts) : null);
+}
+
+const ARM = { x: 0, y: 0, angle: 0 };
+/** Point and heading (outward from the node) of an arm's spline at distance `d` (polyline metres) from the node. */
+function armPoint(arm, d, out = ARM) {
+    const e = arm.edge, atA = arm.end === 'a', spl = edgeSpline(e);
+    if (!spl) {
+        const p = pointAt(e.pts, atA ? d : e.len - d, TMP);
+        out.x = p.x; out.y = p.y; out.angle = atA ? p.angle : p.angle + Math.PI;
+        return out;
+    }
+    const k = e.len / (spl.length || 1), s = Math.max(0, Math.min(spl.length, (atA ? d : e.len - d) / k));
+    const q = spl.at(s);
+    out.x = q.x; out.y = q.y; out.angle = Math.atan2(q.ty, q.tx) + (atA ? 0 : Math.PI);
+    return out;
+}
+
 // ---- layout ------------------------------------------------------------------------------------------------------
 
 function buildArms(graph, node, year) {
@@ -203,10 +241,8 @@ function buildArms(graph, node, year) {
 
 /** Sets an arm's mouth (the centreline point at `trim` from the node and the kerb corners across it). */
 function setMouth(arm, trim) {
-    const e = arm.edge, atA = arm.end === 'a';
     arm.trim = trim;
-    const p = pointAt(e.pts, atA ? trim : e.len - trim, TMP);
-    const h = atA ? p.angle : p.angle + Math.PI; // outward from the node
+    const p = armPoint(arm, trim), h = p.angle; // on the arm's spline, heading outward from the node
     const nx = -Math.sin(h), ny = Math.cos(h);
     arm.mouth = { x: p.x, y: p.y, heading: h, nx, ny };
     arm.mL = { x: p.x + nx * arm.hw, y: p.y + ny * arm.hw };
@@ -318,8 +354,9 @@ function layoutPlain(layout, node, year, kind) {
             const C = lineMeet(TA, TA.h, TB, TB.h) ?? { x: node.x + A.ux * pr.s + A.nx * pr.hA, y: node.y + A.uy * pr.s + A.ny * pr.hA };
             const w = Math.sin(pr.phi / 2);
             if (pr.tA < A.trim - 0.05) poly.push({ x: TA.x, y: TA.y });
-            for (let k = 1; k < 6; k++) {
-                const u = k / 6, v = 1 - u, c0 = v * v, c1 = 2 * u * v * w, c2 = u * u, d = c0 + c1 + c2;
+            const nSeg = Math.max(6, Math.min(16, Math.ceil((pr.r * (Math.PI - pr.phi)) / 1.2))); // about a metre of kerb per segment
+            for (let k = 1; k < nSeg; k++) {
+                const u = k / nSeg, v = 1 - u, c0 = v * v, c1 = 2 * u * v * w, c2 = u * u, d = c0 + c1 + c2;
                 poly.push({ x: (c0 * TA.x + c1 * C.x + c2 * TB.x) / d, y: (c0 * TA.y + c1 * C.y + c2 * TB.y) / d });
             }
             if (pr.tB < B.trim - 0.05) poly.push({ x: TB.x, y: TB.y });
@@ -350,9 +387,7 @@ function layoutPlain(layout, node, year, kind) {
 
 /** The point on an arm's kerb at distance `d` from the node (side +1: the + side, -1: the - side) with the arm's outward heading there. */
 function kerbPoint(arm, d, side) {
-    const e = arm.edge, atA = arm.end === 'a';
-    const p = pointAt(e.pts, atA ? d : e.len - d, TMP);
-    const h = atA ? p.angle : p.angle + Math.PI;
+    const p = armPoint(arm, d), h = p.angle;
     return { x: p.x - Math.sin(h) * arm.hw * side, y: p.y + Math.cos(h) * arm.hw * side, h };
 }
 
@@ -460,12 +495,12 @@ function layoutRing(layout, node, year) {
     layout.ring = { ri, ro, width, rc, flare, shrunk };
     // each arm's trim: where its centreline is a flare length outside the ring (at most 0.45 of the edge)
     for (const a of arms) {
-        const e = a.edge, atA = a.end === 'a', cap = Math.min(TRIM_MAX, shareOf(a, true) * e.len);
+        const e = a.edge, cap = Math.min(TRIM_MAX, shareOf(a, true) * e.len);
         const roomy = Math.min(cap, Math.max(budgetTrim(layout.budget, a.hw), ro + 1.2)); // neighbours shorten the flare, never the ring entry
         const want = ro + FLARE_LENGTH;
         let trim = roomy, found = false;
         for (let d = 0.5; d <= roomy + 1e-9; d += 0.5) {
-            const p = pointAt(e.pts, atA ? d : e.len - d, TMP);
+            const p = armPoint(a, d);
             if (Math.hypot(p.x - node.x, p.y - node.y) >= want) { trim = d; found = true; break; }
         }
         if (!found) { a.clamped = true; layout.stats.clamped++; }
@@ -502,17 +537,24 @@ function layoutRing(layout, node, year) {
         const gap = ringArms[j].ringAngle - ringArms[i].ringAngle + (j <= i ? TWO_PI : 0);
         if (half[i] + half[j] > gap + 1e-3) { layout.stats.rejected.push('ring-crowded'); break; }
     }
-    // outer silhouette: ring arc, then up the flare to the mouth and back to the ring, arm by arm
+    // each arm ends in an approach curve: a cubic from the mouth (leaving along the arm's spline tangent) to the ring's outer
+    // circle at the arm's ring angle, arriving radially, so the arm meets the ring at a matching tangent. The flared entry
+    // is that curve widened from the arm's half width to the half span of the mouth on the ring.
     const poly = [];
     const ringPt = (ang, r) => ({ x: node.x + Math.cos(ang) * r, y: node.y + Math.sin(ang) * r });
+    for (const a of ringArms) {
+        a.join = approachCurve(a, node, ro);
+        a.flareSides = flareSides(a, ro);
+    }
     ringArms.forEach((a, k) => {
         const prev = ringArms[(k - 1 + n) % n];
         let from = prev.ringAngle + prev.half, to = a.ringAngle - a.half;
         if (to < from) to += k === 0 ? TWO_PI : 0;
-        const steps = Math.max(1, Math.ceil((to - from) / 0.14));
-        if (to > from + 1e-6) for (let s = 0; s <= steps; s++) poly.push(ringPt(from + ((to - from) * s) / steps, ro));
+        if (to > from + 1e-6) for (const q of arcSamples(node.x, node.y, ro, from, to, { maxStep: 2 })) poly.push({ x: q.x, y: q.y });
         else poly.push(ringPt(to, ro));
+        for (const q of a.flareSides.r) poly.push(q);
         poly.push(a.mR, a.mL);
+        for (const q of a.flareSides.l) poly.push(q);
         poly.push(ringPt(a.ringAngle + a.half, ro));
         a.ringLo = ringPt(a.ringAngle - a.half, ro); a.ringHi = ringPt(a.ringAngle + a.half, ro);
     });
@@ -530,8 +572,48 @@ function layoutRing(layout, node, year) {
         if (L < 2) continue;
         layout.islands.push({ kind: 'splitter', arm: layout.arms.indexOf(a), poly: [{ x: q0.x - dy * w0, y: q0.y + dx * w0 }, { x: q0.x + dx * L, y: q0.y + dy * L }, { x: q0.x + dy * w0, y: q0.y - dx * w0 }] });
     }
-    markStops(layout, node, year, null, a => ({ x: node.x + Math.cos(a.ringAngle) * (ro + 2.5), y: node.y + Math.sin(a.ringAngle) * (ro + 2.5), heading: a.ringAngle }));
+    markStops(layout, node, year, null, a => {
+        // on the arm's approach curve, 2.5 m outside the ring, facing along its tangent
+        let best = a.join[0], bd = Infinity;
+        for (const q of a.join) { const d = Math.abs(Math.hypot(q.x - node.x, q.y - node.y) - (ro + 2.5)); if (d < bd) { bd = d; best = q; } }
+        return { x: best.x, y: best.y, heading: Math.atan2(-best.ty, -best.tx) };
+    });
     ringConnectors(layout, year, rc);
+}
+
+/** Cubic Bezier samples [{x, y, tx, ty}] from the arm's mouth to the ring's outer circle; the tangent points towards the ring. */
+function approachCurve(a, node, ro) {
+    const m = a.mouth, ca = Math.cos(a.ringAngle), sa = Math.sin(a.ringAngle);
+    const E = { x: node.x + ca * ro, y: node.y + sa * ro };
+    const dist = Math.hypot(E.x - m.x, E.y - m.y), k = dist * 0.4;
+    const P1 = { x: m.x - Math.cos(m.heading) * k, y: m.y - Math.sin(m.heading) * k }, P2 = { x: E.x + ca * k, y: E.y + sa * k };
+    const steps = Math.max(4, Math.ceil(dist / 1.5)), out = [];
+    for (let i = 0; i <= steps; i++) {
+        const u = i / steps, v = 1 - u;
+        const x = v * v * v * m.x + 3 * v * v * u * P1.x + 3 * v * u * u * P2.x + u * u * u * E.x;
+        const y = v * v * v * m.y + 3 * v * v * u * P1.y + 3 * v * u * u * P2.y + u * u * u * E.y;
+        const dx = 3 * v * v * (P1.x - m.x) + 6 * v * u * (P2.x - P1.x) + 3 * u * u * (E.x - P2.x);
+        const dy = 3 * v * v * (P1.y - m.y) + 6 * v * u * (P2.y - P1.y) + 3 * u * u * (E.y - P2.y);
+        const l = Math.hypot(dx, dy) || 1;
+        out.push({ x, y, tx: dx / l, ty: dy / l });
+    }
+    return out;
+}
+
+/** The two flared sides of an arm's entry: the approach curve offset by its half width widening towards the ring (interior points only; right side runs ring to mouth, left side mouth to ring). */
+function flareSides(a, ro) {
+    const J = a.join, last = J.length - 1, r = [], l = [];
+    const extra = Math.max(0, ro * Math.sin(a.half) - a.hw);
+    for (let i = last - 1; i >= 1; i--) {
+        const u = i / last, w = a.hw + extra * u * u, q = J[i]; // (u runs from the mouth, 0, to the ring, 1)
+        const nx = q.ty, ny = -q.tx; // the arm's + side
+        r.push({ x: q.x - nx * w, y: q.y - ny * w });
+    }
+    for (let i = 1; i < last; i++) {
+        const u = i / last, w = a.hw + extra * u * u, q = J[i];
+        l.push({ x: q.x + q.ty * w, y: q.y - q.tx * w });
+    }
+    return { r, l };
 }
 
 function ringConnectors(layout, year, rc) {
@@ -579,10 +661,10 @@ function markStops(layout, node, year, alongTrim, atRing) {
         const from = lanes > 1 ? a.hw - lanes * LANE_WIDTH + 0.1 : 0.15, to = a.hw - 0.3;
         let px, py, heading;
         if (alongTrim) {
-            const d = alongTrim(a), atA = a.end === 'a';
+            const d = alongTrim(a);
             if (a.edge.len < d + 4) return;
-            const p = pointAt(a.edge.pts, atA ? d : a.edge.len - d, TMP);
-            px = p.x; py = p.y; heading = atA ? p.angle : p.angle + Math.PI;
+            const p = armPoint(a, d); // placed from the spline's tangent
+            px = p.x; py = p.y; heading = p.angle;
         } else {
             const r = atRing(a);
             px = r.x; py = r.y; heading = r.heading;

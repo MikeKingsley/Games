@@ -312,3 +312,30 @@ test('every junction of the baked region lays out without exceptions or NaN, in 
         assert.ok(s.ms < 5000, `layout of ${s.nodes} junctions took ${s.ms} ms`);
     }
 });
+
+test('plan 0010 phase 4: each roundabout arm meets the ring within 0.1 m at a matching tangent', () => {
+    const cases = [
+        [{ deg: 0 }, { deg: 90 }, { deg: 180 }, { deg: 270 }],
+        [{ deg: 0 }, { deg: 22 }, { deg: 200 }],                      // crowded: mouths spread round the ring
+        [{ deg: 10, cls: 'A' }, { deg: 130, cls: 'A' }, { deg: 250, cls: 'street' }, { deg: 300 }],
+    ];
+    for (const arms of cases) {
+        const { g, c } = star(arms, { junction: 'roundabout', roundaboutFrom: 0, ringRadius: 3.5 });
+        const L = layoutJunction(g, c, 2024);
+        assert.equal(L.kind, 'roundabout');
+        for (const a of L.arms) {
+            const J = a.join, first = J[0], last = J[J.length - 1];
+            // start: on the mouth, leaving along the arm's own heading (tangent runs towards the ring, so against `heading`)
+            assert.ok(Math.hypot(first.x - a.mouth.x, first.y - a.mouth.y) < 0.1, 'curve starts at the mouth');
+            assert.ok(first.tx * -Math.cos(a.mouth.heading) + first.ty * -Math.sin(a.mouth.heading) > 0.999, 'arm tangent matches at the mouth');
+            // end: on the ring's outer circle at the arm's ring angle, arriving radially
+            assert.ok(Math.abs(Math.hypot(last.x - c.x, last.y - c.y) - L.ring.ro) < 0.1, 'curve ends on the ring');
+            const ang = Math.atan2(last.y - c.y, last.x - c.x);
+            assert.ok(Math.abs(Math.atan2(Math.sin(ang - a.ringAngle), Math.cos(ang - a.ringAngle))) < 0.1 / L.ring.ro, 'at the arm\'s ring angle');
+            assert.ok(last.tx * -Math.cos(a.ringAngle) + last.ty * -Math.sin(a.ringAngle) > 0.999, 'enters the ring radially');
+            // flared sides are inside the silhouette's vertex list
+            for (const q of [...a.flareSides.r, ...a.flareSides.l]) assert.ok(L.boundary.some(p => p.x === q.x && p.y === q.y));
+        }
+        if (!L.stats.rejected.length) assert.equal(selfIntersects(L.boundary), false); // (a crowded ring is a rejected case)
+    }
+});
