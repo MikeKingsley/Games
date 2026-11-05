@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="robots" content="noindex">
+    <link rel="icon" href="data:,">
+    <title>Delivery Driver greybox (dev only)</title>
+    <style>
+        html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1d21; color: #e8e8e8; font: 13px system-ui, sans-serif; touch-action: none; }
+        canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+        #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+        #labels span { position: absolute; transform: translate(-50%, -100%); padding: 1px 6px; border-radius: 4px; background: rgba(0, 0, 0, .6); white-space: nowrap; }
+        #bar { position: fixed; left: 0; right: 0; top: 0; display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; background: rgba(0, 0, 0, .55); }
+        #bar button { font: inherit; color: inherit; background: #34383f; border: 1px solid #5a606b; border-radius: 4px; padding: 4px 8px; }
+        #help { position: fixed; left: 6px; bottom: 6px; max-width: 90vw; padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, .55); }
+    </style>
+</head>
+<body>
+    <canvas id="gl"></canvas>
+    <div id="labels"></div>
+    <div id="bar"></div>
+    <div id="help">Drag to look. WASD / arrows move, Q / E down / up, Shift fast. Wheel or pinch moves forward. Dev only.</div>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
