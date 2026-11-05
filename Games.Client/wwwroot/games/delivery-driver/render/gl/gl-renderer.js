@@ -10,36 +10,40 @@ import { QUALITY, CHUNK_SIZE } from '../../config.js';
 import { groundZ, decksAt, cameraGroundZ } from '../../world/terrain.js';
 import { SLAB } from '../../world/crossings.js';
 import { uploadMesh, drawMesh, deleteMesh, ATTRIB_SLOTS, INSTANCE_SLOTS, uploadInstances, drawInstances, deleteInstances, createStream } from './gpu-mesh.js';
-import { buildChunkMesh, buildFarField, WATER_ALPHA } from './terrain-mesh.js';
-import { buildChunkRoads, chunkRoadSignature } from './road-mesh.js';
+import { buildFarField, WATER_ALPHA } from './terrain-mesh.js';
+import { chunkRoadSignature } from './road-mesh.js';
 import { buildChunkProps, chunkPropsSig, chunkSignalNodes, buildDynamicProps, lampStyle } from './prop-mesh.js';
+import { buildChunkData, buildRoadsAt, createFrameDriver } from './chunk-build.js';
 import { sceneLighting, shadowDirection } from './sun.js';
 import { fitShadow, shadowRadius, SHADOW_SIZE } from './shadow.js';
 import { rainSettings } from './weather.js';
-import { broadleafTemplate, coniferTemplate, rockTemplate, buildTreeInstances, buildRockInstances } from './instances.js';
+import { broadleafTemplate, coniferTemplate, rockTemplate } from './instances.js';
 import { signalPhase } from '../../traffic/traffic.js';
 import { currentStop } from '../../game/contracts.js';
 import { createVehicleDrawer } from './gl-vehicles.js';
 import { isLive } from '../../world/furniture.js';
 import { createChunkCache } from './chunk-cache.js';
-import { obliqueCamera, cameraFromView, frustumPlanes, visibleChunks, lodFor, viewDistance, LOOK_HEIGHT } from './camera3d.js';
+import { obliqueCamera, cameraFromView, frustumPlanes, viewDistance, LOOK_HEIGHT } from './camera3d.js';
 
 /** Head lamp colours by era (the Canvas renderer's tints) and street lamp light by era: gas, sodium, white. */
 const HEADLIGHT = [[1, 0.84, 0.59], [1, 0.89, 0.67], [1, 0.94, 0.78], [0.98, 0.97, 0.9], [0.92, 0.95, 1]];
 const LAMP_TINT = [[1, 0.84, 0.55], [1, 0.84, 0.55], [1, 0.67, 0.27], [1, 0.67, 0.27], [0.92, 0.94, 1]];
+const HEAD_REACH = [24, 36, 48, 60, 72], HEAD_CONE = Math.cos(0.62);
 const ERROR_CHECK_EVERY = 30; // gl.getError() stalls the pipeline, so only look now and then
 
 const handlesOf = data => [data.ground, data.surf, data.water, data.roads, data.props];
 const instancesOf = data => [data.treesB, data.treesC, data.rocks];
+const now = () => performance.now();
 
 /** Rebuilds only the road mesh of a cached chunk (the ground, water and surf do not depend on the year). */
-function refreshRoads(gl, world, entry, year, wet, track) {
+function refreshRoads(gl, world, entry, year, wet, track, level = entry.data.roadLevel) {
     const sig = chunkRoadSignature(world, entry.chunk, year, wet);
-    if (sig === entry.data.roadSig) return false;
+    if (sig === entry.data.roadSig && level === entry.data.roadLevel) return false;
     if (entry.data.roads) { track(-entry.data.roads.bytes); deleteMesh(gl, entry.data.roads); }
-    entry.data.roads = uploadMesh(gl, buildChunkRoads(world, entry.chunk, year, { wet }));
+    entry.data.roads = uploadMesh(gl, buildRoadsAt(world, entry.chunk, year, wet, level));
     if (entry.data.roads) track(entry.data.roads.bytes);
     entry.data.roadSig = sig;
+    entry.data.roadLevel = level;
     return true;
 }
 
@@ -68,7 +72,7 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
     const gl = createContext(canvas, { antialias });
     if (!gl) return null;
 
-    const stats = { kind: 'webgl', antialias, buildings: 0, chunks: 0, drawables: 0, drawCalls: 0, triangles: 0, gpuBytes: 0, chunkBuilds: 0, roadRebuilds: 0, culled: 0, glErrors: 0, lost: false };
+    const stats = { kind: 'webgl', antialias, buildings: 0, chunks: 0, drawables: 0, drawCalls: 0, triangles: 0, gpuBytes: 0, chunkBuilds: 0, roadRebuilds: 0, roadSwaps: 0, aheadBuilds: 0, buildMs: 0, worstBuildMs: 0, culled: 0, glErrors: 0, lost: false };
     const caps = probeCapabilities(gl);
     const cam = {}, planes = frustumPlanes(mat4.create());
     const target = { x: 0, y: 0, z: 0 };
@@ -77,6 +81,11 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
     let shadowTex = null, shadowFbo = null, shadowSize = 0, dummyTex = null, emptyVao = null;
     let tmpl = null, stream = null, vehicles = null, treeQuality = 1, qualityKey = '';
     let world = null, year = 1919, wet = false;
+    // chunk build time: this frame's total (ms), the budget a frame may start, and the frame driver (chunk-build.js)
+    let buildBudget = 6, frameBuild = 0, driver = null, driverKey = '';
+    const spent = ms => { frameBuild += ms; };
+    const shadowNear = []; // the chunks near the shadow focus, reused every frame
+    const dynSignals = [], dynBays = [], dynRings = []; // the per-frame dynamic props' inputs, reused
 
     /** Roof height of the building or wall at (x, y) (with a margin round it), or -Infinity: keeps the chase camera outside. */
     const solidProbe = { x: 0, y: 0, hx: 0.1, hy: 0.1, angle: 0 }, solidHits = [];
@@ -117,22 +126,29 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
         stream = createStream(gl);
         vehicles = createVehicleDrawer(gl, setUniforms);
         cache = createChunkCache({
-            build(chunk, lod) {
-                const m = buildChunkMesh(world, chunk, { lod });
-                const roads = buildChunkRoads(world, chunk, year, { wet });
-                const near = lod === 0;
-                const props = buildChunkProps(world, chunk, year, { detail: near });
-                const trees = buildTreeInstances(chunk, treeQuality, !near);
+            budgetMs: buildBudget,
+            build(chunk, lod, roadLevel) {
+                const t0 = now();
+                const cpu = buildChunkData(world, chunk, lod, { year, wet, trees: treeQuality, roadLevel });
+                const t = cpu.trees;
                 const data = {
-                    ground: uploadMesh(gl, m.ground), surf: uploadMesh(gl, m.surf), water: uploadMesh(gl, m.water), roads: uploadMesh(gl, roads),
-                    roadSig: chunkRoadSignature(world, chunk, year, wet), props: uploadMesh(gl, props), propsSig: chunkPropsSig(chunk, year),
-                    treesB: uploadInstances(gl, tmpl.broadleaf, trees.broadleaf), treesC: uploadInstances(gl, tmpl.conifer, trees.conifer),
-                    rocks: uploadInstances(gl, tmpl.rock, buildRockInstances(chunk)), signals: chunkSignalNodes(world, chunk, year),
-                    trees: trees.count, buildings: chunk.buildings.length, furniture: near ? chunk.lamps.length + chunk.signs.length : 0,
+                    ground: uploadMesh(gl, cpu.ground), surf: uploadMesh(gl, cpu.surf), water: uploadMesh(gl, cpu.water), roads: uploadMesh(gl, cpu.roads),
+                    roadSig: cpu.roadSig, roadLevel: cpu.roadLevel, props: uploadMesh(gl, cpu.props), propsSig: cpu.propsSig,
+                    treesB: uploadInstances(gl, tmpl.broadleaf, t.broadleaf), treesC: uploadInstances(gl, tmpl.conifer, t.conifer),
+                    rocks: uploadInstances(gl, tmpl.rock, cpu.rocks), signals: cpu.signals,
+                    trees: t.count, buildings: cpu.buildings, furniture: cpu.furniture,
                 };
-                for (const h of [...handlesOf(data), ...instancesOf(data)]) if (h) gpuBytes += h.bytes;
+                for (const h of handlesOf(data)) if (h) gpuBytes += h.bytes;
+                for (const h of instancesOf(data)) if (h) gpuBytes += h.bytes;
                 stats.chunkBuilds++;
+                spent(now() - t0);
                 return data;
+            },
+            refresh(entry, level) {
+                const t0 = now();
+                refreshRoads(gl, world, entry, year, wet, d => { gpuBytes += d; }, level);
+                stats.roadSwaps++;
+                spent(now() - t0);
             },
             dispose(entry) {
                 for (const h of handlesOf(entry.data)) if (h) { gpuBytes -= h.bytes; deleteMesh(gl, h); }
@@ -255,37 +271,56 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
     }
 
     /** Fills the night-light arrays: the player's headlights, the two nearest lit vehicles, then the nearest street lamps. */
+    const SPOTS = 8;
+    // scratch for gatherSpots, reused every frame: the nearest lamps so far (kept sorted) and the two nearest vehicles
+    const nearLamp = Array.from({ length: SPOTS }, () => ({ l: null, d: 0 })), nearCar = [{ v: null, d: 0 }, { v: null, d: 0 }];
+    const addSpot = (x, y, z, dx, dy, dz, cone, range, col, k) => {
+        if (spotCount >= SPOTS) return;
+        const i = spotCount++, a = i * 4, c = i * 3;
+        spotPos[a] = x; spotPos[a + 1] = y; spotPos[a + 2] = z; spotPos[a + 3] = cone;
+        spotDir[a] = dx; spotDir[a + 1] = dy; spotDir[a + 2] = dz; spotDir[a + 3] = range;
+        spotCol[c] = col[0] * k; spotCol[c + 1] = col[1] * k; spotCol[c + 2] = col[2] * k;
+    };
+    const headSpot = (era, x, y, z, heading, len, k) => {
+        const reach = HEAD_REACH[era], c = Math.cos(heading), s = Math.sin(heading);
+        const dl = Math.hypot(1, 0.07);
+        addSpot(x + c * len, y + s * len, z + 1.0, c / dl, s / dl, -0.07 / dl, HEAD_CONE, reach, HEADLIGHT[era], k);
+    };
     function gatherSpots(session, entries, yearNow) {
         spotCount = 0;
         const n = L.night;
         if (n < 0.05 || !session.player) return;
         const pl = session.player, era = lampStyle(yearNow).era;
-        const add = (x, y, z, dx, dy, dz, cone, range, col, k) => {
-            if (spotCount >= 8) return;
-            const i = spotCount++;
-            spotPos.set([x, y, z, cone], i * 4);
-            spotDir.set([dx, dy, dz, range], i * 4);
-            spotCol.set([col[0] * k, col[1] * k, col[2] * k], i * 3);
-        };
-        const head = (x, y, z, heading, len, k) => {
-            const reach = [24, 36, 48, 60, 72][era], c = Math.cos(heading), s = Math.sin(heading);
-            const dl = Math.hypot(1, 0.07);
-            add(x + c * len, y + s * len, z + 1.0, c / dl, s / dl, -0.07 / dl, Math.cos(0.62), reach, HEADLIGHT[era], k);
-        };
-        head(pl.x, pl.y, pl.z ?? 0, pl.heading, pl.spec.length - pl.spec.rearOverhang, 3.4 * n);
-        const lit = (session.vehicles ?? []).filter(v => v.type !== 'bicycle' && v.type !== 'cart').map(v => ({ v, d: Math.hypot(v.x - pl.x, v.y - pl.y) })).filter(o => o.d < 70).sort((a, b) => a.d - b.d).slice(0, 2);
-        for (const { v } of lit) head(v.x, v.y, v.z ?? 0, v.heading, v.spec.len / 2, 1.8 * n);
-        const style = lampStyle(yearNow), lamps = [];
+        headSpot(era, pl.x, pl.y, pl.z ?? 0, pl.heading, pl.spec.length - pl.spec.rearOverhang, 3.4 * n);
+        // the two nearest lit vehicles within 70 m (insertion into a two-slot list)
+        let cars = 0;
+        const vs = session.vehicles;
+        for (let i = 0; vs && i < vs.length; i++) {
+            const v = vs[i];
+            if (v.type === 'bicycle' || v.type === 'cart') continue;
+            const d = Math.hypot(v.x - pl.x, v.y - pl.y);
+            if (d >= 70 || (cars === 2 && d >= nearCar[1].d)) continue;
+            let k = cars < 2 ? cars++ : 1;
+            while (k > 0 && nearCar[k - 1].d > d) { nearCar[k].v = nearCar[k - 1].v; nearCar[k].d = nearCar[k - 1].d; k--; }
+            nearCar[k].v = v; nearCar[k].d = d;
+        }
+        for (let i = 0; i < cars; i++) { const v = nearCar[i].v; headSpot(era, v.x, v.y, v.z ?? 0, v.heading, v.spec.len / 2, 1.8 * n); nearCar[i].v = null; }
+        // the nearest street lamps within 55 m, as many as there are spots left
+        const style = lampStyle(yearNow), room = SPOTS - spotCount;
+        let lamps = 0;
         for (const e of entries) {
             if (e.lod !== 0) continue;
-            for (const l of e.chunk.lamps ?? []) {
-                if (!isLive(l, yearNow)) continue;
+            const list = e.chunk.lamps;
+            for (let i = 0; list && i < list.length; i++) {
+                const l = list[i];
                 const d = Math.hypot(l.x - pl.x, l.y - pl.y);
-                if (d < 55) lamps.push({ l, d });
+                if (d >= 55 || (lamps === room && d >= nearLamp[room - 1].d) || !isLive(l, yearNow)) continue;
+                let k = lamps < room ? lamps++ : room - 1;
+                while (k > 0 && nearLamp[k - 1].d > d) { nearLamp[k].l = nearLamp[k - 1].l; nearLamp[k].d = nearLamp[k - 1].d; k--; }
+                nearLamp[k].l = l; nearLamp[k].d = d;
             }
         }
-        lamps.sort((a, b) => a.d - b.d);
-        for (const { l } of lamps) add(l.x, l.y, (l.z ?? 0) + style.height - 0.3, 0, 0, -1, -2, 22, L.lampTint, 0.55 * n);
+        for (let i = 0; i < lamps; i++) { const l = nearLamp[i].l; addSpot(l.x, l.y, (l.z ?? 0) + style.height - 0.3, 0, 0, -1, -2, 22, L.lampTint, 0.55 * n); nearLamp[i].l = null; }
     }
 
     const drawHandle = h => {
@@ -308,13 +343,15 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
         bindShadowUnit(null);
         vpActive = fit.vp; shadowPassNow = true;
         const calls = stats.drawCalls, tris = stats.triangles;
-        const near = entries.filter(e => Math.hypot((e.chunk.i + 0.5) * CHUNK_SIZE - focus[0], (e.chunk.j + 0.5) * CHUNK_SIZE - focus[1]) < radius + CHUNK_SIZE * 0.8);
+        const near = shadowNear;
+        near.length = 0;
+        for (const e of entries) if (Math.hypot((e.chunk.i + 0.5) * CHUNK_SIZE - focus[0], (e.chunk.j + 0.5) * CHUNK_SIZE - focus[1]) < radius + CHUNK_SIZE * 0.8) near.push(e);
         scene.use();
         setUniforms(scene, 1, 0);
         for (const e of near) drawHandle(e.data.props);
         inst.use();
         setUniforms(inst, 1, 0);
-        for (const e of near) for (const h of instancesOf(e.data)) if (h) drawInstances(gl, h);
+        for (const e of near) { const d = e.data; if (d.treesB) drawInstances(gl, d.treesB); if (d.treesC) drawInstances(gl, d.treesC); if (d.rocks) drawInstances(gl, d.rocks); }
         vehicles.draw(session, { ...frameInfo, shadow: true });
         stats.shadowCalls = stats.drawCalls - calls + vehicles.stats.drawCalls;
         stats.drawCalls = calls; stats.triangles = tris;
@@ -421,17 +458,26 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
                 gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
                 const key = `${qName}:${q.trees}`;
                 if (key !== qualityKey) { if (qualityKey) cache.clear(); qualityKey = key; treeQuality = q.trees ?? 1; }
-                cache.frame = frame;
-                cache.beginFrame();
-                const chunks = world.chunks.around(p.cx, p.cy, radius, session.chunkBudget ?? 3);
-                const entries = [];
-                for (const c of visibleChunks(planes, chunks)) {
-                    const d = Math.hypot((c.i + 0.5) * CHUNK_SIZE - p.cx, (c.j + 0.5) * CHUNK_SIZE - p.cy);
-                    if (d > radius + CHUNK_SIZE) continue;
-                    const e = cache.get(c, lodFor(d), 2);
-                    if (e) entries.push(e);
+                buildBudget = q.buildMs ?? 6;
+                cache.budgetMs = driver?.off ? Infinity : buildBudget;
+                // the frame driver (chunk-build.js): which chunks to draw, at which detail, and what to build ahead of the camera
+                const dKey = `${qName}:${radius}`;
+                if (!driver || dKey !== driverKey || driver.world !== world) {
+                    // (a rollback switch for measuring: localStorage 'games.dd.corridor' = 'off' draws every chunk's roads in full, builds nothing ahead and has no time budget)
+                    const off = globalThis.localStorage?.getItem('games.dd.corridor') === 'off';
+                    if (off) cache.budgetMs = Infinity;
+                    driver = createFrameDriver({ world, cache, quality: q, radius, corridor: !off, lookahead: !off });
+                    driver.off = off;
+                    driver.world = world; driverKey = dKey;
                 }
-                stats.culled = chunks.length - entries.length;
+                frameBuild = 0;
+                const aheadBefore = driver.stats.ahead;
+                const heading = camera.view3d ? camera.view3d.az : player.heading ?? 0;
+                const entries = driver.frame({ planes, x: p.cx, y: p.cy, heading, route: session.route?.pts ?? null, frameNo: frame, chunkGen: session.chunkBudget ?? 3 });
+                stats.buildMs = frameBuild;
+                if (frame > 30 && frameBuild > stats.worstBuildMs) stats.worstBuildMs = frameBuild;
+                stats.aheadBuilds += driver.stats.ahead - aheadBefore;
+                stats.culled = world.chunks.cache.size - entries.length;
                 stats.chunks = entries.length;
                 gatherSpots(session, entries, year);
                 const time = performance.now() / 1000;
@@ -473,15 +519,22 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
                 // trees and rocks: instanced templates
                 inst.use();
                 setUniforms(inst, 1, 0);
-                for (const e of entries) for (const h of instancesOf(e.data)) if (h) { drawInstances(gl, h); stats.drawCalls++; stats.triangles += h.instances * h.count / 3; }
+                for (const e of entries) {
+                    const d = e.data;
+                    if (d.treesB) { drawInstances(gl, d.treesB); stats.drawCalls++; stats.triangles += d.treesB.instances * d.treesB.count / 3; }
+                    if (d.treesC) { drawInstances(gl, d.treesC); stats.drawCalls++; stats.triangles += d.treesC.instances * d.treesC.count / 3; }
+                    if (d.rocks) { drawInstances(gl, d.rocks); stats.drawCalls++; stats.triangles += d.rocks.instances * d.rocks.count / 3; }
+                }
                 // signals and cones change every frame: a tiny mesh rebuilt each time
                 scene.use();
-                const signalNodes = [];
-                for (const e of entries) if (e.data.signals.length) signalNodes.push(...e.data.signals);
+                const signalNodes = dynSignals;
+                signalNodes.length = 0;
+                for (const e of entries) { const sg = e.data.signals; for (let i = 0; i < sg.length; i++) signalNodes.push(sg[i]); }
                 const pr = world.practice;
                 const cones = Math.hypot(pr.x - p.cx, pr.y - p.cy) < radius + 120 ? pr.cones : null;
                 const simTime = session.traffic?.time ?? 0;
-                const bays = [];
+                const bays = dynBays;
+                bays.length = 0;
                 const ay = session.activeYard;
                 if (ay?.yard?.marker && Math.hypot(ay.yard.marker.x - p.cx, ay.yard.marker.y - p.cy) < radius + 40) {
                     const m = ay.yard.marker, mc = Math.cos(m.heading), ms = Math.sin(m.heading);
@@ -491,7 +544,8 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
                     const bay = pr.bays[session.practiceBay ?? 1], bc = Math.cos(bay.heading), bs = Math.sin(bay.heading);
                     bays.push({ x: bay.x + bc * 8, y: bay.y + bs * 8, len: 16, dep: 3.6, angle: bay.heading });
                 }
-                const rings = [];
+                const rings = dynRings;
+                rings.length = 0;
                 const stop = session.career?.job && currentStop(session.career.job);
                 if (stop?.kind === 'door' && Math.hypot(stop.x - p.cx, stop.y - p.cy) < radius + 40) rings.push({ x: stop.x, y: stop.y, ok: !!session.stopCheck?.ok });
                 stream.update(buildDynamicProps(world, { signalNodes, phaseOf: n => signalPhase(n, simTime), cones, bays, rings, time }));

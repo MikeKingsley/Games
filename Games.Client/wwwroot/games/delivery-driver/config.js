@@ -53,10 +53,14 @@ export const AUTO_PREFERS_WEBGL = true;
 
 export const QUALITY = {
     // traffic .. shadows serve both renderers; the rest is WebGL only: view distance (m), shadow map texels per side,
-    // MSAA (applied when the context is created) and the far-field terrain grid resolution
-    low: { traffic: 8, drawChunks: 2, spriteCache: 24, maxDpr: 1, trees: 0.4, shadows: false, viewDistance: 400, shadowMapSize: 0, antialias: false, farField: 48 },
-    medium: { traffic: 16, drawChunks: 3, spriteCache: 48, maxDpr: 1.5, trees: 0.75, shadows: true, viewDistance: 560, shadowMapSize: 1024, antialias: false, farField: 72 },
-    high: { traffic: 28, drawChunks: 4, spriteCache: 96, maxDpr: 2, trees: 1, shadows: true, viewDistance: 720, shadowMapSize: 2048, antialias: true, farField: 96 },
+    // MSAA (applied when the context is created) and the far-field terrain grid resolution. Corridor detail (the
+    // Slow Roads idea, render/gl/chunk-build.js): roads keep their full mesh only within `roadDetail` metres of the
+    // camera and the coarse variant beyond; `roadLevel` is the detail inside that corridor (render/gl/road-mesh.js
+    // DETAIL: 2 full, 1 basic = no pavements, zebras, piers, abutments or embankments, junction pavements or island
+    // trees); `buildMs` is the time a frame may spend building chunks (one build always goes ahead).
+    low: { traffic: 8, drawChunks: 2, spriteCache: 24, maxDpr: 1, trees: 0.4, shadows: false, viewDistance: 400, shadowMapSize: 0, antialias: false, farField: 48, roadDetail: 240, roadLevel: 1, buildMs: 4 },
+    medium: { traffic: 16, drawChunks: 3, spriteCache: 48, maxDpr: 1.5, trees: 0.75, shadows: true, viewDistance: 560, shadowMapSize: 1024, antialias: false, farField: 72, roadDetail: 330, roadLevel: 2, buildMs: 6 },
+    high: { traffic: 28, drawChunks: 4, spriteCache: 96, maxDpr: 2, trees: 1, shadows: true, viewDistance: 720, shadowMapSize: 2048, antialias: true, farField: 96, roadDetail: 480, roadLevel: 2, buildMs: 8 },
 };
 
 /** Loading-bay tolerances. */

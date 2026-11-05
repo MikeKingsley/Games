@@ -49,14 +49,15 @@ export function createChunks(world, { cap = 160, onEvict = null } = {}) {
         },
         /**
          * Loads the chunks around a point. At most `budget` new chunks are generated per call (spreading the work
-         * across frames); chunks already loaded are always returned.
+         * across frames), and after the first one only while `more()` (if given) says there is time; chunks already
+         * loaded are always returned.
          */
-        around(x, y, r, budget = Infinity) {
+        around(x, y, r, budget = Infinity, more = null) {
             const out = [];
             let made = 0;
             for (const { i, j } of chunks.coordsAround(x, y, r)) {
                 if (cache.has(key(i, j))) out.push(chunks.get(i, j));
-                else if (made < budget) { out.push(chunks.get(i, j)); made++; }
+                else if (made < budget && (made === 0 || !more || more())) { out.push(chunks.get(i, j)); made++; }
             }
             return out;
         },

@@ -6,8 +6,19 @@ export const STRIDE = FLOATS_PER_VERTEX * 4;
 
 /** Interleaves a mesh's attributes into one Float32Array [px py pz nx ny nz r g b ...]. */
 export function interleave(mesh) {
+    return interleaveInto(mesh, new Float32Array((mesh.positions.length / 3) * FLOATS_PER_VERTEX));
+}
+
+let scratch = new Float32Array(FLOATS_PER_VERTEX * 4096);
+/** The shared upload scratch, grown to at least `floats` (its contents are only valid until the next upload). */
+export function uploadScratch(floats) {
+    if (scratch.length < floats) scratch = new Float32Array(Math.max(floats, scratch.length * 2));
+    return scratch;
+}
+
+/** `interleave` into a caller-supplied array (at least 9 floats per vertex long): returns it. */
+export function interleaveInto(mesh, out) {
     const n = mesh.positions.length / 3;
-    const out = new Float32Array(n * FLOATS_PER_VERTEX);
     for (let i = 0; i < n; i++) {
         const o = i * FLOATS_PER_VERTEX;
         out[o] = mesh.positions[i * 3]; out[o + 1] = mesh.positions[i * 3 + 1]; out[o + 2] = mesh.positions[i * 3 + 2];
@@ -26,7 +37,9 @@ export function uploadMesh(gl, mesh) {
     const vao = gl.createVertexArray(), vbo = gl.createBuffer(), ibo = gl.createBuffer();
     gl.bindVertexArray(vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-    gl.bufferData(gl.ARRAY_BUFFER, interleave(mesh), gl.STATIC_DRAW);
+    // packed into the shared scratch array and uploaded from it (bufferData copies), so an upload allocates nothing
+    const n = (mesh.positions.length / 3) * FLOATS_PER_VERTEX;
+    gl.bufferData(gl.ARRAY_BUFFER, interleaveInto(mesh, uploadScratch(n)), gl.STATIC_DRAW, 0, n);
     for (const [name, size, offset] of [['a_pos', 3, 0], ['a_normal', 3, 12], ['a_color', 3, 24]]) {
         const loc = ATTRIB_SLOTS[name];
         gl.enableVertexAttribArray(loc);
@@ -117,7 +130,8 @@ export function createStream(gl) {
             if (!mesh || !mesh.indices.length) { stream.handle = null; return; }
             gl.bindVertexArray(vao);
             gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-            gl.bufferData(gl.ARRAY_BUFFER, interleave(mesh), gl.DYNAMIC_DRAW);
+            const n = (mesh.positions.length / 3) * FLOATS_PER_VERTEX;
+            gl.bufferData(gl.ARRAY_BUFFER, interleaveInto(mesh, uploadScratch(n)), gl.DYNAMIC_DRAW, 0, n);
             gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
             gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.DYNAMIC_DRAW);
             gl.bindVertexArray(null);

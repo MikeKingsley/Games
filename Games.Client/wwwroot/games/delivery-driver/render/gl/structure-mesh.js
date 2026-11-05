@@ -195,15 +195,16 @@ export function deckSupports(world, edge, t0, t1, year, tA = 0, tB = 0) {
 /**
  * The parts of one deck run `[t0, t1]` of an edge: slab, parapets, abutments, piers and the approach embankments.
  * `h` is {trimSamples, offsetSamples} from road-mesh.js; `tA`/`tB` are the junction trims and `win`
- * the chunk window, so every part is built exactly once and never reaches into a junction surface.
+ * the chunk window (`level`: the road detail, 2 = everything, 1 = no supports or embankments, 0 = the slab only), so every part is built exactly once and never reaches into a junction surface.
  */
-export function addDeck(b, h, world, edge, samples, t0, t1, width, year, win = null, tA = 0, tB = 0) {
+export function addDeck(b, h, world, edge, samples, t0, t1, width, year, win = null, tA = 0, tB = 0, level = 2) {
     const lo = Math.max(t0, win?.[0] ?? 0, tA), hi = Math.min(t1, win?.[1] ?? edge.len, edge.len - tB);
     const part = hi - lo >= 1 ? h.trimSamples(samples, lo, hi) : [];
     const stone = year < 1960 ? BRIDGE.stone : BRIDGE.concrete;
     const half = railOffset(width);
     if (part.length >= 2) {
-        for (const side of [1, -1]) {
+        // (coarse: the slab alone; basic and full: parapets too)
+        for (const side of level >= 1 ? [1, -1] : []) {
             const rail = h.offsetSamples(part, side * half);
             for (let i = 0; i < rail.length - 1; i++) {
                 const p = rail[i], q = rail[i + 1];
@@ -215,6 +216,7 @@ export function addDeck(b, h, world, edge, samples, t0, t1, width, year, win = n
         }
         addSlab(b, part, width / 2 + 0.8, BRIDGE.slab);
     }
+    if (level < 2) return; // the supports and the approach embankments are full-detail only
     // abutments and piers (see deckSupports); each is built by the window that owns its position
     for (const sp of deckSupports(world, edge, t0, t1, year, tA, tB)) {
         if (!owns(edge, win, sp.d)) continue;

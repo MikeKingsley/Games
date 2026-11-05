@@ -86,6 +86,19 @@ export function lodFor(distance, thresholds = LOD_CHUNKS) {
     return lod;
 }
 
+/**
+ * `lodFor` with hysteresis: a chunk currently at `current` keeps it until it is `margin` chunk widths past the threshold
+ * on the other side, so a chunk standing on a boundary does not swap back and forth as the camera jitters.
+ */
+export function lodWithHysteresis(current, distance, thresholds = LOD_CHUNKS, margin = 0.25) {
+    let lod = 0;
+    for (let i = 0; i < thresholds.length; i++) {
+        const t = thresholds[i] * CHUNK_SIZE, edge = current > i ? t - margin * CHUNK_SIZE : t + margin * CHUNK_SIZE;
+        if (distance >= edge) lod++; else break;
+    }
+    return lod;
+}
+
 /** How far the scene is drawn for a quality preset: `drawChunks` chunk widths plus half a chunk. */
 export const viewDistance = quality => quality?.viewDistance ?? ((quality?.drawChunks ?? 3) + 0.5) * CHUNK_SIZE;
 

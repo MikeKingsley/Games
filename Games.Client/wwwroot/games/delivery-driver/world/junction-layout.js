@@ -69,15 +69,28 @@ export function junctionSignature(graph, node, year) {
     return s;
 }
 
-/** The layout of a node in a year (cached under its signature). Never null: 'none' kind for a node with no open arm. */
+const quick = new WeakMap(); // graph -> Map(node id * 4096 + year -> { stamp fields, layout })
+
+/**
+ * The layout of a node in a year (cached under its signature). Never null: 'none' kind for a node with no open arm.
+ * Working out the signature (which needs the reach budget against the neighbouring junctions) costs more than the
+ * lookup is worth in a hot path, so the layout of a (node, year) is also remembered with a cheap stamp - the graph's
+ * size and the node's own junction fields - and returned straight away while the stamp still matches.
+ */
 export function layoutJunction(graph, node, year = 2100) {
+    let q = quick.get(graph);
+    if (!q) quick.set(graph, (q = new Map()));
+    const key = node.id * 4096 + (year | 0);
+    const hit = q.get(key);
+    if (hit && hit.year === year && hit.ng === graph.nodes.length && hit.ne === graph.edges.length && hit.arms === node.edges.length
+        && hit.jn === node.junction && hit.mini === node.mini && hit.pri === node.priority && hit.rr === node.ringRadius
+        && hit.rf === node.roundaboutFrom && hit.sf === node.signalsFrom) return hit.layout;
     let cache = caches.get(graph);
     if (!cache) caches.set(graph, (cache = new Map()));
     const sig = junctionSignature(graph, node, year);
-    const hit = cache.get(sig);
-    if (hit) return hit;
-    const layout = computeLayout(graph, node, year);
-    cache.set(sig, layout);
+    let layout = cache.get(sig);
+    if (!layout) { layout = computeLayout(graph, node, year); cache.set(sig, layout); }
+    q.set(key, { year, ng: graph.nodes.length, ne: graph.edges.length, arms: node.edges.length, jn: node.junction, mini: node.mini, pri: node.priority, rr: node.ringRadius, rf: node.roundaboutFrom, sf: node.signalsFrom, layout });
     return layout;
 }
 

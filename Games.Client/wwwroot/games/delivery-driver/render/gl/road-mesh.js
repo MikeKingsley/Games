@@ -2,7 +2,7 @@
 // the graded centreline (`edge.z`, from world/terrain.js): kerb strip, surface, then markings, each a hair above the
 // last (the renderer adds a polygon offset for distance). Everything is built per edge or node and depends on the year
 // only through `roadKey(edge, year)`, so an era change rebuilds just the edges whose key changed.
-import { createBuilder, addStrip, compose, mergeMeshes } from './meshes.js';
+import { createBuilder, addStrip, compose } from './meshes.js';
 import { CHUNK_SIZE } from '../../config.js';
 import { edgeClass, edgeOpen, edgeWidth, ROAD_CLASS, LANE_WIDTH } from '../../world/roadgraph.js';
 import { layoutJunction, junctionSignature, trimFor } from '../../world/junction-layout.js';
@@ -54,6 +54,22 @@ export function edgeSamples(edge, step = STEP) {
 
 /** The edge's samples, computed once (the grading is final by the time anything is drawn). */
 const samplesOf = edge => (edge._smp ??= edgeSamples(edge));
+
+/**
+ * Detail levels of a road mesh (the corridor LOD, see chunk-build.js): 2 full (pavements, zebras, piers, abutments,
+ * embankments, junction pavements and island trees), 1 basic (markings, parapets and kerbs, no pavements or supports) and
+ * 0 coarse (surface and kerb on every second sample, plain decks, junction fans). `true`/`false` are 2/0 for old callers.
+ */
+export const DETAIL = { coarse: 0, basic: 1, full: 2 };
+const levelOf = detail => (detail === true || detail === undefined ? DETAIL.full : detail === false ? DETAIL.coarse : detail);
+
+/** Every second sample of the edge's (a bend of 8 m instead of 4 m), keeping both ends: the coarse variant. */
+const coarseSamplesOf = edge => (edge._smpC ??= (() => {
+    const s = samplesOf(edge), out = [];
+    for (let i = 0; i < s.length; i += 2) out.push(s[i]);
+    if ((s.length - 1) % 2) out.push(s[s.length - 1]);
+    return out;
+})());
 
 const offsetSamples = (pts, off) => {
     const flat = [];
@@ -128,17 +144,20 @@ function dashes(b, pts, width, colour, bias, dash = 3, gap = 6) {
  * deck, parapets and piers of any bridge stretch and the dashed crossing of a ferry. `window` ([d0, d1], metres along
  * the edge, sample-aligned: see `edgeWindows`) builds just that stretch, so a long edge can be split between chunks.
  */
-export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, window = null } = {}) {
+export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, window = null, into = null } = {}) {
     if (!edgeOpen(edge, year) || !edge.z) return null;
+    const level = levelOf(detail);
     const region = world.region;
     const cls = edgeClass(edge, year), width = edgeWidth(edge, year);
     const col = roadColours(year, wet);
-    const all = samplesOf(edge);
+    const all = level === DETAIL.coarse ? coarseSamplesOf(edge) : samplesOf(edge);
     // the strips start and end where the junction layouts at either end hand over to the road (`trimFor`)
     const g = world.graph, tA = trimFor(g, edge, 'a', year), tB = trimFor(g, edge, 'b', year);
     const samples = trimSamples(all, Math.max(tA, window ? window[0] : 0), Math.min(edge.len - tB, window ? window[1] : edge.len));
     if (samples.length < 2) return null;
-    const b = createBuilder();
+    const b = into ?? createBuilder();
+    const first = b.vertexCount;
+    const done = () => (into ? (b.vertexCount > first ? into : null) : b.finish());
     const surface = edge.cls === 'lane' ? col.lane : edge.cls === 'access' ? col.access : col.surface;
     // bridge decks and tunnels: the stretches that touch this window (the parts outside it belong to another chunk)
     const near_ = ([t0, t1]) => !window || (t1 + 60 > window[0] && t0 - 60 < window[1]);
@@ -161,11 +180,11 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
             const part = samples.slice(from, to + 1).map(s => ({ x: s.x, y: s.y, z: 0.12 }));
             if (part.length >= 2) dashes(b, part, 1.2, hex('#d8e6ef'), 0, 6, 6);
         }
-        return b.vertexCount ? b.finish() : null;
+        return b.vertexCount > first ? done() : null;
     }
     addStrip(b, samples, width + 1.6, undefined, col.kerb, { bias: LAYER.kerb });
     addStrip(b, samples, width, undefined, surface, { bias: LAYER.surface });
-    if (detail && cls !== 'lane' && cls !== 'access' && cls !== 'M' && !edge.bridge && !edge.tunnel) {
+    if (level >= DETAIL.full && cls !== 'lane' && cls !== 'access' && cls !== 'M' && !edge.bridge && !edge.tunnel) {
         // pavements (town streets and roads) or a grassy verge (country roads) beside the kerb, stopping at the junction surfaces
         const ps = samples;
         if (ps.length >= 2) {
@@ -180,31 +199,31 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
             }
         }
     }
-    if (detail && cls !== 'lane' && cls !== 'access') {
+    if (cls !== 'lane' && cls !== 'access') {
         // markings run to the junction surfaces at either end
         const ms = samples;
         if (cls === 'dual' || cls === 'M') {
             const lanes = ROAD_CLASS[cls].lanes, median = width - 2 * lanes * LANE_WIDTH;
             if (median > 0) addStrip(b, ms, median, undefined, col.reservation[cls], { bias: LAYER.reservation });
-            if (col.centre) {
+            if (level >= DETAIL.basic && col.centre) {
                 const off = width / 2 - LANE_WIDTH;
                 dashes(b, offsetSamples(ms, off), 0.2, col.centre, LAYER.marking);
                 dashes(b, offsetSamples(ms, -off), 0.2, col.centre, LAYER.marking);
             }
-            if (col.edge) {
+            if (level >= DETAIL.basic && col.edge) {
                 for (const side of [1, -1]) addStrip(b, offsetSamples(ms, side * (width / 2 - 0.4)), 0.15, undefined, col.edge, { bias: LAYER.marking });
             }
         } else {
-            if (col.centre && !edge.oneway && (cls !== 'street' || year >= 1935)) centreLine(b, ms, cls, year, col);
-            if (col.edge) {
+            if (level >= DETAIL.basic && col.centre && !edge.oneway && (cls !== 'street' || year >= 1935)) centreLine(b, ms, cls, year, col);
+            if (level >= DETAIL.basic && col.edge) {
                 for (const side of [1, -1]) addStrip(b, offsetSamples(ms, side * (width / 2 - 0.35)), 0.15, undefined, col.edge, { bias: LAYER.marking });
             }
         }
     }
-    if (detail && year >= 1950 && col.centre) addZebra(b, edge, width, window, tA, tB);
-    for (const [t0, t1] of decks) addDeck(b, helpers, world, edge, all, t0, t1, width, year, window, tA, tB);
-    for (const [t0, t1] of tunnels) addTunnel(b, helpers, world, edge, all, t0, t1, width, year, window, tA, tB);
-    return b.finish();
+    if (level >= DETAIL.full && year >= 1950 && col.centre) addZebra(b, edge, width, window, tA, tB);
+    for (const [t0, t1] of decks) addDeck(b, helpers, world, edge, all, t0, t1, width, year, window, tA, tB, level);
+    if (level >= DETAIL.basic) for (const [t0, t1] of tunnels) addTunnel(b, helpers, world, edge, all, t0, t1, width, year, window, tA, tB);
+    return done();
 }
 
 /**
@@ -319,15 +338,16 @@ function addBand(b, verts, mouth, o0, o1, colour, bias, minLen = 1e-4, blocked =
  * splitter islands and a mini-roundabout's disc. Null for nodes with fewer than three open roads (the edge strips run
  * through) and for dead ends.
  */
-export function buildNodeMesh(world, node, year, { wet = false } = {}) {
+export function buildNodeMesh(world, node, year, { wet = false, detail = true, into = null } = {}) {
     const graph = world.graph;
+    const level = levelOf(detail);
     if (node.z === undefined || node.edges.length < 3) return null;
     const lay = layoutJunction(graph, node, year);
     if ((lay.kind !== 'plain' && lay.kind !== 'mini' && lay.kind !== 'roundabout') || lay.boundary.length < 3) return null;
     const col = roadColours(year, wet);
     const widest = lay.arms.reduce((p, q) => (q.hw > p.hw ? q : p));
     const surface = widest.edge.cls === 'lane' ? col.lane : widest.edge.cls === 'access' ? col.access : col.surface;
-    const b = createBuilder();
+    const b = into ?? createBuilder();
     const zAt = junctionHeights(node, lay);
     // a hull fallback (short edges, neighbours close by) can cut across an arm's mouth, leaving the road strip lying on the
     // surface: such junctions are drawn as the mouths joined in order instead, which keeps every mouth on the border
@@ -342,10 +362,10 @@ export function buildNodeMesh(world, node, year, { wet = false } = {}) {
     const mouth = verts.map((p, i) => isMouth(lay, p, verts[(i + 1) % n]));
     // kerb, then pavement (town streets) or verge beside it, as the edge strips have
     const blocked = (x, y) => onOtherRoad(graph, year, x, y);
-    addBand(b, verts, mouth, 0, 0.8, col.kerb, LAYER.kerb, 1e-4, blocked);
+    if (level >= DETAIL.basic) addBand(b, verts, mouth, 0, 0.8, col.kerb, LAYER.kerb, 1e-4, blocked);
     const wide = lay.arms.filter(a => a.cls !== 'lane' && a.cls !== 'access' && a.cls !== 'M' && !a.edge.bridge && !a.edge.tunnel);
     // (no pavement round a hull or mouths-only outline: the corners there are too tight to hold one without crossing a neighbour)
-    if (wide.length && !lay.stats.hull) {
+    if (level >= DETAIL.full && wide.length && !lay.stats.hull) {
         const town = wide.some(a => a.edge.town && !a.edge.link);
         addBand(b, verts, mouth, 0.8, town ? 2.0 : 2.2, town ? col.pavement : col.verge, town ? LAYER.pavement : LAYER.kerb, 2.5, blocked);
     }
@@ -355,25 +375,28 @@ export function buildNodeMesh(world, node, year, { wet = false } = {}) {
         const cx = isl.poly.reduce((s, p) => s + p.x, 0) / isl.poly.length, cy = isl.poly.reduce((s, p) => s + p.y, 0) / isl.poly.length;
         if (isl.kind === 'island') {
             const r = Math.hypot(isl.poly[0].x - cx, isl.poly[0].y - cy);
-            compose.cylinder(b, cx, cy, zc, r, 0.18, 32, grey);
-            compose.cylinder(b, cx, cy, zc + 0.16, Math.max(0.5, r - 0.6), 0.1, 32, hex('#6f9a4a'));
-            if (r >= 6) {
+            const seg = level >= DETAIL.basic ? 32 : 12;
+            compose.cylinder(b, cx, cy, zc, r, 0.18, seg, grey);
+            compose.cylinder(b, cx, cy, zc + 0.16, Math.max(0.5, r - 0.6), 0.1, seg, hex('#6f9a4a'));
+            if (r >= 6 && level >= DETAIL.full) {
                 compose.cylinder(b, cx, cy, zc + 0.26, 0.22, 2.2, 6, hex('#5b4630'));
                 compose.cylinder(b, cx, cy, zc + 1.8, 1.7, 3.0, 8, hex('#4a7a3a'), { radiusTop: 0.2 });
             }
+        } else if (level < DETAIL.basic) {
+            continue; // (splitter islands and the mini-roundabout's disc are too small to see from the far side of the corridor)
         } else if (isl.kind === 'splitter') {
             compose.prism(b, isl.poly, 0.12, grey, { z0: zAt(cx, cy) + LAYER.surface, roofColor: greyTop });
         } else {
             compose.prism(b, isl.poly, 0.07, hex('#d9d6cb'), { z0: zc, roofColor: hex('#e8e6dc') });
         }
     }
-    addStopLines(b, lay, col, zAt);
-    if (lay.kind === 'roundabout' && year >= 1960 && col.centre && lay.ring.width >= 8.5) {
+    if (level >= DETAIL.basic) addStopLines(b, lay, col, zAt);
+    if (level >= DETAIL.basic && lay.kind === 'roundabout' && year >= 1960 && col.centre && lay.ring.width >= 8.5) {
         // lane dividers round the bigger rings
         const ring = Array.from({ length: 49 }, (_, k) => ({ x: node.x + Math.cos((k * Math.PI * 2) / 48) * lay.ring.rc, y: node.y + Math.sin((k * Math.PI * 2) / 48) * lay.ring.rc, z: zc }));
         dashes(b, ring, 0.2, col.centre, LAYER.marking);
     }
-    return b.finish();
+    return into ?? b.finish();
 }
 
 /** The layout's stop and give-way lines: solid across the lane at signals (from 1935), dashed give-way lines (from 1960). */
@@ -471,7 +494,9 @@ export function edgeWindows(edge, chunk) {
  * drawn here.
  */
 export function buildChunkRoads(world, chunk, year, { wet = false, detail = true, keys = null } = {}) {
-    const graph = world.graph, list = [];
+    const graph = world.graph;
+    // one builder for the whole chunk: every edge, junction and yard writes straight into it (no per-part meshes to merge)
+    const b = createBuilder();
     const nodes = new Set();
     for (const id of chunk.edges) {
         const e = graph.edges[id];
@@ -480,26 +505,23 @@ export function buildChunkRoads(world, chunk, year, { wet = false, detail = true
         const windows = edgeWindows(e, chunk);
         if (!windows.length) continue;
         if (keys) keys[id] = roadKey(e, year);
-        for (const window of windows) {
-            const m = buildEdgeMesh(world, e, year, { wet, detail, window });
-            if (m) list.push(m);
-        }
+        for (const window of windows) buildEdgeMesh(world, e, year, { wet, detail, window, into: b });
     }
     for (const id of nodes) {
         const n = graph.nodes[id];
         if (!inside(chunk, n.x, n.y)) continue;
-        const m = buildNodeMesh(world, n, year, { wet });
-        if (m) list.push(m);
+        buildNodeMesh(world, n, year, { wet, detail, into: b });
     }
     for (const owner of world.yards) {
         const z = owner.yard.zone;
         if (!inside(chunk, z.x, z.y)) continue;
-        list.push(buildYardMesh(world, owner.yard), buildBayMesh(world, owner.yard.marker));
+        b.append(buildYardMesh(world, owner.yard));
+        b.append(buildBayMesh(world, owner.yard.marker));
     }
     const pz = world.practice?.yard.zone;
-    if (pz && inside(chunk, pz.x, pz.y)) list.push(buildPracticeMesh(world, world.practice));
-    for (const h of world.harbours ?? []) if (inside(chunk, h.quay.x, h.quay.y)) list.push(buildQuayMesh(world, h));
-    return list.length ? mergeMeshes(list) : null;
+    if (pz && inside(chunk, pz.x, pz.y)) b.append(buildPracticeMesh(world, world.practice));
+    for (const h of world.harbours ?? []) if (inside(chunk, h.quay.x, h.quay.y)) b.append(buildQuayMesh(world, h));
+    return b.vertexCount ? b.finish() : null;
 }
 
 /** Years at which road surfaces, markings or bridge materials change appearance (see `roadStyle`, bridges and lanes). */

@@ -2,27 +2,44 @@
 // (chunk, lod) -> a plain object of meshes and `dispose` to release one, and handles the rest: lazy builds under a
 // per-frame budget, rebuilding when the LOD or a chunk's identity changes, and freeing entries whose chunk the world
 // has evicted (`world.chunks.cap`).
-export function createChunkCache({ build, dispose, max = 400 }) {
+export function createChunkCache({ build, dispose, refresh = null, max = 400, now = () => performance.now(), budgetMs = Infinity }) {
     const entries = new Map();
-    let builtThisFrame = 0;
+    let builtThisFrame = 0, frameStart = 0;
     const key = c => c.i * 100003 + c.j;
     const cache = {
         entries,
-        stats: { builds: 0, disposed: 0 },
+        stats: { builds: 0, disposed: 0, refreshes: 0 },
+        /** Milliseconds of build work a frame may start (one build always goes ahead, so the cache cannot starve). */
+        budgetMs,
         /** Call at the start of every frame. */
-        beginFrame() { builtThisFrame = 0; },
+        beginFrame() { builtThisFrame = 0; frameStart = cache.budgetMs === Infinity ? 0 : now(); },
+        /** Milliseconds of this frame's budget used so far by builds. */
+        get spentMs() { return builtThisFrame ? now() - frameStart : 0; },
+        /** True while `share` (0..1) of the frame's build budget is still unspent (always true with no budget). */
+        hasTime(share = 1) { return cache.budgetMs === Infinity || now() - frameStart < cache.budgetMs * share; },
+        /** The entry for a chunk whatever its LOD (null when none), without building. */
+        peek(chunk) { const e = entries.get(key(chunk)); return e && e.chunk === chunk ? e : null; },
+        /** Swaps a cached chunk's roads to another detail level, if the frame's build budget allows. */
+        refresh(entry, level) {
+            if (!refresh || entry.data.roadLevel === level) return false;
+            if (builtThisFrame >= 1 && !cache.hasTime()) return false;
+            builtThisFrame++;
+            refresh(entry, level);
+            cache.stats.refreshes++;
+            return true;
+        },
         /**
          * The entry for a chunk at a LOD, building it if the per-frame budget allows. While the wanted LOD is not
          * built yet an existing entry of another LOD (or null) is returned so the chunk keeps drawing.
          */
-        get(chunk, lod, budget = 2) {
+        get(chunk, lod, budget = 2, hint = undefined) {
             const k = key(chunk);
             const e = entries.get(k);
             if (e && e.chunk === chunk && e.lod === lod) { e.used = cache.frame; return e; }
-            if (builtThisFrame >= budget) return e && e.chunk === chunk ? e : null;
+            if (builtThisFrame >= budget || (builtThisFrame >= 1 && !cache.hasTime())) return e && e.chunk === chunk ? e : null;
             builtThisFrame++;
             if (e) dispose(e);
-            const fresh = { chunk, lod, used: cache.frame, data: build(chunk, lod) };
+            const fresh = { chunk, lod, used: cache.frame, data: build(chunk, lod, hint) };
             entries.set(k, fresh);
             cache.stats.builds++;
             return fresh;

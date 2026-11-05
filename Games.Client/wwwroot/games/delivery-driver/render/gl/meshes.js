@@ -5,34 +5,75 @@
 // two indices when needed. NB east/south/up is a left-handed frame, so camera3d must account for the mirror when it
 // picks `gl.frontFace`. Colours are linear 0..1 RGB, one per vertex.
 
-/** A growable mesh. Call `finish()` for the typed arrays. */
+// ---- pooled builders -------------------------------------------------------------------------------------------
+// A builder writes straight into typed arrays that come from a small free list and go back to it in `finish()`, which
+// copies out exactly the vertices and indices used. Chunk builds make thousands of builders (one per edge, junction,
+// building...) and used to grow four plain JS arrays of boxed doubles in each, then convert them: that churn was most of
+// the garbage a drive produced. Now a build allocates only the finished meshes. Scratch sets grow by doubling and the
+// pool keeps at most POOL_MAX of them.
+
+const POOL_MAX = 6;
+const pool = [];
+/** Total scratch sets ever allocated (for tests: it stays small however many builders are made). */
+export const poolStats = { allocated: 0, free: () => pool.length };
+
+function acquire() {
+    const s = pool.pop();
+    if (s) return s;
+    poolStats.allocated++;
+    return { pos: new Float32Array(3 * 2048), nor: new Float32Array(3 * 2048), col: new Float32Array(3 * 2048), idx: new Uint32Array(3 * 4096) };
+}
+
+const grown = (a, n) => { const out = new a.constructor(Math.max(n, a.length * 2)); out.set(a); return out; };
+
+/** A growable mesh. Call `finish()` for the typed arrays (the builder cannot be used afterwards). */
 export function createBuilder() {
-    const pos = [], nor = [], col = [], idx = [];
+    let s = acquire();
+    let nv = 0, ni = 0;
+    const needV = n => { if ((nv + n) * 3 > s.pos.length) { s.pos = grown(s.pos, (nv + n) * 3); s.nor = grown(s.nor, (nv + n) * 3); s.col = grown(s.col, (nv + n) * 3); } };
+    const needI = n => { if (ni + n > s.idx.length) s.idx = grown(s.idx, ni + n); };
     const b = {
-        get vertexCount() { return pos.length / 3; },
-        get triangleCount() { return idx.length / 3; },
+        get vertexCount() { return nv; },
+        get triangleCount() { return ni / 3; },
         /** Add a vertex, returns its index. */
         vertex(x, y, z, nx, ny, nz, r, g, bl) {
-            pos.push(x, y, z);
-            nor.push(nx, ny, nz);
-            col.push(r, g, bl);
-            return pos.length / 3 - 1;
+            needV(1);
+            const o = nv * 3, { pos, nor, col } = s;
+            pos[o] = x; pos[o + 1] = y; pos[o + 2] = z;
+            nor[o] = nx; nor[o + 1] = ny; nor[o + 2] = nz;
+            col[o] = r; col[o + 1] = g; col[o + 2] = bl;
+            return nv++;
         },
         tri(a, c, d) {
+            needI(3);
+            const { pos, nor, idx } = s;
             const ax = pos[a * 3], ay = pos[a * 3 + 1], az = pos[a * 3 + 2];
             const e1x = pos[c * 3] - ax, e1y = pos[c * 3 + 1] - ay, e1z = pos[c * 3 + 2] - az;
             const e2x = pos[d * 3] - ax, e2y = pos[d * 3 + 1] - ay, e2z = pos[d * 3 + 2] - az;
             const cx = e1y * e2z - e1z * e2y, cy = e1z * e2x - e1x * e2z, cz = e1x * e2y - e1y * e2x;
             const dot = cx * (nor[a * 3] + nor[c * 3] + nor[d * 3]) + cy * (nor[a * 3 + 1] + nor[c * 3 + 1] + nor[d * 3 + 1])
                 + cz * (nor[a * 3 + 2] + nor[c * 3 + 2] + nor[d * 3 + 2]);
-            if (dot < 0) idx.push(a, d, c); else idx.push(a, c, d);
+            if (dot < 0) { idx[ni++] = a; idx[ni++] = d; idx[ni++] = c; } else { idx[ni++] = a; idx[ni++] = c; idx[ni++] = d; }
         },
         quad(a, c, d, e) { b.tri(a, c, d); b.tri(a, d, e); },
+        /** Copies a finished mesh in (its indices rebased), as if its vertices had been added here. */
+        append(mesh) {
+            if (!mesh) return;
+            const n = mesh.positions.length / 3;
+            needV(n); needI(mesh.indices.length);
+            s.pos.set(mesh.positions, nv * 3); s.nor.set(mesh.normals, nv * 3); s.col.set(mesh.colors, nv * 3);
+            for (let i = 0; i < mesh.indices.length; i++) s.idx[ni + i] = mesh.indices[i] + nv;
+            nv += n; ni += mesh.indices.length;
+        },
         finish() {
-            return {
-                positions: new Float32Array(pos), normals: new Float32Array(nor), colors: new Float32Array(col),
-                indices: new Uint32Array(idx),
+            if (!s) throw new Error('mesh builder already finished');
+            const out = {
+                positions: s.pos.slice(0, nv * 3), normals: s.nor.slice(0, nv * 3), colors: s.col.slice(0, nv * 3),
+                indices: s.idx.slice(0, ni),
             };
+            if (pool.length < POOL_MAX) pool.push(s);
+            s = null;
+            return out;
         },
     };
     return b;
