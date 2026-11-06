@@ -538,7 +538,7 @@ test.describe('renderers', () => {
             await page.evaluate(() => {
                 const ex = window.__dd.state.world.region.townById.get('exeter');
                 window.__dd.teleport(ex.x, ex.y, 0);
-                window.__dd.state.route = { pts: [ex.x, ex.y, ex.x + 300, ex.y + 80, ex.x + 700, ex.y + 260], length: 800 };
+                window.__dd.state.route = { pts: [ex.x, ex.y, ex.x + 3000, ex.y + 800, ex.x + 7000, ex.y + 2600], length: 8000 }; // long enough to span tens of pixels on the 28 km default view
             });
             // pixels of a canvas: how many are pink route pixels, and how many different colours there are
             const scan = selector => page.evaluate(sel => {
@@ -762,6 +762,8 @@ test('renderer=webgl layered roads: a vehicle drives over a bridge and under it 
             if (c.atGrade) continue;
             const U = edges[c.upper.edge], L = edges[c.lower.edge];
             if (!road.edgeOpen(U, 2024) || !road.edgeOpen(L, 2024) || U.oneway || L.oneway) continue;
+            // the drive checks run within 6 to 12 m of the crossing, so skip wide carriageways whose lane lies further off the centre line
+            if (Math.abs(road.laneOffset(U, 2024)) > 4 || Math.abs(road.laneOffset(L, 2024)) > 4) continue;
             if (c.upper.d < approach + 5 || U.len < c.upper.d + 25 || c.lower.d < approach + 5 || L.len < c.lower.d + 25) continue;
             if (!straight(U, c.upper.d) || !straight(L, c.lower.d)) continue;
             const gap = terr.crossingGap(edges, c);
