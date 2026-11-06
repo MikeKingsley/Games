@@ -482,7 +482,15 @@ function addStopLines(b, lay, col, zAt) {
         const z = lay.kind === 'roundabout' ? zAt((s.x0 + s.x1) / 2, (s.y0 + s.y1) / 2) : roadHeightAt(e, a.end === 'a' ? a.trim + 0.4 : e.len - a.trim - 0.4);
         const line = [{ x: s.x0, y: s.y0, z }, { x: s.x1, y: s.y1, z }];
         if (s.kind === 'stop') addStrip(b, line, 0.35, undefined, col.centre, { bias: LAYER.marking });
-        else dashes(b, line, 0.3, col.centre, LAYER.marking, 0.6, 0.4);
+        else {
+            dashes(b, line, 0.3, col.centre, LAYER.marking, 0.6, 0.4);
+            // the give-way triangle on plain junctions: apex towards the approaching driver, base just behind the line (plan 0011 phase 5)
+            if (lay.kind === 'roundabout') continue;
+            const tx = Math.cos(s.angle), ty = Math.sin(s.angle), nx = -ty, ny = tx;
+            const hw = Math.min(0.9, Math.hypot(s.x1 - s.x0, s.y1 - s.y0) * 0.3);
+            const P = [{ x: s.x - tx * 1.2 + nx * hw, y: s.y - ty * 1.2 + ny * hw, z }, { x: s.x - tx * 1.2 - nx * hw, y: s.y - ty * 1.2 - ny * hw, z }, { x: s.x - tx * 4.2, y: s.y - ty * 4.2, z }];
+            for (let i = 0; i < 3; i++) addStrip(b, [P[i], P[(i + 1) % 3]], 0.2, undefined, col.centre, { bias: LAYER.marking });
+        }
     }
 }
 

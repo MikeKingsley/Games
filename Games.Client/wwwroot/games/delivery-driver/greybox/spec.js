@@ -23,6 +23,8 @@ const C = {
     // plan 0011 phase 4: the road types, two rows below the original six
     singleTrack: at(0, 2), oneWayLane: at(1, 2), twoWay: at(2, 2),
     multiOneWay: at(0, 3), asymmetric: at(1, 3), noPavement: at(2, 3),
+    // plan 0011 phase 5: junction layouts, a row below the road types
+    signalsCross: at(0, 4), teeGiveWay: at(1, 4), giveWayCross: at(2, 4), crossroadsPlain: at(3, 4),
 };
 /** A straight road through a piece's centre, `ARM` each way. `extra` sets cls, oneway, dual, town and the `profile` overrides. */
 const through = (id, c, extra) => ({ id, piece: id, pts: [[c.x - ARM, c.y], [c.x + ARM, c.y]], ...extra });
@@ -43,11 +45,20 @@ export const GREYBOX_SPEC = {
         { id: 'multi-one-way', label: 'Three lanes one way', ...C.multiOneWay },
         { id: 'asymmetric', label: 'Asymmetric 2+1', ...C.asymmetric },
         { id: 'no-pavement', label: 'No pavement', ...C.noPavement },
+        { id: 'signals-cross', label: 'Signals (crossroads)', ...C.signalsCross },
+        { id: 'tee-give-way', label: 'T junction, give way', ...C.teeGiveWay },
+        { id: 'give-way-cross', label: 'Crossroads, give way', ...C.giveWayCross },
+        { id: 'crossroads-plain', label: 'Crossroads, uncontrolled', ...C.crossroadsPlain },
     ],
     junctions: [
         { id: 'crossroads', ...C.crossroads, kind: 'giveway' },
         { id: 'tee', ...C.tee, kind: 'giveway' },
         { id: 'roundabout', ...C.roundabout, kind: 'roundabout' },
+        // `priority` marks a junction whose lower-ranked arms give way (dashed line + triangle); unset, the graph decides from the classes
+        { id: 'signals-cross', ...C.signalsCross, kind: 'signals' },
+        { id: 'tee-give-way', ...C.teeGiveWay, kind: 'giveway', priority: true },
+        { id: 'give-way-cross', ...C.giveWayCross, kind: 'giveway', priority: true },
+        { id: 'crossroads-plain', ...C.crossroadsPlain, kind: 'giveway', priority: false },
     ],
     roads: [
         { id: 'straight', piece: 'straight', cls: 'A', pts: [[C.straight.x - ARM, C.straight.y], [C.straight.x + ARM, C.straight.y]] },
@@ -68,6 +79,11 @@ export const GREYBOX_SPEC = {
         through('multi-one-way', C.multiOneWay, { cls: 'dual', oneway: true, profile: { lanesFwd: 3, lanesBack: 0, centreLine: false, pavements: 'none' } }),
         through('asymmetric', C.asymmetric, { cls: 'A', dual: true, profile: { lanesFwd: 2, lanesBack: 1, centreLine: false, pavements: 'none' } }),
         through('no-pavement', C.noPavement, { cls: 'B', profile: { centreLine: true, edgeLines: true, pavements: 'none' } }),
+        // junction layouts: an A road through the middle and B side roads (the uncontrolled crossroads has the same classes but no priority)
+        ...[0, 90, 180, 270].map(d => ({ id: `signals-cross-${d}`, piece: 'signals-cross', cls: d % 180 ? 'B' : 'A', pts: [[C.signalsCross.x, C.signalsCross.y], arm(C.signalsCross, d)] })),
+        ...[0, 90, 180].map(d => ({ id: `tee-give-way-${d}`, piece: 'tee-give-way', cls: d % 180 ? 'B' : 'A', pts: [[C.teeGiveWay.x, C.teeGiveWay.y], arm(C.teeGiveWay, d)] })),
+        ...[0, 90, 180, 270].map(d => ({ id: `give-way-cross-${d}`, piece: 'give-way-cross', cls: d % 180 ? 'B' : 'A', pts: [[C.giveWayCross.x, C.giveWayCross.y], arm(C.giveWayCross, d)] })),
+        ...[0, 90, 180, 270].map(d => ({ id: `crossroads-plain-${d}`, piece: 'crossroads-plain', cls: d % 180 ? 'B' : 'A', pts: [[C.crossroadsPlain.x, C.crossroadsPlain.y], arm(C.crossroadsPlain, d)] })),
     ],
 };
 

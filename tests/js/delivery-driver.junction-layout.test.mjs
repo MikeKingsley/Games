@@ -339,3 +339,31 @@ test('plan 0010 phase 4: each roundabout arm meets the ring within 0.1 m at a ma
         if (!L.stats.rejected.length) assert.equal(selfIntersects(L.boundary), false); // (a crowded ring is a rejected case)
     }
 });
+
+test('plan 0011 phase 5: greybox junction pieces give the expected stop-line kinds and every arm has a mouth', async () => {
+    const { buildGreyboxWorld } = await import('../../Games.Client/wwwroot/games/delivery-driver/greybox/graph.js');
+    const w = buildGreyboxWorld();
+    const lay = id => { const n = w.graph.nodes.find(q => q.tag === id); return layoutJunction(w.graph, n, w.year); };
+    const kinds = L => L.stopLines.map(s => s.kind);
+    const sig = lay('signals-cross');
+    assert.equal(sig.arms.length, 4);
+    assert.deepEqual(kinds(sig), ['stop', 'stop', 'stop', 'stop']);
+    assert.equal(sig.poles.length, 4);
+    const tee = lay('tee-give-way');
+    assert.deepEqual(kinds(tee), ['giveway']);
+    assert.equal(tee.arms[tee.stopLines[0].arm].cls, 'B');
+    const gw = lay('give-way-cross');
+    assert.deepEqual(kinds(gw), ['giveway', 'giveway']);
+    assert.ok(gw.stopLines.every(s => gw.arms[s.arm].cls === 'B'));
+    const plain = lay('crossroads-plain');
+    assert.equal(plain.arms.length, 4);
+    assert.deepEqual(kinds(plain), []);
+    assert.equal(plain.poles.length, 0);
+    for (const L of [sig, tee, gw, plain]) {
+        for (const a of L.arms) assert.ok(a.mouth && Number.isFinite(a.mouth.x) && a.trim > 0, 'arm has a mouth');
+        assert.equal(selfIntersects(L.boundary), false);
+    }
+    // same spacing: the four-arm layouts trim their arms alike
+    const trims = [sig, gw, plain].map(L => Math.max(...L.arms.map(a => a.trim)));
+    assert.ok(trims.every(t => Math.abs(t - trims[0]) < 1.5), `trims ${trims}`);
+});
