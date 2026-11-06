@@ -1,6 +1,7 @@
 // Greybox dev page (plan 0010 phase 6): the spec's road pieces drawn with the game's WebGL2 pieces (context, program,
 // mesh upload, layered road draw) and a free camera. Dev only: nothing in the game links here.
-// Query: ?year=1950  ?piece=roundabout (start beside a piece)  ?view=low (a low, distant view).
+// Query: ?year=1950  ?piece=roundabout (start over a piece, top-down; add &view=oblique for an angled view)
+//        ?view=top (top-down overview)  ?view=low (a low, distant view).
 import { GREYBOX_SPEC } from './spec.js';
 import { buildGreyboxWorld } from './graph.js';
 import { buildGreyboxMesh } from './mesh.js';
@@ -51,16 +52,22 @@ const handle = uploadMesh(gl, mesh);
 const OVERVIEW = { x: 300, y: 760, z: 560, yaw: Math.PI / 2, pitch: -0.95 };
 const cam = { ...OVERVIEW };
 const flyTo = piece => Object.assign(cam, { x: piece.x, y: piece.y + 130, z: 90, yaw: Math.PI / 2, pitch: -0.55 });
+// Top-down (plan view): looking straight down with north up. Pitch stops just short of -pi/2 so the look-at matrix stays valid.
+const TOP_PITCH = -1.55, TOP_HEIGHT = 230;
+const topDown = (x, y) => Object.assign(cam, { x, y, z: TOP_HEIGHT, yaw: Math.PI / 2, pitch: TOP_PITCH });
 const start = GREYBOX_SPEC.pieces.find(p => p.id === params.get('piece'));
-if (start) flyTo(start);
+const oblique = params.get('view') === 'oblique';
+if (start) (oblique ? flyTo(start) : topDown(start.x, start.y));
 else if (params.get('view') === 'low') Object.assign(cam, { x: 300, y: 1000, z: 60, pitch: -0.2 });
+else if (params.get('view') === 'top') topDown(OVERVIEW.x, OVERVIEW.y);
 
 const bar = document.getElementById('bar'), labels = document.getElementById('labels');
 const addButton = (text, fn) => { const b = document.createElement('button'); b.textContent = text; b.onclick = fn; bar.appendChild(b); };
 addButton('All', () => Object.assign(cam, OVERVIEW));
+addButton('Top', () => topDown(OVERVIEW.x, OVERVIEW.y));
 const labelOf = new Map();
 for (const p of GREYBOX_SPEC.pieces) {
-    addButton(p.label, () => flyTo(p));
+    addButton(p.label, () => topDown(p.x, p.y));
     const span = document.createElement('span');
     span.textContent = p.label;
     labelOf.set(p.id, span);
