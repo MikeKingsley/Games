@@ -49,7 +49,8 @@ const prog = createProgram(gl, SHADER, 'greybox', ATTRIB_SLOTS);
 const handle = uploadMesh(gl, mesh);
 
 // ---- free camera: position in world metres (+y south); yaw pi/2 looks north, pitch up is positive ----------------------
-const OVERVIEW = { x: 300, y: 760, z: 560, yaw: Math.PI / 2, pitch: -0.95 };
+// Overview: straight down over the whole piece grid (pieces run 0 to 900 m east, 0 to 1500 m south; ~52 degree vertical fov at 1900 m covers ~1800 m).
+const OVERVIEW = { x: 450, y: 750, z: 1900, yaw: Math.PI / 2, pitch: -1.55 };
 const cam = { ...OVERVIEW };
 const flyTo = piece => Object.assign(cam, { x: piece.x, y: piece.y + 130, z: 90, yaw: Math.PI / 2, pitch: -0.55 });
 // Top-down (plan view): looking straight down with north up. Pitch stops just short of -pi/2 so the look-at matrix stays valid.
