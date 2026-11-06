@@ -20,7 +20,12 @@ const bend = (cx, cy, r) => Array.from({ length: 7 }, (_, k) => [cx + r * Math.s
 const C = {
     straight: at(0, 0), curve: at(1, 0), crossroads: at(2, 0),
     tee: at(0, 1), roundabout: at(1, 1), overbridge: at(2, 1),
+    // plan 0011 phase 4: the road types, two rows below the original six
+    singleTrack: at(0, 2), oneWayLane: at(1, 2), twoWay: at(2, 2),
+    multiOneWay: at(0, 3), asymmetric: at(1, 3), noPavement: at(2, 3),
 };
+/** A straight road through a piece's centre, `ARM` each way. `extra` sets cls, oneway, dual, town and the `profile` overrides. */
+const through = (id, c, extra) => ({ id, piece: id, pts: [[c.x - ARM, c.y], [c.x + ARM, c.y]], ...extra });
 
 export const GREYBOX_SPEC = {
     year: 2024,
@@ -32,6 +37,12 @@ export const GREYBOX_SPEC = {
         { id: 'tee', label: 'T junction', ...C.tee },
         { id: 'roundabout', label: '4-arm roundabout', ...C.roundabout },
         { id: 'overbridge', label: 'Overbridge', ...C.overbridge },
+        { id: 'single-track', label: 'Single track', ...C.singleTrack },
+        { id: 'one-way-lane', label: 'One lane one way', ...C.oneWayLane },
+        { id: 'two-way', label: 'Two way + pavements', ...C.twoWay },
+        { id: 'multi-one-way', label: 'Three lanes one way', ...C.multiOneWay },
+        { id: 'asymmetric', label: 'Asymmetric 2+1', ...C.asymmetric },
+        { id: 'no-pavement', label: 'No pavement', ...C.noPavement },
     ],
     junctions: [
         { id: 'crossroads', ...C.crossroads, kind: 'giveway' },
@@ -50,6 +61,13 @@ export const GREYBOX_SPEC = {
         // the overbridge: an A road along the ground, a B road lifted over it (ramps up to the deck, 10% grade)
         { id: 'overbridge-under', piece: 'overbridge', cls: 'A', pts: [[C.overbridge.x - ARM, C.overbridge.y], [C.overbridge.x + ARM, C.overbridge.y]] },
         { id: 'overbridge-over', piece: 'overbridge', cls: 'B', pts: [[C.overbridge.x, C.overbridge.y - 140], [C.overbridge.x, C.overbridge.y + 140]], deck: [110, 170], ramp: 60 },
+        // lane types and pavements: `profile` overrides the rule-based defaults of world/lane-profile.js (marking and pavement per road)
+        through('single-track', C.singleTrack, { cls: 'lane', profile: { passingPlaces: [60, 140], edgeLines: true, pavements: 'none' } }),
+        through('one-way-lane', C.oneWayLane, { cls: 'street', oneway: true, profile: { lanesFwd: 1, lanesBack: 0, centreLine: false, pavements: 'right' } }),
+        through('two-way', C.twoWay, { cls: 'B', town: true, profile: { centreLine: true, edgeLines: true, pavements: 'both' } }),
+        through('multi-one-way', C.multiOneWay, { cls: 'dual', oneway: true, profile: { lanesFwd: 3, lanesBack: 0, centreLine: false, pavements: 'none' } }),
+        through('asymmetric', C.asymmetric, { cls: 'A', dual: true, profile: { lanesFwd: 2, lanesBack: 1, centreLine: false, pavements: 'none' } }),
+        through('no-pavement', C.noPavement, { cls: 'B', profile: { centreLine: true, edgeLines: true, pavements: 'none' } }),
     ],
 };
 

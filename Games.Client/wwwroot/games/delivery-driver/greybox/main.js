@@ -1,4 +1,4 @@
-// Greybox dev page (plan 0010 phase 6): the spec's six road pieces drawn with the game's WebGL2 pieces (context, program,
+// Greybox dev page (plan 0010 phase 6): the spec's road pieces drawn with the game's WebGL2 pieces (context, program,
 // mesh upload, layered road draw) and a free camera. Dev only: nothing in the game links here.
 // Query: ?year=1950  ?piece=roundabout (start beside a piece)  ?view=low (a low, distant view).
 import { GREYBOX_SPEC } from './spec.js';
@@ -48,7 +48,7 @@ const prog = createProgram(gl, SHADER, 'greybox', ATTRIB_SLOTS);
 const handle = uploadMesh(gl, mesh);
 
 // ---- free camera: position in world metres (+y south); yaw pi/2 looks north, pitch up is positive ----------------------
-const OVERVIEW = { x: 300, y: 560, z: 430, yaw: Math.PI / 2, pitch: -0.95 };
+const OVERVIEW = { x: 300, y: 760, z: 560, yaw: Math.PI / 2, pitch: -0.95 };
 const cam = { ...OVERVIEW };
 const flyTo = piece => Object.assign(cam, { x: piece.x, y: piece.y + 130, z: 90, yaw: Math.PI / 2, pitch: -0.55 });
 const start = GREYBOX_SPEC.pieces.find(p => p.id === params.get('piece'));

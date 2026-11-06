@@ -50,6 +50,7 @@ export function buildGreyboxWorld(spec = GREYBOX_SPEC) {
         const flat = road.pts.flat();
         const a = nodeAt(flat[0], flat[1]), b = nodeAt(flat[flat.length - 2], flat[flat.length - 1]);
         const extra = { cls: road.cls, name: road.id, tag: road.id };
+        for (const k of ['oneway', 'dual', 'town', 'profile']) if (road[k] !== undefined) extra[k] = road[k]; // lane layout + per-road overrides (world/lane-profile.js)
         const edge = graph.addEdge(a, b, flat, extra);
         edge.z = profile(road, edge.len);
         edge.zStep = Z_STEP;
