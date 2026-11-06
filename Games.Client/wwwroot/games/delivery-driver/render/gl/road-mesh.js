@@ -45,7 +45,14 @@ export function roadColours(year, wet = false) {
 }
 
 /** What an edge looks like in a year: its class and width, plus whether it exists. Rebuild its mesh when this changes. */
-export const roadKey = (edge, year) => (edgeOpen(edge, year) ? `${edgeClass(edge, year)}:${edgeWidth(edge, year)}` : 'closed');
+export function roadKey(edge, year) {
+    if (!edgeOpen(edge, year)) return 'closed';
+    // the lane profile (lanes, markings, passing places, pavements) is part of the key: it changes with the year
+    const p = laneProfile(edge, year, edge.profile);
+    const pp = Array.isArray(p.passingPlaces) ? p.passingPlaces.join(',') : +!!p.passingPlaces;
+    const prof = `${p.lanesFwd}${p.lanesBack}${+p.centreLine}${+p.edgeLines}${+p.pavements.left}${+p.pavements.right}${pp}`;
+    return `${edgeClass(edge, year)}:${edgeWidth(edge, year)}:${prof}`;
+}
 
 /** The edge's spline (shared with the junction layout, so arms and strips follow the same curve). */
 const splineOf = edgeSpline;
@@ -229,7 +236,10 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
         }
     }
     // passing places on single-track roads: bays on the left verge (metres along the edge); the edge line breaks across them
-    const bays = prof.singleTrack && level >= DETAIL.basic ? passingBays(edge, prof.passingPlaces) : [];
+    // (bays keep clear of the junction mouths at either end)
+    const bays = prof.singleTrack && level >= DETAIL.basic
+        ? passingBays(edge, prof.passingPlaces).filter(([d0, d1]) => d0 >= samples[0].d + 2 && d1 <= samples[samples.length - 1].d - 2)
+        : [];
     for (const [d0, d1] of bays) {
         const part = trimSamples(samples, d0, d1);
         if (part.length >= 2) addStrip(b, offsetSamples(part, -(width / 2 + BAY_W / 2 - 0.4)), BAY_W, undefined, surface, { bias: LAYER.surface });

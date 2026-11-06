@@ -3,6 +3,9 @@
 // spec read these profiles; vehicle AI does not use them. Traffic drives on the LEFT of the edge's centreline.
 import { ROAD_CLASS, LANE_WIDTH, edgeClass } from './roadgraph.js';
 
+/** Year from which single-track lanes get passing places. */
+export const PASSING_PLACES_FROM = 1930;
+
 /** Pavement settings a spec may use. */
 export const PAVEMENT_MODES = ['both', 'left', 'right', 'none'];
 
@@ -66,7 +69,7 @@ export function laneProfile(edge, year, overrides = {}) {
         lanesFwd,
         lanesBack,
         singleTrack,
-        passingPlaces: singleTrack,
+        passingPlaces: singleTrack && year >= PASSING_PLACES_FROM, // era: passing places are marked from 1930
         centreLine: twoWay && lanesFwd === 1 && lanesBack === 1, // only plain two-lane two-way roads
         edgeLines: true,
         pavements: defaultPavement(cls, !!edge.town),

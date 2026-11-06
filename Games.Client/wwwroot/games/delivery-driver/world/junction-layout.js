@@ -93,13 +93,13 @@ export function layoutJunction(graph, node, year = 2100) {
     const hit = q.get(key);
     if (hit && hit.year === year && hit.ng === graph.nodes.length && hit.ne === graph.edges.length && hit.arms === node.edges.length
         && hit.jn === node.junction && hit.mini === node.mini && hit.tier === node.tier && hit.pri === node.priority && hit.rr === node.ringRadius
-        && hit.rf === node.roundaboutFrom && hit.sf === node.signalsFrom) return hit.layout;
+        && hit.rf === node.roundaboutFrom && hit.df === node.doubleFrom &&hit.sf === node.signalsFrom) return hit.layout;
     let cache = caches.get(graph);
     if (!cache) caches.set(graph, (cache = new Map()));
     const sig = junctionSignature(graph, node, year);
     let layout = cache.get(sig);
     if (!layout) { layout = computeLayout(graph, node, year); cache.set(sig, layout); }
-    q.set(key, { year, ng: graph.nodes.length, ne: graph.edges.length, arms: node.edges.length, jn: node.junction, mini: node.mini, tier: node.tier, pri: node.priority, rr: node.ringRadius, rf: node.roundaboutFrom, sf: node.signalsFrom, layout });
+    q.set(key, { year, ng: graph.nodes.length, ne: graph.edges.length, arms: node.edges.length, jn: node.junction, mini: node.mini, tier: node.tier, pri: node.priority, rr: node.ringRadius, rf: node.roundaboutFrom, df: node.doubleFrom, sf: node.signalsFrom, layout });
     return layout;
 }
 

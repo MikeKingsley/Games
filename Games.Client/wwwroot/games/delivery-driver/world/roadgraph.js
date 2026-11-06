@@ -287,6 +287,7 @@ export function buildRoadGraph(region) {
         g.addEdge(g.nodes[a], g.nodes[b], pts, { ...props, town: props.town ?? undefined, road: props.tag ?? undefined }); // road = the curated history tag
     }
     for (const n of g.nodes) setPriority(g, n);
+    detectDoubleRoundabouts(g);
     // each town's centre: the nearest junction (or street end) inside the town, for routing and the minimap
     for (const town of region.towns) {
         town.centreNode = nearestTownNode(g, town);
@@ -505,8 +506,28 @@ function nearestTownNode(g, town) {
 /** Signals and roundabouts only exist from their year; before that a junction is a plain give-way. */
 export function junctionType(node, year) {
     if (node.junction === 'signals' && year < node.signalsFrom) return 'giveway';
-    if (node.junction === 'roundabout' && year < node.roundaboutFrom) return 'giveway';
+    if (node.junction === 'roundabout' && (year < node.roundaboutFrom || year < (node.doubleFrom ?? 0))) return 'giveway';
     return node.junction;
+}
+
+/** Year from which a pair of linked roundabouts (a double roundabout) exists; before it the pair are plain give-way junctions. */
+export const DOUBLE_ROUNDABOUT_FROM = 1975;
+/** Two roundabouts closer than this (m) and joined by a road form a double roundabout. */
+export const DOUBLE_ROUNDABOUT_GAP = 80;
+
+/**
+ * Marks double roundabouts: two ring roundabouts (not minis) within DOUBLE_ROUNDABOUT_GAP of each other with a road
+ * between them. Both nodes get `doubleWith` (the other's id) and `doubleFrom`; junctionType holds them back to that year.
+ * Layout is unchanged: each ring is laid out on its own and the link road joins them.
+ */
+export function detectDoubleRoundabouts(g) {
+    for (const e of g.edges) {
+        const a = g.nodes[e.a], b = g.nodes[e.b];
+        if (!a || !b || a === b || a.junction !== 'roundabout' || b.junction !== 'roundabout' || a.mini || b.mini) continue;
+        if (Math.hypot(a.x - b.x, a.y - b.y) > DOUBLE_ROUNDABOUT_GAP) continue;
+        a.doubleWith = b.id; b.doubleWith = a.id;
+        a.doubleFrom = b.doubleFrom = DOUBLE_ROUNDABOUT_FROM;
+    }
 }
 
 export { bbox };
