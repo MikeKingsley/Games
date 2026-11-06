@@ -25,7 +25,12 @@ const C = {
     multiOneWay: at(0, 3), asymmetric: at(1, 3), noPavement: at(2, 3),
     // plan 0011 phase 5: junction layouts, a row below the road types
     signalsCross: at(0, 4), teeGiveWay: at(1, 4), giveWayCross: at(2, 4), crossroadsPlain: at(3, 4),
+    // plan 0011 phase 6: roundabout tiers and the double roundabout, a row below the junction layouts
+    ringSmall: at(0, 5), ringMedium: at(1, 5), ringLarge: at(2, 5), ringDouble: at(3, 5),
 };
+/** Centre-to-centre distance (m) of the two rings of the double roundabout (the link road runs between the ring centres). */
+export const DOUBLE_LINK = 50;
+const dl = { x: C.ringDouble.x - DOUBLE_LINK / 2, y: C.ringDouble.y }, dr = { x: C.ringDouble.x + DOUBLE_LINK / 2, y: C.ringDouble.y };
 /** A straight road through a piece's centre, `ARM` each way. `extra` sets cls, oneway, dual, town and the `profile` overrides. */
 const through = (id, c, extra) => ({ id, piece: id, pts: [[c.x - ARM, c.y], [c.x + ARM, c.y]], ...extra });
 
@@ -49,6 +54,10 @@ export const GREYBOX_SPEC = {
         { id: 'tee-give-way', label: 'T junction, give way', ...C.teeGiveWay },
         { id: 'give-way-cross', label: 'Crossroads, give way', ...C.giveWayCross },
         { id: 'crossroads-plain', label: 'Crossroads, uncontrolled', ...C.crossroadsPlain },
+        { id: 'roundabout-small', label: 'Roundabout, small', ...C.ringSmall },
+        { id: 'roundabout-medium', label: 'Roundabout, medium', ...C.ringMedium },
+        { id: 'roundabout-large', label: 'Roundabout, large', ...C.ringLarge },
+        { id: 'roundabout-double', label: 'Roundabout, double', ...C.ringDouble },
     ],
     junctions: [
         { id: 'crossroads', ...C.crossroads, kind: 'giveway' },
@@ -59,6 +68,12 @@ export const GREYBOX_SPEC = {
         { id: 'tee-give-way', ...C.teeGiveWay, kind: 'giveway', priority: true },
         { id: 'give-way-cross', ...C.giveWayCross, kind: 'giveway', priority: true },
         { id: 'crossroads-plain', ...C.crossroadsPlain, kind: 'giveway', priority: false },
+        // `tier` ('small' | 'medium' | 'large') overrides the ring size that the highest road rank would give
+        { id: 'roundabout-small', ...C.ringSmall, kind: 'roundabout', tier: 'small' },
+        { id: 'roundabout-medium', ...C.ringMedium, kind: 'roundabout', tier: 'medium' },
+        { id: 'roundabout-large', ...C.ringLarge, kind: 'roundabout', tier: 'large' },
+        { id: 'roundabout-double-l', x: dl.x, y: dl.y, kind: 'roundabout', tier: 'medium' },
+        { id: 'roundabout-double-r', x: dr.x, y: dr.y, kind: 'roundabout', tier: 'medium' },
     ],
     roads: [
         { id: 'straight', piece: 'straight', cls: 'A', pts: [[C.straight.x - ARM, C.straight.y], [C.straight.x + ARM, C.straight.y]] },
@@ -84,6 +99,13 @@ export const GREYBOX_SPEC = {
         ...[0, 90, 180].map(d => ({ id: `tee-give-way-${d}`, piece: 'tee-give-way', cls: d % 180 ? 'B' : 'A', pts: [[C.teeGiveWay.x, C.teeGiveWay.y], arm(C.teeGiveWay, d)] })),
         ...[0, 90, 180, 270].map(d => ({ id: `give-way-cross-${d}`, piece: 'give-way-cross', cls: d % 180 ? 'B' : 'A', pts: [[C.giveWayCross.x, C.giveWayCross.y], arm(C.giveWayCross, d)] })),
         ...[0, 90, 180, 270].map(d => ({ id: `crossroads-plain-${d}`, piece: 'crossroads-plain', cls: d % 180 ? 'B' : 'A', pts: [[C.crossroadsPlain.x, C.crossroadsPlain.y], arm(C.crossroadsPlain, d)] })),
+        // roundabout tiers: four arms each, the road class matching the tier (street, B, dual)
+        ...[['roundabout-small', C.ringSmall, 'street'], ['roundabout-medium', C.ringMedium, 'B'], ['roundabout-large', C.ringLarge, 'dual']].flatMap(([id, c, cls]) =>
+            [0, 90, 180, 270].map(d => ({ id: `${id}-${d}`, piece: id, cls, pts: [[c.x, c.y], arm(c, d)] }))),
+        // double roundabout: two rings joined by a link road, each with its own outer arms
+        { id: 'roundabout-double-link', piece: 'roundabout-double', cls: 'A', pts: [[dl.x, dl.y], [dr.x, dr.y]] },
+        ...[90, 180, 270].map(d => ({ id: `roundabout-double-l-${d}`, piece: 'roundabout-double', cls: 'A', pts: [[dl.x, dl.y], arm(dl, d)] })),
+        ...[0, 90, 270].map(d => ({ id: `roundabout-double-r-${d}`, piece: 'roundabout-double', cls: 'A', pts: [[dr.x, dr.y], arm(dr, d)] })),
     ],
 };
 

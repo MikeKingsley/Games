@@ -42,7 +42,7 @@ export function buildGreyboxWorld(spec = GREYBOX_SPEC) {
         const k = key(x, y);
         if (!nodes.has(k)) {
             const j = junctionAt.get(k);
-            nodes.set(k, graph.addNode(x, y, j ? { junction: j.kind, roundaboutFrom: 0, signalsFrom: 0, tag: j.id, ...(j.priority !== undefined ? { priority: j.priority } : {}) } : { junction: 'end' }));
+            nodes.set(k, graph.addNode(x, y, j ? { junction: j.kind, roundaboutFrom: 0, signalsFrom: 0, tag: j.id, ...(j.priority !== undefined ? { priority: j.priority } : {}), ...(j.tier ? { tier: j.tier } : {}), ...(j.ringRadius !== undefined ? { ringRadius: j.ringRadius } : {}) } : { junction: 'end' }));
         }
         return nodes.get(k);
     };

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createGraph, ROAD_CLASS } from '../../Games.Client/wwwroot/games/delivery-driver/world/roadgraph.js';
 import {
     layoutJunction, junctionSignature, trimFor, mouthRadius, polygonsOverlap, selfIntersects,
-    CORNER_RADIUS, RING_CLASS, RI_MIN, RI_MAX, MINI_RADIUS, TIGHT_TRIM,
+    CORNER_RADIUS, RING_CLASS, ringTierOf, RI_MIN, RI_MAX, MINI_RADIUS, TIGHT_TRIM,
 } from '../../Games.Client/wwwroot/games/delivery-driver/world/junction-layout.js';
 
 const rad = d => (d * Math.PI) / 180;
@@ -366,4 +366,51 @@ test('plan 0011 phase 5: greybox junction pieces give the expected stop-line kin
     // same spacing: the four-arm layouts trim their arms alike
     const trims = [sig, gw, plain].map(L => Math.max(...L.arms.map(a => a.trim)));
     assert.ok(trims.every(t => Math.abs(t - trims[0]) < 1.5), `trims ${trims}`);
+});
+
+test('plan 0011 phase 6: roundabout tiers keep the ring inside their range, and a node tier wins over the rank', async () => {
+    const ranges = { small: [4, 7], medium: [4.5, 11], large: [8, 14] };
+    const byRank = { lane: 'small', street: 'small', B: 'medium', A: 'medium', dual: 'large', M: 'large' };
+    for (const [cls, tier] of Object.entries(byRank)) {
+        const { g, c } = star([{ deg: 0, cls }, { deg: 90, cls }, { deg: 180, cls }, { deg: 270, cls }], { junction: 'roundabout', roundaboutFrom: 0, ringRadius: 30 });
+        const L = layoutJunction(g, c, 2024);
+        assert.equal(ringTierOf(ROAD_CLASS[cls].rank), tier);
+        assert.ok(L.ring.ri >= ranges[tier][0] - 1e-9 && L.ring.ri <= ranges[tier][1] + 1e-9, `${cls}: ri ${L.ring.ri} in ${tier} range`);
+    }
+    // small is visibly smaller than medium and large for the same big real ring
+    const ri = tier => { const { g, c } = star([{ deg: 0 }, { deg: 120 }, { deg: 240 }], { junction: 'roundabout', roundaboutFrom: 0, ringRadius: 30, tier }); return layoutJunction(g, c, 2024).ring.ri; };
+    assert.ok(ri('small') < ri('medium') && ri('medium') < ri('large'), `${ri('small')} < ${ri('medium')} < ${ri('large')}`);
+    for (const t of ['small', 'medium', 'large']) assert.ok(ri(t) >= ranges[t][0] && ri(t) <= ranges[t][1]);
+    // lane roundabouts are smaller than street ones
+    const lane = star([{ deg: 0, cls: 'lane' }, { deg: 120, cls: 'lane' }, { deg: 240, cls: 'lane' }], { junction: 'roundabout', roundaboutFrom: 0, ringRadius: 30 });
+    assert.ok(layoutJunction(lane.g, lane.c, 2024).ring.ri <= RING_CLASS[1].max);
+});
+
+test('plan 0011 phase 6: greybox roundabout pieces use their tier and the double roundabout links two rings', async () => {
+    const { buildGreyboxWorld } = await import('../../Games.Client/wwwroot/games/delivery-driver/greybox/graph.js');
+    const w = buildGreyboxWorld();
+    const lay = id => { const n = w.graph.nodes.find(q => q.tag === id); return { n, L: layoutJunction(w.graph, n, w.year) }; };
+    const ranges = { small: [4, 7], medium: [4.5, 11], large: [8, 14] };
+    for (const t of ['small', 'medium', 'large']) {
+        const { L } = lay(`roundabout-${t}`);
+        assert.equal(L.kind, 'roundabout');
+        assert.ok(L.ring.ri >= ranges[t][0] - 1e-9 && L.ring.ri <= ranges[t][1] + 1e-9, `${t} ring ${L.ring.ri}`);
+    }
+    assert.ok(lay('roundabout-small').L.ring.ro < lay('roundabout-large').L.ring.ro);
+    const l = lay('roundabout-double-l'), r = lay('roundabout-double-r');
+    const link = w.graph.edges.find(e => e.tag === 'roundabout-double-link');
+    assert.ok(link.len >= 20 && link.len <= 60, `link ${link.len} m`);
+    assert.deepEqual(new Set([link.a, link.b]), new Set([l.n.id, r.n.id]));
+    for (const { n, L } of [l, r]) {
+        assert.equal(L.kind, 'roundabout');
+        assert.equal(L.stats.rejected.length, 0);
+        const a = L.arms.find(q => q.edge.id === link.id);
+        assert.ok(a, 'link arm present');
+        const J = a.join, last = J[J.length - 1];
+        assert.ok(Math.hypot(J[0].x - a.mouth.x, J[0].y - a.mouth.y) < 0.1, 'starts at the mouth');
+        assert.ok(Math.abs(Math.hypot(last.x - n.x, last.y - n.y) - L.ring.ro) < 0.1, 'ends on its ring');
+        assert.ok(last.tx * -Math.cos(a.ringAngle) + last.ty * -Math.sin(a.ringAngle) > 0.999, 'enters radially');
+    }
+    // the two rings do not overlap
+    assert.ok(Math.hypot(l.n.x - r.n.x, l.n.y - r.n.y) > l.L.ring.ro + r.L.ring.ro);
 });

@@ -33,7 +33,15 @@ import { createSpline, arcSamples } from './road-spline.js';
 /** Kerb return radius (m) by the larger road rank at the corner: lanes 4, streets and B roads 6, A roads 8, dual and motorway 12. */
 export const CORNER_RADIUS = { 1: 4, 2: 6, 3: 6, 4: 8, 5: 12, 6: 12 };
 /** Roundabout island radius range and circulating width by the highest road rank meeting there. */
-export const RING_CLASS = { 1: { min: 4, max: 7, width: 7 }, 2: { min: 4, max: 7, width: 7 }, 3: { min: 4.5, max: 9, width: 7.5 }, 4: { min: 5, max: 11, width: 8 }, 5: { min: 8, max: 14, width: 9 }, 6: { min: 10, max: 14, width: 9 } };
+export const RING_CLASS = { 1: { min: 4, max: 6, width: 6.5 }, 2: { min: 4, max: 7, width: 7 }, 3: { min: 4.5, max: 9, width: 7.5 }, 4: { min: 5, max: 11, width: 8 }, 5: { min: 8, max: 14, width: 9 }, 6: { min: 10, max: 14, width: 9 } };
+/**
+ * Roundabout tiers (plan 0011 phase 6): mini is `node.mini`; small is road rank 1 to 2 (ring 4 to 7 m; rank 1 lanes and access
+ * roads get the smaller 4 to 6 m island and 6.5 m circulating width), medium rank 3 to 4 (4.5 to 11 m), large rank 5 to 6 (8 to 14 m).
+ * `node.tier` ('small' | 'medium' | 'large') overrides the rank-derived tier; it uses the tier's representative rank below.
+ */
+export const RING_TIER_RANK = { small: 2, medium: 4, large: 5 };
+export const ringTierOf = rank => (rank >= 5 ? 'large' : rank >= 3 ? 'medium' : 'small');
+const ringClass = (node, rank) => RING_CLASS[RING_TIER_RANK[node.tier] ?? rank] ?? RING_CLASS[2];
 export const RI_MIN = 4, RI_MAX = 14;
 export const FLARE_WIDTH = 1.2, FLARE_LENGTH = 12;
 export const MINI_RADIUS = 1.5;
@@ -61,7 +69,7 @@ const caches = new WeakMap(); // graph -> Map(signature -> layout)
 /** A string that changes exactly when the node's layout can: its open arms (edge, class, one-way, length), type and markings. */
 export function junctionSignature(graph, node, year) {
     const budget = reachBudget(graph, node, year);
-    let s = `${node.id}|${Number.isFinite(budget) ? budget.toFixed(1) : ''}|${junctionType(node, year)}|${node.mini ? 'm' : ''}${node.priority ? 'p' : ''}|${node.ringRadius === undefined ? '' : node.ringRadius.toFixed(1)}|${year >= 1935 ? 's' : ''}${year >= 1960 ? 'g' : ''}`;
+    let s = `${node.id}|${Number.isFinite(budget) ? budget.toFixed(1) : ''}|${junctionType(node, year)}|${node.mini ? 'm' : ''}${node.priority ? 'p' : ''}${node.tier ? 't' + node.tier : ''}|${node.ringRadius === undefined ? '' : node.ringRadius.toFixed(1)}|${year >= 1935 ? 's' : ''}${year >= 1960 ? 'g' : ''}`;
     for (const id of node.edges) {
         const e = graph.edges[id];
         if (!edgeOpen(e, year)) continue;
@@ -84,14 +92,14 @@ export function layoutJunction(graph, node, year = 2100) {
     const key = node.id * 4096 + (year | 0);
     const hit = q.get(key);
     if (hit && hit.year === year && hit.ng === graph.nodes.length && hit.ne === graph.edges.length && hit.arms === node.edges.length
-        && hit.jn === node.junction && hit.mini === node.mini && hit.pri === node.priority && hit.rr === node.ringRadius
+        && hit.jn === node.junction && hit.mini === node.mini && hit.tier === node.tier && hit.pri === node.priority && hit.rr === node.ringRadius
         && hit.rf === node.roundaboutFrom && hit.sf === node.signalsFrom) return hit.layout;
     let cache = caches.get(graph);
     if (!cache) caches.set(graph, (cache = new Map()));
     const sig = junctionSignature(graph, node, year);
     let layout = cache.get(sig);
     if (!layout) { layout = computeLayout(graph, node, year); cache.set(sig, layout); }
-    q.set(key, { year, ng: graph.nodes.length, ne: graph.edges.length, arms: node.edges.length, jn: node.junction, mini: node.mini, pri: node.priority, rr: node.ringRadius, rf: node.roundaboutFrom, sf: node.signalsFrom, layout });
+    q.set(key, { year, ng: graph.nodes.length, ne: graph.edges.length, arms: node.edges.length, jn: node.junction, mini: node.mini, tier: node.tier, pri: node.priority, rr: node.ringRadius, rf: node.roundaboutFrom, sf: node.signalsFrom, layout });
     return layout;
 }
 
@@ -138,7 +146,7 @@ function weightOf(graph, node, year) {
         rank = Math.max(rank, rankOf(edgeClass(e, year)));
     }
     if (open < 3) return null;
-    if (junctionType(node, year) === 'roundabout' && !node.mini) return { ring: true, size: RING_CLASS[rank].min + RING_CLASS[rank].width + 6, need: RING_CLASS[rank].min + RING_CLASS[rank].width + 1.5 };
+    if (junctionType(node, year) === 'roundabout' && !node.mini) { const rc = ringClass(node, rank); return { ring: true, size: rc.min + rc.width + 6, need: rc.min + rc.width + 1.5 }; }
     return { ring: false, size: hw + (CORNER_RADIUS[rank] ?? 6) };
 }
 
@@ -473,7 +481,7 @@ function layoutRing(layout, node, year) {
     layout.kind = 'roundabout';
     const arms = layout.arms, n = arms.length;
     const top = Math.max(...arms.map(a => a.rank));
-    const cls = RING_CLASS[top] ?? RING_CLASS[2];
+    const cls = ringClass(node, top);
     let ri = Math.max(cls.min, Math.min(cls.max, (node.ringRadius ?? 0) - cls.width));
     const spanOf = (a, ro, flare) => 2 * Math.asin(Math.min(0.95, (a.hw + flare) / ro));
     let flare = FLARE_WIDTH, width = cls.width, maxRi = cls.max, shrunk = false;
