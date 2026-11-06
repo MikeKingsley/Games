@@ -5,6 +5,7 @@
 import { createBuilder, addStrip, compose, layerRanks } from './meshes.js';
 import { CHUNK_SIZE } from '../../config.js';
 import { edgeClass, edgeOpen, edgeWidth, ROAD_CLASS, LANE_WIDTH } from '../../world/roadgraph.js';
+import { laneProfile } from '../../world/lane-profile.js';
 import { layoutJunction, junctionSignature, trimFor, edgeSpline } from '../../world/junction-layout.js';
 import { roadHeightAt, groundZ } from '../../world/terrain.js';
 import { waterAt } from '../../world/region.js';
@@ -203,13 +204,22 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
     }
     addStrip(b, samples, width + 1.6, undefined, col.kerb, { bias: LAYER.kerb });
     addStrip(b, samples, width, undefined, surface, { bias: LAYER.surface });
-    if (level >= DETAIL.full && cls !== 'lane' && cls !== 'access' && cls !== 'M' && !edge.bridge && !edge.tunnel) {
+    // the lane profile (world/lane-profile.js; a greybox spec may set `edge.profile` to override fields) says which sides get
+    // pavements, whether there is a centre line, edge lines, passing places and lane dividers
+    const prof = laneProfile(edge, year, edge.profile);
+    const spec = !!edge.profile;
+    // (rural dual carriageways keep their grassy verge: the profile's default is none there)
+    const sides = { ...prof.pavements };
+    if (!spec && cls === 'dual' && !edge.town) sides.left = sides.right = true;
+    if (level >= DETAIL.full && (sides.left || sides.right) && !edge.bridge && !edge.tunnel) {
         // pavements (town streets and roads) or a grassy verge (country roads) beside the kerb, stopping at the junction surfaces
         const ps = samples;
         if (ps.length >= 2) {
             const town = !!edge.town && !edge.link;
             const off = width / 2 + 0.8 + (town ? 0.6 : 0.7), w = town ? 1.2 : 1.4;
+            // traffic keeps left: the left of travel is the -1 offset side
             for (const side of [1, -1]) {
+                if (!(side < 0 ? sides.left : sides.right)) continue;
                 // the ends beside a junction can swing over a neighbouring road: the strip stops before it
                 let run = offsetSamples(ps, side * off);
                 while (run.length > 1 && onOtherRoad(g, year, run[0].x, run[0].y, edge)) run = run.slice(1);
@@ -218,9 +228,28 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
             }
         }
     }
-    if (cls !== 'lane' && cls !== 'access') {
+    // passing places on single-track roads: bays on the left verge (metres along the edge); the edge line breaks across them
+    const bays = prof.singleTrack && level >= DETAIL.basic ? passingBays(edge, prof.passingPlaces) : [];
+    for (const [d0, d1] of bays) {
+        const part = trimSamples(samples, d0, d1);
+        if (part.length >= 2) addStrip(b, offsetSamples(part, -(width / 2 + BAY_W / 2 - 0.4)), BAY_W, undefined, surface, { bias: LAYER.surface });
+    }
+    // lanes and yard accesses are unmarked unless a spec gives them a profile
+    if ((cls !== 'lane' && cls !== 'access') || spec) {
         // markings run to the junction surfaces at either end
         const ms = samples;
+        const edgeLine = side => {
+            const pts = offsetSamples(ms, side * (width / 2 - (cls === 'dual' || cls === 'M' ? 0.4 : 0.35)));
+            if (side > 0 || !bays.length) return addStrip(b, pts, 0.15, undefined, col.edge, { bias: LAYER.marking });
+            let at = ms[0].d;
+            const gaps = [];
+            for (const [d0, d1] of bays) { if (d0 > at) gaps.push([at, d0]); at = Math.max(at, d1); }
+            gaps.push([at, ms[ms.length - 1].d]);
+            for (const [d0, d1] of gaps) {
+                const run = trimSamples(ms, d0, d1);
+                if (run.length >= 2) addStrip(b, offsetSamples(run, side * (width / 2 - 0.35)), 0.15, undefined, col.edge, { bias: LAYER.marking });
+            }
+        };
         if (cls === 'dual' || cls === 'M') {
             const lanes = ROAD_CLASS[cls].lanes, median = width - 2 * lanes * LANE_WIDTH;
             if (median > 0) addStrip(b, ms, median, undefined, col.reservation[cls], { bias: LAYER.reservation });
@@ -229,20 +258,38 @@ export function buildEdgeMesh(world, edge, year, { wet = false, detail = true, w
                 dashes(b, offsetSamples(ms, off), 0.2, col.centre, LAYER.marking);
                 dashes(b, offsetSamples(ms, -off), 0.2, col.centre, LAYER.marking);
             }
-            if (level >= DETAIL.basic && col.edge) {
-                for (const side of [1, -1]) addStrip(b, offsetSamples(ms, side * (width / 2 - 0.4)), 0.15, undefined, col.edge, { bias: LAYER.marking });
-            }
+            if (level >= DETAIL.basic && col.edge && prof.edgeLines) for (const side of [1, -1]) edgeLine(side);
         } else {
-            if (level >= DETAIL.basic && col.centre && !edge.oneway && (cls !== 'street' || year >= 1935)) centreLine(b, ms, cls, year, col);
-            if (level >= DETAIL.basic && col.edge) {
-                for (const side of [1, -1]) addStrip(b, offsetSamples(ms, side * (width / 2 - 0.35)), 0.15, undefined, col.edge, { bias: LAYER.marking });
+            const centre = prof.centreLine || (!spec && edge.dual && !edge.oneway && !prof.singleTrack);
+            if (level >= DETAIL.basic && col.centre && centre && (cls !== 'street' || year >= 1935)) centreLine(b, ms, cls, year, col);
+            // lane dividers: dashes between the lanes of multi-lane roads (a solid line where the two directions meet)
+            const lanes = prof.lanesFwd + prof.lanesBack;
+            if (level >= DETAIL.basic && col.centre && (lanes > 2 || (prof.lanesBack === 0 && lanes >= 2)) && (cls !== 'street' || year >= 1935)) {
+                const lw = width / lanes;
+                for (let k = 1; k < lanes; k++) {
+                    const pts = offsetSamples(ms, -width / 2 + k * lw); // from the left (-1) edge
+                    if (prof.lanesBack > 0 && k === prof.lanesFwd) addStrip(b, pts, 0.15, undefined, col.centre, { bias: LAYER.marking });
+                    else dashes(b, pts, 0.15, col.centre, LAYER.marking);
+                }
             }
+            if (level >= DETAIL.basic && col.edge && prof.edgeLines) for (const side of [1, -1]) edgeLine(side);
         }
     }
     if (level >= DETAIL.full && year >= 1950 && col.centre) addZebra(b, edge, width, window, tA, tB);
     for (const [t0, t1] of decks) addDeck(b, helpers, world, edge, all, t0, t1, width, year, window, tA, tB, level);
     if (level >= DETAIL.basic) for (const [t0, t1] of tunnels) addTunnel(b, helpers, world, edge, all, t0, t1, width, year, window, tA, tB);
     return done();
+}
+
+const BAY_W = 2.6, BAY_LEN = 12;
+/** Passing-place bays [d0, d1] along an edge: explicit positions (metres) from the profile, or about 100 m apart on edges over 150 m. */
+function passingBays(edge, places) {
+    let at = Array.isArray(places) ? places : [];
+    if (places === true && edge.len > 150) {
+        const n = Math.max(1, Math.floor(edge.len / 100));
+        at = Array.from({ length: n }, (_, k) => ((k + 0.5) * edge.len) / n);
+    }
+    return at.map(d => [d - BAY_LEN / 2, d + BAY_LEN / 2]);
 }
 
 /**

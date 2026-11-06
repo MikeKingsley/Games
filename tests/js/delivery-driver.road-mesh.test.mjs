@@ -569,3 +569,58 @@ test('road layers have distinct heights, each drawn as its own group of the mesh
     assert.equal(m.groups.reduce((s, g) => s + g.count, 0), m.indices.length);
     assert.equal(m.groups[1].count, 12);
 });
+
+// ---- Plan 0011 phase 3: lane markings and pavements from the lane profile ----------------------------------------------
+
+test('lane profile markings: one centre line on a two-way road, none on single-track or one-way; edge lines follow the profile', () => {
+    const straight = e => Math.hypot(e.pts[e.pts.length - 2] - e.pts[0], e.pts[e.pts.length - 1] - e.pts[1]) > 0.99 * e.len;
+    const base = graph.edges.find(e => e.cls === 'B' && e.opened === 0 && !e.oneway && !e.dual && !e.bridge && !e.tunnel && !e.town && e.len > 60 && straight(e));
+    assert.ok(base);
+    const white = R.roadColours(2000).centre;
+    // (edge lines off, so only the centre line is white)
+    const mk = over => R.buildEdgeMesh(world, { ...base, ...over, profile: { edgeLines: false, ...(over.profile ?? {}) } }, 2000);
+    const two = mk({}), single = mk({ cls: 'lane', upgrades: undefined }), one = mk({ oneway: true });
+    assert.ok(colourOf(two, white) > 0, 'two-way road has a centre line');
+    assert.equal(colourOf(single, white), 0, 'single-track road has no centre line');
+    assert.equal(colourOf(one, white), 0, 'one-way road has no centre line');
+    // exactly one line: the centre line alone is a single dashed ribbon, edge lines add two more
+    const withEdges = R.buildEdgeMesh(world, { ...base, profile: { edgeLines: true } }, 2000);
+    assert.ok(colourOf(withEdges, white) > colourOf(two, white), 'edge lines add white');
+    // multi-lane one-way: lane dividers appear
+    const multi = mk({ oneway: true, dual: true });
+    assert.ok(colourOf(multi, white) > 0, 'lane dividers on a multi-lane one-way road');
+    assert.equal(colourOf(R.buildEdgeMesh(world, { ...base, oneway: true, dual: true, profile: { edgeLines: false } }, 2000, { detail: 0 }), white), 0, 'coarse skips lane dividers');
+    // the default (no profile) markings of an ordinary two-way road are unchanged by the profile
+    assert.equal(colourOf(R.buildEdgeMesh(world, { ...base }, 2000), white), colourOf(R.buildEdgeMesh(world, { ...base, profile: {} }, 2000), white));
+});
+
+test('passing places: single-track roads gain bays at the profile positions, the coarse level skips them', () => {
+    const lane = graph.edges.find(e => e.cls === 'lane' && e.opened === 0 && e.len > 60 && !e.bridge);
+    assert.ok(lane);
+    const mk = (places, detail = true) => R.buildEdgeMesh(world, { ...lane, profile: { passingPlaces: places } }, 2000, { detail });
+    const none = mk(false), some = mk([lane.len / 2]);
+    assert.ok(M.triangleCount(some) > M.triangleCount(none), 'a bay adds a surface strip');
+    assert.equal(M.triangleCount(mk([lane.len / 2], 0)), M.triangleCount(mk(false, 0)), 'coarse skips the bays');
+});
+
+test('pavements per side: a one-sided road has pavement strips on that side only', () => {
+    const street = graph.edges.find(e => e.cls === 'street' && e.town && !e.bridge && !e.link && e.len > 40 && e.opened === 0);
+    assert.ok(street);
+    const pav = R.roadColours(2000).pavement;
+    const sideOf = (mesh, e) => {
+        const sm = R.edgeSamples(e, 1), out = new Set();
+        for (let i = 0; i < M.vertexCount(mesh); i++) {
+            if (![0, 1, 2].every(k => Math.abs(mesh.colors[i * 3 + k] - pav[k]) < 1e-3)) continue;
+            const x = mesh.positions[i * 3], y = mesh.positions[i * 3 + 1];
+            let best = sm[0], d = Infinity;
+            for (const s of sm) { const dd = Math.hypot(s.x - x, s.y - y); if (dd < d) { d = dd; best = s; } }
+            out.add((x - best.x) * best.ty - (y - best.y) * best.tx > 0 ? 'right' : 'left'); // +offset is the right of travel
+        }
+        return out;
+    };
+    const build = p => R.buildEdgeMesh(world, { ...street, profile: { pavements: p } }, 2000);
+    assert.deepEqual([...sideOf(build('both'), street)].sort(), ['left', 'right']);
+    assert.deepEqual([...sideOf(build('left'), street)], ['left']);
+    assert.deepEqual([...sideOf(build('right'), street)], ['right']);
+    assert.equal(sideOf(build('none'), street).size, 0);
+});
