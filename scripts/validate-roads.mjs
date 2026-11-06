@@ -698,7 +698,45 @@ export async function validateGreybox({ world = null, year = 2024 } = {}) {
     };
     if (g.counts.roundabouts !== expected.roundabouts) issues.push({ check: 'greybox-expectation', hard: true, x: 0, y: 0, detail: `${g.counts.roundabouts} roundabout ring(s) checked, spec has ${expected.roundabouts}` });
     if (g.counts.clearanceMeasured !== expected.bridges) issues.push({ check: 'greybox-expectation', hard: true, x: 0, y: 0, detail: `${g.counts.clearanceMeasured} bridge clearance(s) measured, spec has ${expected.bridges}` });
+    issues.push(...await validateGreyboxRoadTypes(w, year));
     return { counts: g.counts, issues, expected };
+}
+
+/**
+ * Plan 0011 phase 8: the road-type pieces of the greybox. Single-track roads carry no centre line, their passing-place bays
+ * sit inside the road (clear of the junction mouths and of each other, so they never overlap the carriageway of a crossing
+ * road), and each ring of a double roundabout meets the link road at its mouth and on the ring.
+ */
+async function validateGreyboxRoadTypes(w, year) {
+    const { laneProfile } = await game('world/lane-profile.js');
+    const { layoutJunction } = await game('world/junction-layout.js');
+    const BAY_LEN = 12, MOUTH = 2; // as render/gl/road-mesh.js (BAY_LEN, bay clearance from the junction mouths)
+    const out = [];
+    const hard = (check, x, y, detail) => out.push({ check, hard: true, x, y, detail });
+    for (const e of w.graph.edges) {
+        const prof = laneProfile(e, year, e.profile ?? {});
+        const mid = { x: (e.pts[0] + e.pts[e.pts.length - 2]) / 2, y: (e.pts[1] + e.pts[e.pts.length - 1]) / 2 };
+        if (prof.singleTrack && prof.centreLine) hard('single-track-centre-line', mid.x, mid.y, `${e.tag} is single track but has a centre line`);
+        const places = Array.isArray(prof.passingPlaces) ? prof.passingPlaces : [];
+        if (places.length && !prof.singleTrack) hard('passing-place-bay', mid.x, mid.y, `${e.tag} has passing places but is not single track`);
+        const sorted = [...places].sort((a, b) => a - b);
+        sorted.forEach((d, k) => {
+            if (d - BAY_LEN / 2 < MOUTH || d + BAY_LEN / 2 > e.len - MOUTH) hard('passing-place-bay', mid.x, mid.y, `${e.tag}: bay at ${d} m runs into a junction mouth (road ${e.len.toFixed(0)} m)`);
+            if (k && d - sorted[k - 1] < BAY_LEN) hard('passing-place-bay', mid.x, mid.y, `${e.tag}: bays at ${sorted[k - 1]} m and ${d} m overlap`);
+        });
+    }
+    for (const link of w.graph.edges.filter(e => e.tag?.endsWith('-double-link'))) {
+        for (const id of [link.a, link.b]) {
+            const n = w.graph.nodes[id];
+            const L = layoutJunction(w.graph, n, year);
+            const a = L.kind === 'roundabout' ? L.arms.find(q => q.edge.id === link.id) : null;
+            if (!a) { hard('double-roundabout-link', n.x, n.y, `${link.tag}: no link arm on the ring at (${n.x.toFixed(0)}, ${n.y.toFixed(0)})`); continue; }
+            const J = a.join, last = J[J.length - 1];
+            if (Math.hypot(J[0].x - a.mouth.x, J[0].y - a.mouth.y) > 0.1) hard('double-roundabout-link', n.x, n.y, `${link.tag}: join does not start at the mouth`);
+            if (Math.abs(Math.hypot(last.x - n.x, last.y - n.y) - L.ring.ro) > 0.1) hard('double-roundabout-link', n.x, n.y, `${link.tag}: join does not end on the ring`);
+        }
+    }
+    return out;
 }
 
 // ---- CLI ---------------------------------------------------------------------------------------------------------

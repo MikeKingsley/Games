@@ -222,3 +222,54 @@ function inside(poly, p) {
     }
     return c;
 }
+
+// plan 0011 phase 8: the asymmetric road and the double roundabout
+/** `path` continued 15 m straight past both ends (the road goes on; the body overhanging the last sample is not off it). */
+function withTails(path) {
+    const tail = (a, b) => Array.from({ length: 30 }, (_, k) => ({ x: b.x + ((b.x - a.x) / Math.hypot(b.x - a.x, b.y - a.y)) * 0.5 * (k + 1), y: b.y + ((b.y - a.y) / Math.hypot(b.x - a.x, b.y - a.y)) * 0.5 * (k + 1) }));
+    const n = path.length;
+    return [...tail(path[1], path[0]).reverse(), ...path, ...tail(path[n - 2], path[n - 1])];
+}
+
+for (const spec of RIGS) {
+    test(`${spec.id} drives the asymmetric 2+1 road without leaving the road surface`, () => {
+        const road = edgeOf('asymmetric');
+        const path = dense(edgePoints(road));
+        const half = halfWidthOf(road);
+        const worst = worstCornerGap(spec, path, withTails(path), { speed: 8, look: 8 });
+        assert.ok(worst < half, `a corner was ${worst.toFixed(2)} m from the centreline, the surface is ${half} m each side`);
+    });
+
+    for (const forward of [true, false]) {
+        test(`${spec.id} drives through the double roundabout ${forward ? 'west to east' : 'east to west'}: both rings stay inside the layout boundary`, () => {
+            const nl = nodeOf('roundabout-double-l'), nr = nodeOf('roundabout-double-r');
+            const Ls = [nl, nr].map(n => layoutJunction(world.graph, n, GREYBOX_SPEC.year));
+            const link = edgeOf('roundabout-double-link');
+            assert.ok(link, 'link road');
+            const onRoad = p => Ls.some(L => inside(L.boundary, p)) || world.graph.edges.some(e => e.tag.startsWith('roundabout-double') && closestOnPoly(e.pts, p.x, p.y).d <= halfWidthOf(e));
+            const rad = d => (d * Math.PI) / 180;
+            const ring = (n, L, a) => ({ x: n.x + L.ring.rc * Math.cos(rad(a)), y: n.y + L.ring.rc * Math.sin(rad(a)) });
+            const arc = (n, L, a0, a1) => Array.from({ length: 9 }, (_, k) => ring(n, L, a0 + ((a1 - a0) * k) / 8));
+            // arm in on the west, over the top of the left ring, along the link, over the top of the right ring, arm out on the east
+            const wp = [
+                ...Array.from({ length: 5 }, (_, i) => ({ x: nl.x - 90 + i * 12.5, y: nl.y })),
+                ...arc(nl, Ls[0], 190, 360),
+                ...arc(nr, Ls[1], 180, 350),
+                ...Array.from({ length: 5 }, (_, i) => ({ x: nr.x + 40 + i * 12.5, y: nr.y })),
+            ];
+            let path = dense(wp);
+            if (!forward) path = path.reverse();
+            const box = { x: 0, y: 0, hx: spec.length / 2, hy: spec.width / 2, angle: 0 };
+            let off = null;
+            drive(spec, path, {
+                speed: 4, look: 5,
+                onStep: v => {
+                    const c = bodyCentre(v);
+                    box.x = c.x; box.y = c.y; box.angle = v.heading;
+                    for (const p of corners(box)) if (!onRoad(p) && !off) off = { x: p.x.toFixed(1), y: p.y.toFixed(1) };
+                },
+            });
+            assert.equal(off, null, `body corner left the layout at ${JSON.stringify(off)}`);
+        });
+    }
+}

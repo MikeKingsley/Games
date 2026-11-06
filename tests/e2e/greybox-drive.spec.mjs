@@ -53,3 +53,23 @@ test('greybox page renders and a vehicle drives over and under the overbridge', 
     expect(result.under.worstTop).toBeLessThan(result.deckTop - 0.6);
     expect(errors).toEqual([]);
 });
+
+// Plan 0011 phase 8: every road-type, junction and roundabout piece loads in the greybox page with no console errors.
+const NEW_PIECES = [
+    'single-track', 'one-way-lane', 'two-way', 'multi-one-way', 'asymmetric', 'no-pavement',
+    'signals-cross', 'tee-give-way', 'give-way-cross', 'crossroads-plain',
+    'roundabout-small', 'roundabout-medium', 'roundabout-large', 'roundabout-double',
+];
+for (const id of NEW_PIECES) {
+    test(`greybox piece ${id} renders with no console errors`, async ({ page }) => {
+        const errors = [];
+        page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+        page.on('pageerror', e => errors.push(String(e)));
+        await page.goto(`${BASE}/greybox/greybox.html?piece=${id}`);
+        await page.waitForFunction(() => window.__greybox && window.__greybox.frames > 2, null, { timeout: 30_000 });
+        const status = await page.evaluate(() => window.__greybox);
+        expect(status.error).toBeNull();
+        expect(status.triangles).toBeGreaterThan(1000);
+        expect(errors).toEqual([]);
+    });
+}
