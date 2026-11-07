@@ -676,3 +676,33 @@ test('plan 0012 phase 3: greybox ?terrain=rolling roads sit on the ground within
     }
     assert.ok(checked > 500, `${checked} greybox samples checked`);
 });
+
+// ---- Plan 0012 phase 5: pavements follow the lane profile on the real map -----------------------------------------------
+
+test('plan 0012 phase 5: a bridge deck carries no pavement strip although its profile says both sides', () => {
+    const bridge = graph.edges.find(e => e.bridge && !e.tunnel && e.town && e.cls !== 'lane' && e.cls !== 'access' && e.cls !== 'M' && e.opened === 0);
+    assert.ok(bridge, 'a town bridge in the data');
+    const pav = R.roadColours(2000).pavement;
+    assert.equal(colourOf(R.buildEdgeMesh(world, bridge, 2000), pav), 0);
+    assert.equal(colourOf(R.buildEdgeMesh(world, { ...bridge, profile: { pavements: 'both' } }, 2000), pav), 0);
+});
+
+test('plan 0012 phase 5: a rural dual carriageway keeps its verge on both sides, and a spec can turn it off', () => {
+    const dual = graph.edges.find(e => !e.town && !e.bridge && !e.tunnel && e.len > 60 && e.opened === 0 && edgeClass(e, 2000) === 'dual' && e.cls !== 'M');
+    if (!dual) return; // (no rural dual carriageway in the data)
+    const verge = R.roadColours(2000).verge;
+    assert.ok(colourOf(R.buildEdgeMesh(world, dual, 2000), verge) > 0, 'verge on a rural dual carriageway');
+    assert.equal(colourOf(R.buildEdgeMesh(world, { ...dual, profile: { pavements: 'none' } }, 2000), verge), 0, 'a spec of none wins');
+});
+
+test('plan 0012 phase 5: long town streets draw a pavement exactly where laneProfile gives one (default and per-side)', () => {
+    const pav = R.roadColours(2000).pavement;
+    const streets = graph.edges.filter(e => e.cls === 'street' && e.town && !e.bridge && !e.tunnel && !e.link && e.len > 60 && e.opened === 0).slice(0, 6);
+    assert.ok(streets.length >= 3);
+    for (const e of streets) {
+        assert.ok(colourOf(R.buildEdgeMesh(world, e, 2000), pav) > 0, `edge ${e.id} default pavement`);
+        assert.equal(colourOf(R.buildEdgeMesh(world, { ...e, profile: { pavements: 'none' } }, 2000), pav), 0, `edge ${e.id} none`);
+        const one = colourOf(R.buildEdgeMesh(world, { ...e, profile: { pavements: 'left' } }, 2000), pav);
+        assert.ok(one > 0 && one < colourOf(R.buildEdgeMesh(world, e, 2000), pav), `edge ${e.id} one side has fewer strips than both`);
+    }
+});

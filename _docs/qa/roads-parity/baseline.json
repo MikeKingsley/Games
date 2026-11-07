@@ -130,82 +130,13 @@
       },
       "markings": {
         "edges": 761,
+        "pavementBlocked": 10,
         "structureEdgesWithPavementRule": 56,
-        "features": {
-          "pavement": {
-            "extra": 28,
-            "missing": 92
-          }
-        },
-        "examples": {
-          "pavement:missing": [
-            {
-              "edge": 18739,
-              "cls": "street",
-              "x": 33726.7,
-              "y": -11825.5
-            },
-            {
-              "edge": 18739,
-              "cls": "street",
-              "x": 33726.7,
-              "y": -11825.5
-            },
-            {
-              "edge": 18748,
-              "cls": "A",
-              "x": 34137.5,
-              "y": -12138.7
-            },
-            {
-              "edge": 18751,
-              "cls": "street",
-              "x": 34143.6,
-              "y": -12158
-            },
-            {
-              "edge": 18753,
-              "cls": "street",
-              "x": 34145.9,
-              "y": -12575.2
-            }
-          ],
-          "pavement:extra": [
-            {
-              "edge": 18958,
-              "cls": "A",
-              "x": 34040.9,
-              "y": -11332.7
-            },
-            {
-              "edge": 18958,
-              "cls": "A",
-              "x": 34040.9,
-              "y": -11332.7
-            },
-            {
-              "edge": 19393,
-              "cls": "A",
-              "x": 34051.3,
-              "y": -11362.6
-            },
-            {
-              "edge": 19393,
-              "cls": "A",
-              "x": 34051.3,
-              "y": -11362.6
-            },
-            {
-              "edge": 19429,
-              "cls": "A",
-              "x": 34051.3,
-              "y": -11362.6
-            }
-          ]
-        },
+        "features": {},
+        "examples": {},
         "total": {
-          "extra": 28,
-          "missing": 92
+          "extra": 0,
+          "missing": 0
         }
       }
     },
@@ -330,82 +261,13 @@
       },
       "markings": {
         "edges": 904,
+        "pavementBlocked": 10,
         "structureEdgesWithPavementRule": 32,
-        "features": {
-          "pavement": {
-            "extra": 62,
-            "missing": 75
-          }
-        },
-        "examples": {
-          "pavement:missing": [
-            {
-              "edge": 11506,
-              "cls": "B",
-              "x": 12456.6,
-              "y": 7193.8
-            },
-            {
-              "edge": 11506,
-              "cls": "B",
-              "x": 12456.6,
-              "y": 7193.8
-            },
-            {
-              "edge": 11622,
-              "cls": "B",
-              "x": 12579.2,
-              "y": 7283.2
-            },
-            {
-              "edge": 11623,
-              "cls": "street",
-              "x": 12955.1,
-              "y": 7027.4
-            },
-            {
-              "edge": 11623,
-              "cls": "street",
-              "x": 12955.1,
-              "y": 7027.4
-            }
-          ],
-          "pavement:extra": [
-            {
-              "edge": 11660,
-              "cls": "A",
-              "x": 12131.7,
-              "y": 6332.2
-            },
-            {
-              "edge": 11660,
-              "cls": "A",
-              "x": 12131.7,
-              "y": 6332.2
-            },
-            {
-              "edge": 11850,
-              "cls": "A",
-              "x": 13282.4,
-              "y": 7202.7
-            },
-            {
-              "edge": 22130,
-              "cls": "A",
-              "x": 11404.9,
-              "y": 5791.1
-            },
-            {
-              "edge": 22130,
-              "cls": "A",
-              "x": 11404.9,
-              "y": 5791.1
-            }
-          ]
-        },
+        "features": {},
+        "examples": {},
         "total": {
-          "extra": 62,
-          "missing": 75
+          "extra": 0,
+          "missing": 0
         }
       }
     },
@@ -523,82 +385,13 @@
       },
       "markings": {
         "edges": 412,
+        "pavementBlocked": 2,
         "structureEdgesWithPavementRule": 18,
-        "features": {
-          "pavement": {
-            "extra": 10,
-            "missing": 39
-          }
-        },
-        "examples": {
-          "pavement:missing": [
-            {
-              "edge": 5236,
-              "cls": "street",
-              "x": -19866.6,
-              "y": 13188.4
-            },
-            {
-              "edge": 5243,
-              "cls": "street",
-              "x": -19340.4,
-              "y": 13073.9
-            },
-            {
-              "edge": 5243,
-              "cls": "street",
-              "x": -19340.4,
-              "y": 13073.9
-            },
-            {
-              "edge": 5322,
-              "cls": "street",
-              "x": -19529.3,
-              "y": 13208.4
-            },
-            {
-              "edge": 5334,
-              "cls": "street",
-              "x": -19695.9,
-              "y": 13011.2
-            }
-          ],
-          "pavement:extra": [
-            {
-              "edge": 31272,
-              "cls": "A",
-              "x": -20104.7,
-              "y": 13219.3
-            },
-            {
-              "edge": 31272,
-              "cls": "A",
-              "x": -20104.7,
-              "y": 13219.3
-            },
-            {
-              "edge": 31279,
-              "cls": "A",
-              "x": -20200.1,
-              "y": 13192.6
-            },
-            {
-              "edge": 31279,
-              "cls": "A",
-              "x": -20200.1,
-              "y": 13192.6
-            },
-            {
-              "edge": 31293,
-              "cls": "A",
-              "x": -20156.5,
-              "y": 13201.5
-            }
-          ]
-        },
+        "features": {},
+        "examples": {},
         "total": {
-          "extra": 10,
-          "missing": 39
+          "extra": 0,
+          "missing": 0
         }
       }
     },
@@ -723,85 +516,16 @@
       },
       "markings": {
         "edges": 373,
+        "pavementBlocked": 9,
         "structureEdgesWithPavementRule": 22,
-        "features": {
-          "pavement": {
-            "extra": 12,
-            "missing": 40
-          }
-        },
-        "examples": {
-          "pavement:missing": [
-            {
-              "edge": 48,
-              "cls": "street",
-              "x": -36599.6,
-              "y": 21142.3
-            },
-            {
-              "edge": 48,
-              "cls": "street",
-              "x": -36599.6,
-              "y": 21142.3
-            },
-            {
-              "edge": 140,
-              "cls": "street",
-              "x": -36873.3,
-              "y": 21025.5
-            },
-            {
-              "edge": 246,
-              "cls": "street",
-              "x": -37129.8,
-              "y": 21186.1
-            },
-            {
-              "edge": 246,
-              "cls": "street",
-              "x": -37129.8,
-              "y": 21186.1
-            }
-          ],
-          "pavement:extra": [
-            {
-              "edge": 31118,
-              "cls": "A",
-              "x": -37427.5,
-              "y": 21337.8
-            },
-            {
-              "edge": 31118,
-              "cls": "A",
-              "x": -37427.5,
-              "y": 21337.8
-            },
-            {
-              "edge": 31119,
-              "cls": "A",
-              "x": -37427.5,
-              "y": 21337.8
-            },
-            {
-              "edge": 31119,
-              "cls": "A",
-              "x": -37427.5,
-              "y": 21337.8
-            },
-            {
-              "edge": 31122,
-              "cls": "A",
-              "x": -36214.1,
-              "y": 20632.5
-            }
-          ]
-        },
+        "features": {},
+        "examples": {},
         "total": {
-          "extra": 12,
-          "missing": 40
+          "extra": 0,
+          "missing": 0
         }
       }
     }
   },
-  "seconds": 8.7
+  "seconds": 8.6
 }

@@ -192,6 +192,23 @@ function measureJunctions(world, year, box, tol) {
     return { junctions: r.junctions, arms: r.arms, noZ: r.noZ, tolerance: tol, mismatchedArms: r.badArms, mismatchedNodes: r.badNodes.size, max: +r.max.toFixed(3), worst: r.worst };
 }
 
+/** The samples between distances d0 and d1 with interpolated end points, as road-mesh.js trimSamples. */
+function trimmed(samples, d0, d1) {
+    if (d1 - d0 < 1) return [];
+    const out = [];
+    const at = (a, c, d) => {
+        const f = (d - a.d) / (c.d - a.d || 1), tx = a.tx + (c.tx - a.tx) * f, ty = a.ty + (c.ty - a.ty) * f, l = Math.hypot(tx, ty) || 1;
+        return { x: a.x + (c.x - a.x) * f, y: a.y + (c.y - a.y) * f, d, tx: tx / l, ty: ty / l };
+    };
+    for (let i = 0; i < samples.length - 1; i++) {
+        const a = samples[i], c = samples[i + 1];
+        if (c.d <= d0 || a.d >= d1) continue;
+        if (!out.length) out.push(a.d >= d0 ? a : at(a, c, d0));
+        out.push(c.d <= d1 ? c : at(a, c, d1));
+    }
+    return out;
+}
+
 /**
  * What render/gl/road-mesh.js buildEdgeMesh draws on an edge (full detail), re-derived from the same inputs (edge, year,
  * edge.profile, class, town flag) rather than read from vertices. Keep in step with buildEdgeMesh.
@@ -204,18 +221,21 @@ function drawnFeatures(world, edge, year, tA, tB) {
     if (!spec && cls === 'dual' && !edge.town) sides.left = sides.right = true; // rural dual carriageways keep a verge strip
     const structure = !!edge.bridge || !!edge.tunnel;
     const pave = { left: !structure && sides.left, right: !structure && sides.right };
+    const blocked = { left: false, right: false }; // dropped on purpose: the whole strip would lie on another carriageway
     // a pavement run is dropped where it would lie on another carriageway at both ends; count a side with no run left as missing
     if (pave.left || pave.right) {
         const width = edgeWidth(edge, year);
         const town = !!edge.town && !edge.link;
         const off = width / 2 + 0.8 + (town ? 0.6 : 0.7);
-        const smp = edgeSamples(edge).filter(s => s.d >= tA && s.d <= edge.len - tB);
+        const smp = trimmed(edgeSamples(edge), tA, edge.len - tB);
         for (const side of [1, -1]) {
             const key = side < 0 ? 'left' : 'right';
             if (!pave[key]) continue;
-            let ok = 0;
-            for (const s of smp) if (!onOtherRoad(world.graph, year, s.x + s.ty * side * off, s.y - s.tx * side * off, edge)) ok++;
-            if (ok < 2) pave[key] = false;
+            // as road-mesh.js: offset the trimmed samples, then drop the ends that lie on another carriageway
+            let run = smp.map(s => ({ x: s.x + s.ty * side * off, y: s.y - s.tx * side * off }));
+            while (run.length > 1 && onOtherRoad(world.graph, year, run[0].x, run[0].y, edge)) run = run.slice(1);
+            while (run.length > 1 && onOtherRoad(world.graph, year, run[run.length - 1].x, run[run.length - 1].y, edge)) run = run.slice(0, -1);
+            if (run.length < 2) { pave[key] = false; blocked[key] = true; }
         }
     }
     const unmarked = (cls === 'lane' || cls === 'access') && !spec;
@@ -224,13 +244,13 @@ function drawnFeatures(world, edge, year, tA, tB) {
     const centre = !unmarked && (heavy ? false : (prof.centreLine || (!spec && edge.dual && !edge.oneway && !prof.singleTrack)));
     const dividers = !unmarked && !heavy && (lanes > 2 || (prof.lanesBack === 0 && lanes >= 2));
     const edgeLines = !unmarked && prof.edgeLines;
-    return { prof, cls, pave, centre, dividers, edgeLines, structure };
+    return { prof, cls, pave, blocked, centre, dividers, edgeLines, structure };
 }
 
 /** Edges whose drawn markings and pavements differ from the lane profile. */
 function measureMarkings(world, year, box) {
     const g = world.graph;
-    const out = { edges: 0, structureEdgesWithPavementRule: 0, features: {}, examples: {} };
+    const out = { edges: 0, pavementBlocked: 0, structureEdgesWithPavementRule: 0, features: {}, examples: {} };
     const bump = (feature, kind, e) => {
         const f = (out.features[feature] ??= { extra: 0, missing: 0 });
         f[kind]++;
@@ -246,8 +266,15 @@ function measureMarkings(world, year, box) {
         const p = d.prof;
         // pavements, per side
         for (const side of ['left', 'right']) {
-            if (d.pave[side] && !p.pavements[side]) bump('pavement', 'extra', e);
-            else if (!d.pave[side] && p.pavements[side]) { bump('pavement', 'missing', e); if (d.structure) out.structureEdgesWithPavementRule++; }
+            // rule: the profile's sides, except a bridge or tunnel deck carries none (parapets instead) and a rural dual
+            // carriageway without a spec keeps its grassy verge strip on both sides
+            const want = !d.structure && (p.pavements[side] || (!e.profile && d.cls === 'dual' && !e.town));
+            if (d.structure && p.pavements[side]) out.structureEdgesWithPavementRule++;
+            if (d.pave[side] && !want) bump('pavement', 'extra', e);
+            else if (!d.pave[side] && want) {
+                if (d.blocked[side]) out.pavementBlocked++; // intended: pavements never run over another carriageway
+                else bump('pavement', 'missing', e);
+            }
         }
         // centre line (two-lane two-way roads only, per the profile; the mesh also draws one on a two-way dual-flag A/B road)
         if (d.centre && !p.centreLine) bump('centreLine', 'extra', e);
