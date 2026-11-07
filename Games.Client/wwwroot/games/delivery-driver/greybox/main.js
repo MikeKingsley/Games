@@ -2,6 +2,7 @@
 // mesh upload, layered road draw) and a free camera. Dev only: nothing in the game links here.
 // Query: ?year=1950  ?piece=roundabout (start over a piece, top-down; add &view=oblique for an angled view)
 //        ?view=top (top-down overview)  ?view=low (a low, distant view).
+//        ?terrain=rolling (hills under the pieces; default flat)  ?cam=x,y,z,yaw,pitch (exact camera, world metres)
 import { GREYBOX_SPEC } from './spec.js';
 import { buildGreyboxWorld } from './graph.js';
 import { buildGreyboxMesh } from './mesh.js';
@@ -33,7 +34,8 @@ void main() {
 
 const params = new URLSearchParams(location.search);
 const year = Number(params.get('year')) || GREYBOX_SPEC.year;
-const world = buildGreyboxWorld(GREYBOX_SPEC);
+const terrain = params.get('terrain') === 'rolling' ? 'rolling' : 'flat';
+const world = buildGreyboxWorld(GREYBOX_SPEC, { terrain });
 const mesh = buildGreyboxMesh(world, year);
 
 const canvas = document.getElementById('gl');
@@ -61,6 +63,11 @@ const oblique = params.get('view') === 'oblique';
 if (start) (oblique ? flyTo(start) : topDown(start.x, start.y));
 else if (params.get('view') === 'low') Object.assign(cam, { x: 300, y: 1000, z: 60, pitch: -0.2 });
 else if (params.get('view') === 'top') topDown(OVERVIEW.x, OVERVIEW.y);
+const exact = params.get('cam')?.split(',').map(Number);
+if (exact?.length === 5 && exact.every(Number.isFinite)) Object.assign(cam, { x: exact[0], y: exact[1], z: exact[2], yaw: exact[3], pitch: exact[4] });
+// the live camera and the ground height, for scripts that move the camera between shots (the frame loop reads cam each frame)
+status.cam = cam;
+status.groundAt = world.groundAt;
 
 const bar = document.getElementById('bar'), labels = document.getElementById('labels');
 const addButton = (text, fn) => { const b = document.createElement('button'); b.textContent = text; b.onclick = fn; bar.appendChild(b); };
