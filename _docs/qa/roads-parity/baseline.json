@@ -64,6 +64,53 @@
           }
         }
       },
+      "drawn": {
+        "samples": 28509,
+        "tolerance": 0.15,
+        "sink": {
+          "count": 44,
+          "edges": 7,
+          "max": 5.827,
+          "worst": {
+            "m": 5.83,
+            "edge": 29607,
+            "cls": "lane",
+            "x": 33700.4,
+            "y": -11257.8,
+            "at": "pavement"
+          }
+        },
+        "gap": {
+          "count": 3571,
+          "edges": 178,
+          "max": 5.726,
+          "worst": {
+            "m": 5.73,
+            "edge": 18725,
+            "cls": "A",
+            "x": 33700.4,
+            "y": -11241.4,
+            "at": "pavement"
+          }
+        },
+        "byOffset": {
+          "centre": {
+            "samples": 9503,
+            "sink": 9,
+            "gap": 982
+          },
+          "kerb": {
+            "samples": 9503,
+            "sink": 15,
+            "gap": 1168
+          },
+          "pavement": {
+            "samples": 9503,
+            "sink": 20,
+            "gap": 1421
+          }
+        }
+      },
       "junctions": {
         "junctions": 331,
         "arms": 1127,
@@ -214,6 +261,53 @@
             "samples": 8632,
             "float": 1323,
             "sink": 321
+          }
+        }
+      },
+      "drawn": {
+        "samples": 25896,
+        "tolerance": 0.15,
+        "sink": {
+          "count": 10,
+          "edges": 2,
+          "max": 1.431,
+          "worst": {
+            "m": 1.43,
+            "edge": 11783,
+            "cls": "A",
+            "x": 13545.3,
+            "y": 7233.5,
+            "at": "pavement"
+          }
+        },
+        "gap": {
+          "count": 2906,
+          "edges": 139,
+          "max": 12.352,
+          "worst": {
+            "m": 12.35,
+            "edge": 11774,
+            "cls": "B",
+            "x": 12186.7,
+            "y": 7339.2,
+            "at": "pavement"
+          }
+        },
+        "byOffset": {
+          "centre": {
+            "samples": 8632,
+            "sink": 3,
+            "gap": 756
+          },
+          "kerb": {
+            "samples": 8632,
+            "sink": 3,
+            "gap": 987
+          },
+          "pavement": {
+            "samples": 8632,
+            "sink": 4,
+            "gap": 1163
           }
         }
       },
@@ -370,6 +464,46 @@
           }
         }
       },
+      "drawn": {
+        "samples": 21954,
+        "tolerance": 0.15,
+        "sink": {
+          "count": 0,
+          "edges": 0,
+          "max": 0,
+          "worst": null
+        },
+        "gap": {
+          "count": 4239,
+          "edges": 123,
+          "max": 9.06,
+          "worst": {
+            "m": 9.06,
+            "edge": 6083,
+            "cls": "street",
+            "x": -19302,
+            "y": 13350.1,
+            "at": "pavement"
+          }
+        },
+        "byOffset": {
+          "centre": {
+            "samples": 7318,
+            "sink": 0,
+            "gap": 1258
+          },
+          "kerb": {
+            "samples": 7318,
+            "sink": 0,
+            "gap": 1440
+          },
+          "pavement": {
+            "samples": 7318,
+            "sink": 0,
+            "gap": 1541
+          }
+        }
+      },
       "junctions": {
         "junctions": 189,
         "arms": 635,
@@ -523,6 +657,53 @@
           }
         }
       },
+      "drawn": {
+        "samples": 20205,
+        "tolerance": 0.15,
+        "sink": {
+          "count": 5,
+          "edges": 1,
+          "max": 0.67,
+          "worst": {
+            "m": 0.67,
+            "edge": 35762,
+            "cls": "street",
+            "x": -36489.9,
+            "y": 20758.6,
+            "at": "kerb"
+          }
+        },
+        "gap": {
+          "count": 3756,
+          "edges": 156,
+          "max": 23.327,
+          "worst": {
+            "m": 23.33,
+            "edge": 31730,
+            "cls": "street",
+            "x": -36579,
+            "y": 21082.9,
+            "at": "pavement"
+          }
+        },
+        "byOffset": {
+          "centre": {
+            "samples": 6735,
+            "sink": 1,
+            "gap": 1013
+          },
+          "kerb": {
+            "samples": 6735,
+            "sink": 2,
+            "gap": 1308
+          },
+          "pavement": {
+            "samples": 6735,
+            "sink": 2,
+            "gap": 1435
+          }
+        }
+      },
       "junctions": {
         "junctions": 163,
         "arms": 572,
@@ -622,5 +803,5 @@
       }
     }
   },
-  "seconds": 7
+  "seconds": 8.7
 }

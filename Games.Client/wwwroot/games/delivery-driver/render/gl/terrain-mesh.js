@@ -5,7 +5,9 @@
 // cell at a time so field edges stay crisp: each cell has its own four vertices (positions on the shared grid, so
 // neighbouring cells and chunks meet exactly) with smooth normals from the height grid.
 import { createBuilder, extrudeStrip, mergeMeshes } from './meshes.js';
-import { GRID_N, gridHeight, terrainHeight, waterLevel, roadDeckNear, tunnelFloorNear } from '../../world/terrain.js';
+import { GRID_N, gridHeight, terrainHeight, waterLevel, roadHeightAt, tunnelFloorNear } from '../../world/terrain.js';
+import { edgeSpline } from '../../world/junction-layout.js';
+import { sampleEven } from '../../world/road-spline.js';
 import { moorAt } from '../../world/region.js';
 import { CHUNK_SIZE } from '../../config.js';
 
@@ -29,6 +31,58 @@ const hash = (x, y) => { const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.54
 const ROAD_SINK = 0.15;
 /** How far beside a tunnel's carriageway edge the ground is cut down to the road, metres (a little more than the walls and the grid's half cell). */
 const TUNNEL_CUT = 5.5;
+
+/** The graded height of the road mesh along an edge's spline every FLOOR_STEP m: flat arrays [x, y, z, d] per sample, built once. */
+const FLOOR_STEP = 4;
+const floorPoints = e => {
+    if (e._floorPts) return e._floorPts;
+    const spl = edgeSpline(e), out = [];
+    if (spl) {
+        const k = e.len / (spl.length || 1);
+        for (const p of sampleEven(spl, FLOOR_STEP)) { const d = Math.min(e.len, p.s * k); out.push(p.x, p.y, roadHeightAt(e, d), d); }
+    }
+    return (e._floorPts = out);
+};
+const nearBuf = [], candOut = [], candZ = [];
+/** Roads further apart in height than this are separate layers (a ramp over a lane): the ground is not held to the lower one's deck. */
+const FLOOR_WINDOW = 6;
+/**
+ * Height of the ground-level road deck under or within `reach` m of a carriageway edge at (x, y), or null when none is
+ * that close (plan 0012 phase 3). Like world/terrain.js roadDeckNear it takes the nearest road, with two differences.
+ * The road ribbons follow each edge's spline (render/gl/road-mesh.js), which on a sparsely pointed lane can lie tens of
+ * metres from the polyline roadDeckNear measures, so this walks the spline. And at a crossing or a ramp spilling past its
+ * deck zone the nearest road is often the higher of two within FLOOR_WINDOW of each other, and the ground then stayed
+ * above the lower one and hid it, so it takes the lowest deck within FLOOR_WINDOW of the nearest road's. Decks and
+ * tunnels (edge.zones) are surfaces of their own, as there.
+ */
+export function roadFloorNear(world, x, y, reach) {
+    const graph = world.graph;
+    let n = 0, bestOut = Infinity, nearestZ = 0;
+    const seen = new Set();
+    for (const s of graph.index.near(x, y, reach + 60, nearBuf)) {
+        if (seen.has(s.edge)) continue;
+        seen.add(s.edge);
+        const e = graph.edges[s.edge];
+        if (!e.z) continue;
+        const P = floorPoints(e);
+        let eOut = Infinity, eZ = 0;
+        for (let i = 0; i < P.length; i += 4) {
+            const out = Math.hypot(P[i] - x, P[i + 1] - y) - e.zHalf;
+            if (out >= eOut || out >= reach) continue;
+            if (e.zones?.some(z => P[i + 3] >= z.from && P[i + 3] <= z.to)) continue;
+            eOut = out;
+            eZ = P[i + 2];
+        }
+        if (eOut === Infinity) continue;
+        candOut[n] = eOut;
+        candZ[n++] = eZ;
+        if (eOut < bestOut) { bestOut = eOut; nearestZ = eZ; }
+    }
+    if (!n) return null;
+    let best = nearestZ;
+    for (let i = 0; i < n; i++) if (Math.abs(candZ[i] - nearestZ) <= FLOOR_WINDOW && candZ[i] < best) best = candZ[i];
+    return best;
+}
 
 /** Water surface tint used for both the sea and rivers is set by the shader; these are the vertex colours. */
 export const WATER_ALPHA = 0.78;
@@ -136,7 +190,7 @@ export function buildChunkMesh(world, chunk, { lod = 0 } = {}) {
         const key = gj * GRID_N + gi;
         let v = sunk.get(key);
         if (v === undefined) {
-            const deck = roadDeckNear(world, grid.x0 + gi * grid.step, grid.y0 + gj * grid.step, span * 1.45);
+            const deck = roadFloorNear(world, grid.x0 + gi * grid.step, grid.y0 + gj * grid.step, span * 1.45);
             v = deck === null ? z : Math.min(z, deck - ROAD_SINK);
             // a tunnel is a covered cutting: the hill is cut down to the road beside and over it (full detail only; far chunks keep the hill)
             if (stride === 1) {

@@ -171,8 +171,8 @@ test('compose adds several shapes into one builder', () => {
 
 import fs from 'node:fs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
-import { terrainHeight, GRID_N, roadDeckNear } from '../../Games.Client/wwwroot/games/delivery-driver/world/terrain.js';
-import { buildChunkMesh, buildFarField, coastParts, GROUND } from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/terrain-mesh.js';
+import { terrainHeight, GRID_N } from '../../Games.Client/wwwroot/games/delivery-driver/world/terrain.js';
+import { buildChunkMesh, buildFarField, coastParts, GROUND, roadFloorNear } from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/terrain-mesh.js';
 import { CHUNK_SIZE } from '../../Games.Client/wwwroot/games/delivery-driver/config.js';
 
 const world = createWorld(seedWithBaked());
@@ -196,7 +196,7 @@ test('chunk ground mesh: 16 x 16 cells, vertices on the height grid, every trian
         const gi = Math.round((x - g.x0) / g.step), gj = Math.round((y - g.y0) / g.step);
         near(x, g.x0 + gi * g.step, 1e-3); near(y, g.y0 + gj * g.step, 1e-3);
         // on the height grid, except that beside a road the ground is held just under the road's deck
-        const deck = g.z[gj * GRID_N + gi] < 0 ? null : roadDeckNear(world, x, y, g.step * 1.45);
+        const deck = g.z[gj * GRID_N + gi] < 0 ? null : roadFloorNear(world, x, y, g.step * 1.45);
         if (deck === null) near(z, g.z[gj * GRID_N + gi], 1e-4);
         else assert.ok(z <= g.z[gj * GRID_N + gi] + 1e-4 && z <= deck - 0.1, 'ground stays under the road deck');
         assert.ok(ground.normals[i * 3 + 2] > 0, 'normals point up');

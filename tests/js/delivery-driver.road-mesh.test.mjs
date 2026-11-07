@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import { createWorld } from '../../Games.Client/wwwroot/games/delivery-driver/world/world.js';
 import { roadHeightAt, groundZ } from '../../Games.Client/wwwroot/games/delivery-driver/world/terrain.js';
 import { waterAt } from '../../Games.Client/wwwroot/games/delivery-driver/world/region.js';
-import { edgeWidth, edgeClass, ROAD_CLASS, LANE_WIDTH } from '../../Games.Client/wwwroot/games/delivery-driver/world/roadgraph.js';
+import { closestOnPoly } from '../../Games.Client/wwwroot/games/delivery-driver/world/geom.js';
+import { edgeWidth, edgeClass, edgeOpen, ROAD_CLASS, LANE_WIDTH } from '../../Games.Client/wwwroot/games/delivery-driver/world/roadgraph.js';
 import { layoutJunction, trimFor, mouthRadius, polygonsOverlap } from '../../Games.Client/wwwroot/games/delivery-driver/world/junction-layout.js';
 import * as R from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/road-mesh.js';
 import * as M from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/meshes.js';
@@ -624,4 +625,54 @@ test('pavements per side: a one-sided road has pavement strips on that side only
     assert.deepEqual([...sideOf(build('left'), street)], ['left']);
     assert.deepEqual([...sideOf(build('right'), street)], ['right']);
     assert.equal(sideOf(build('none'), street).size, 0);
+});
+
+test('plan 0012 phase 3: on a sloped real-map edge the surface, kerb and marking vertices follow the graded profile and sit on the ground', () => {
+    // a graded A or B road, 100 to 600 m, climbing more than 4% somewhere, on the ground (no deck or tunnel zones), whose spline stays within
+    // 0.5 m of its polyline (the ground is graded along the polyline, so only there do the road and the ground share a line)
+    const year = 2024, STEP = 5;
+    const deviation = e => { let mx = 0; for (const s of R.edgeSamples(e, STEP)) mx = Math.max(mx, closestOnPoly(e.pts, s.x, s.y).d); return mx; };
+    const steep = e => { for (let d = 0; d + 20 <= e.len; d += 10) if (Math.abs(roadHeightAt(e, d + 20) - roadHeightAt(e, d)) / 20 > 0.04) return true; return false; };
+    const e = graph.edges.find(x => (x.cls === 'A' || x.cls === 'B') && x.z && x.len > 100 && x.len < 600 && !x.bridge && !x.tunnel && !x.zones && edgeOpen(x, year) && steep(x) && deviation(x) < 0.5);
+    assert.ok(e, 'a sloped graded A or B edge exists');
+    const mesh = R.buildEdgeMesh(world, e, year);
+    const col = R.roadColours(year);
+    const fine = R.edgeSamples(e, 0.25);
+    const lo = trimFor(graph, e, 'a', year) + 3, hi = e.len - trimFor(graph, e, 'b', year) - 3;
+    const profileAt = (x, y) => { let best = Infinity, d = 0; for (const s of fine) { const k = Math.hypot(s.x - x, s.y - y); if (k < best) { best = k; d = s.d; } } return d; };
+    const check = (rgb, bias, label) => {
+        let n = 0;
+        for (let i = 0; i < M.vertexCount(mesh); i++) {
+            if (![0, 1, 2].every(k => Math.abs(mesh.colors[i * 3 + k] - rgb[k]) < 1e-4)) continue;
+            const x = mesh.positions[i * 3], y = mesh.positions[i * 3 + 1], z = mesh.positions[i * 3 + 2];
+            const d = profileAt(x, y);
+            if (d < lo || d > hi) continue;
+            n++;
+            assert.ok(Math.abs(z - (roadHeightAt(e, d) + bias)) < 0.05, `${label} vertex ${i}: ${z} vs graded ${roadHeightAt(e, d)} + ${bias}`);
+            // the level road sits on its graded ground: along the edge the ground under the centreline is within the tolerance of the surface
+            if (label === 'surface') {
+                const s = fine.reduce((a, c) => (Math.hypot(c.x - x, c.y - y) < Math.hypot(a.x - x, a.y - y) ? c : a));
+                assert.ok(Math.abs(s.z + R.LAYER.surface - groundZ(world, s.x, s.y, false)) < 0.15, `ground under ${s.x.toFixed(1)}, ${s.y.toFixed(1)}`);
+            }
+        }
+        assert.ok(n > 4, `${label}: ${n} vertices checked`);
+    };
+    check(col.surface, R.LAYER.surface, 'surface');
+    check(col.kerb, R.LAYER.kerb, 'kerb');
+    if (col.centre || col.edge) check(col.edge ?? col.centre, R.LAYER.marking, 'marking');
+});
+
+test('plan 0012 phase 3: greybox ?terrain=rolling roads sit on the ground within the tolerance (the reference the real map is held to)', async () => {
+    const { buildGreyboxWorld } = await import('../../Games.Client/wwwroot/games/delivery-driver/greybox/graph.js');
+    const gw = buildGreyboxWorld(undefined, { terrain: 'rolling' });
+    let checked = 0;
+    for (const e of gw.graph.edges) {
+        const tA = trimFor(gw.graph, e, 'a', gw.year), tB = trimFor(gw.graph, e, 'b', gw.year);
+        for (const s of R.edgeSamples(e, 5)) {
+            if (s.d < tA || s.d > e.len - tB || e.zones?.some(z => s.d >= z.from - 2 && s.d <= z.to + 2)) continue;
+            near(s.z + R.LAYER.surface, groundZ(gw, s.x, s.y, false), 0.15);
+            checked++;
+        }
+    }
+    assert.ok(checked > 500, `${checked} greybox samples checked`);
 });

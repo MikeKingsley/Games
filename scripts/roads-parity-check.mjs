@@ -4,6 +4,10 @@
 //                  every SAMPLE m along each open ground-level edge, outside its junction trims and deck/tunnel zones, at the
 //                  centreline, the kerb edge and the pavement outer edge. float: road above ground by more than --tol; sink: ground
 //                  above the road by more than --tol. Reports counts, max and worst spot.
+//   drawn-ground   (plan 0012 phase 3) the same samples against the ground MESH as drawn (render/gl/terrain-mesh.js: the 10 m chunk grid, held
+//                  under the road by roadFloorNear, bilinear in a cell), not the exact groundZ. sink: mesh ground above the road surface by more than
+//                  --tol (ground hiding the road: a defect). gap: road above mesh ground by more than --tol + 0.21 (the 0.15 m the mesh is held under
+//                  the deck plus the 0.06 m surface layer, so a plain road reads 0): an embankment or an unfilled slope, reported as a count only.
 //   junction-z     per junction node (3+ open arms): node.z (the junction surface) vs each arm's road height where the arm's strip
 //                  starts (roadHeightAt at the layout trim). Counts arms off by more than --tol, max and worst node.
 //   marking-pavement  what render/gl/road-mesh.js draws vs what world/lane-profile.js laneProfile() says. Mesh rules are re-derived
@@ -34,6 +38,8 @@ const { laneProfile } = await game('world/lane-profile.js');
 const { LAYER, edgeSamples } = await game('render/gl/road-mesh.js');
 const { closestOnPoly } = await game('world/geom.js');
 const { CHUNK_SIZE } = await game('config.js');
+const { roadFloorNear } = await game('render/gl/terrain-mesh.js');
+const { chunkHeights } = await game('world/terrain.js');
 
 const toArrayBuffer = b => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 
@@ -112,6 +118,51 @@ function measureSinkFloat(world, year, box, step, tol) {
     }
     const fin = k => ({ count: k.count, edges: k.edges.size, max: +k.max.toFixed(3), worst: k.worst });
     return { edges: r.edges, samples: r.samples, tolerance: tol, float: fin(r.float), sink: fin(r.sink), byOffset: r.byOffset };
+}
+
+/** Sink and gap of the ground mesh as drawn (see the header) at the centreline, kerb edge and pavement edge of every ground-level edge. */
+function measureDrawn(world, year, box, step, tol) {
+    const g = world.graph;
+    const grids = new Map(), capped = new Map();
+    const gridOf = (x, y) => { const ci = Math.floor(x / CHUNK_SIZE), cj = Math.floor(y / CHUNK_SIZE), k = ci + ',' + cj; let gr = grids.get(k); if (!gr) grids.set(k, gr = chunkHeights(world, ci, cj)); return gr; };
+    const nodeZ = (gr, gi, gj) => {
+        const key = gr.x0 + ',' + gr.y0 + ',' + gi + ',' + gj;
+        let v = capped.get(key);
+        if (v === undefined) {
+            const z = gr.z[gj * 17 + gi];
+            const deck = z < 0 ? null : roadFloorNear(world, gr.x0 + gi * gr.step, gr.y0 + gj * gr.step, gr.step * 1.45);
+            capped.set(key, v = deck === null ? z : Math.min(z, deck - 0.15));
+        }
+        return v;
+    };
+    const meshZ = (x, y) => {
+        const gr = gridOf(x, y), fx = Math.max(0, Math.min(16, (x - gr.x0) / gr.step)), fy = Math.max(0, Math.min(16, (y - gr.y0) / gr.step));
+        const i = Math.min(15, Math.floor(fx)), j = Math.min(15, Math.floor(fy)), u = fx - i, v = fy - j;
+        const a = nodeZ(gr, i, j), b = nodeZ(gr, i + 1, j), c = nodeZ(gr, i, j + 1), d = nodeZ(gr, i + 1, j + 1);
+        return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+    };
+    const r = { samples: 0, sink: { count: 0, edges: new Set(), max: 0, worst: null }, gap: { count: 0, edges: new Set(), max: 0, worst: null }, byOffset: {} };
+    for (const e of g.edges) {
+        if (!edgeOpen(e, year) || !e.z || e.cls === 'ferry' || e.bridge || e.tunnel || !edgeInBox(box, e)) continue;
+        const width = edgeWidth(e, year), tA = trimFor(g, e, 'a', year), tB = trimFor(g, e, 'b', year);
+        if (e.len - tA - tB < 2 || !edgeSpline(e)) continue;
+        const offs = { centre: 0, kerb: width / 2 + 0.8, pavement: width / 2 + 0.8 + 1.3 + 0.6 };
+        for (const s of edgeSamples(e, step)) {
+            if (s.d < tA || s.d > e.len - tB || inZone(e, s.d)) continue;
+            for (const [name, off] of Object.entries(offs)) {
+                const x = s.x + s.ty * off, y = s.y - s.tx * off;
+                const diff = s.z + LAYER.surface - meshZ(x, y); // < 0: mesh ground above the road
+                r.samples++;
+                const rec = (r.byOffset[name] ??= { samples: 0, sink: 0, gap: 0 });
+                rec.samples++;
+                const key = { edge: e.id, cls: e.cls, x: +x.toFixed(1), y: +y.toFixed(1), at: name };
+                if (-diff > tol) { r.sink.count++; rec.sink++; r.sink.edges.add(e.id); if (-diff > r.sink.max) { r.sink.max = -diff; r.sink.worst = { m: +(-diff).toFixed(2), ...key }; } }
+                else if (diff > tol + 0.21) { r.gap.count++; rec.gap++; r.gap.edges.add(e.id); if (diff > r.gap.max) { r.gap.max = diff; r.gap.worst = { m: +diff.toFixed(2), ...key }; } }
+            }
+        }
+    }
+    const fin = k => ({ count: k.count, edges: k.edges.size, max: +k.max.toFixed(3), worst: k.worst });
+    return { samples: r.samples, tolerance: tol, sink: fin(r.sink), gap: fin(r.gap), byOffset: r.byOffset };
 }
 
 /** Junction node height vs the road height where each arm's strip starts. */
@@ -231,10 +282,11 @@ async function main() {
         if (!t) throw new Error(`unknown town "${id}"`);
         const box = { minX: t.x - opts.radius, maxX: t.x + opts.radius, minY: t.y - opts.radius, maxY: t.y + opts.radius };
         const sinkFloat = measureSinkFloat(world, opts.year, box, opts.step, opts.tol);
+        const drawn = measureDrawn(world, opts.year, box, opts.step, opts.tol);
         const junctions = measureJunctions(world, opts.year, box, opts.tol);
         const markings = measureMarkings(world, opts.year, box);
         if (!sinkFloat.edges || !junctions.junctions || !markings.edges) empty = true;
-        report.towns[id] = { box, sinkFloat, junctions, markings };
+        report.towns[id] = { box, sinkFloat, drawn, junctions, markings };
     }
     report.seconds = +((Date.now() - t0) / 1000).toFixed(1);
     mkdirSync(opts.out, { recursive: true });
@@ -242,9 +294,10 @@ async function main() {
     if (opts.json) console.log(JSON.stringify(report, null, 2));
     else {
         for (const [id, r] of Object.entries(report.towns)) {
-            const s = r.sinkFloat, j = r.junctions, m = r.markings;
+            const s = r.sinkFloat, dr = r.drawn, j = r.junctions, m = r.markings;
             console.log(`\n== ${id} (year ${opts.year}) ==`);
             console.log(`sink/float: ${s.edges} edges, ${s.samples} samples; float ${s.float.count} (${s.float.edges} edges, max ${s.float.max} m); sink ${s.sink.count} (${s.sink.edges} edges, max ${s.sink.max} m)`);
+            console.log(`drawn ground: ${dr.samples} samples; ground hides road ${dr.sink.count} (${dr.sink.edges} edges, max ${dr.sink.max} m); road above ground ${dr.gap.count} (${dr.gap.edges} edges, max ${dr.gap.max} m)`);
             console.log(`junction z: ${j.junctions} junctions, ${j.arms} arms; ${j.mismatchedArms} arms off by > ${opts.tol} m (${j.mismatchedNodes} nodes, max ${j.max} m)`);
             console.log(`marking/pavement: ${m.edges} edges; extra ${m.total.extra}, missing ${m.total.missing} ${JSON.stringify(m.features)}`);
         }
