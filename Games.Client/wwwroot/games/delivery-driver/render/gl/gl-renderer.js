@@ -11,7 +11,7 @@ import { groundZ, decksAt, cameraGroundZ } from '../../world/terrain.js';
 import { SLAB } from '../../world/crossings.js';
 import { uploadMesh, drawMesh, drawMeshLayers, deleteMesh, ATTRIB_SLOTS, INSTANCE_SLOTS, uploadInstances, drawInstances, deleteInstances, createStream } from './gpu-mesh.js';
 import { buildFarField, WATER_ALPHA } from './terrain-mesh.js';
-import { chunkRoadSignature } from './road-mesh.js';
+import { chunkRoadSignature, layerPolygonOffset } from './road-mesh.js';
 import { buildChunkProps, chunkPropsSig, chunkSignalNodes, buildDynamicProps, lampStyle } from './prop-mesh.js';
 import { buildChunkData, buildRoadsAt, createFrameDriver } from './chunk-build.js';
 import { sceneLighting, shadowDirection } from './sun.js';
@@ -324,7 +324,7 @@ export function createGlRenderer({ canvas, view, callbacks = {}, quality = 'medi
     }
 
     /** Polygon offset for a road layer: a slope factor of -1 and -2 depth units, plus -2 more per layer above the base. */
-    const roadLayerOffset = layer => gl.polygonOffset(-1, -2 - 2 * layer);
+    const roadLayerOffset = layer => gl.polygonOffset(...layerPolygonOffset(layer));
 
     const drawHandle = h => {
         if (!h) return;

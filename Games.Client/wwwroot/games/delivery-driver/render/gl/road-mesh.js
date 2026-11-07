@@ -25,6 +25,12 @@ const dim = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
 export const LAYER = { kerb: 0.04, surface: 0.06, junction: 0.08, reservation: 0.1, marking: 0.12, pavement: 0.14 };
 export const LAYER_ORDER = Object.keys(LAYER).sort((a, c) => LAYER[a] - LAYER[c]);
 LAYER_ORDER.forEach((k, i) => layerRanks.set(LAYER[k], i + 1));
+/**
+ * The polygon offset `[factor, units]` for a road layer (1 = lowest in `LAYER_ORDER`): a slope factor of -1 and -2 depth
+ * units, plus -2 more per layer above the first. Units are in depth-buffer steps, so the gap between two layers is the same
+ * 2 steps at any range, and it strictly grows with the layer number: a higher layer always wins the depth test.
+ */
+export const layerPolygonOffset = layer => [-1, -2 - 2 * layer];
 /** Sample spacing along an edge, metres. */
 export const STEP = 4;
 

@@ -48,6 +48,12 @@ export function corridorOf(quality) {
 
 /** Hysteresis (m) on the corridor edge and on the ground LOD edge: a chunk must move this far past it to swap. */
 export const HYSTERESIS = CHUNK_SIZE * 0.25;
+/**
+ * Hysteresis (m) on the road detail edge alone. The roads of a whole chunk swap at once (markings, pavements and crossings
+ * appear or vanish), and the chunk's distance follows the look-ahead target, which swings tens of metres when the vehicle
+ * turns, reverses or the zoom changes; twice the ground margin keeps a chunk on the edge from swapping back and forth.
+ */
+export const ROAD_HYSTERESIS = CHUNK_SIZE * 0.5;
 
 /**
  * Chunk coordinates worth building before the camera gets there: along the heading and along the planned route (flat
@@ -99,7 +105,7 @@ export function createFrameDriver({ world, cache, quality, radius, corridor = tr
     /** The road detail a chunk at distance `d` wants; `current` (its present level, if built) gives the hysteresis. */
     const roadLevelFor = (d, current) => {
         if (!corridor) return ROAD_DETAIL.full;
-        const edge = current === undefined ? reach : current === ROAD_DETAIL.coarse ? reach - HYSTERESIS : reach + HYSTERESIS;
+        const edge = current === undefined ? reach : current === ROAD_DETAIL.coarse ? reach - ROAD_HYSTERESIS : reach + ROAD_HYSTERESIS;
         return d < edge ? level : ROAD_DETAIL.coarse;
     };
     let ahead = [], aheadFrame = -1e9;

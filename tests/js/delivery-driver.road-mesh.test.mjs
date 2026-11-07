@@ -706,3 +706,49 @@ test('plan 0012 phase 5: long town streets draw a pavement exactly where lanePro
         assert.ok(one > 0 && one < colourOf(R.buildEdgeMesh(world, e, 2000), pav), `edge ${e.id} one side has fewer strips than both`);
     }
 });
+
+test('plan 0012 phase 6: road layer heights, draw layers and polygon offsets agree, and each higher layer wins the depth test', () => {
+    // heights: distinct and strictly ascending in LAYER_ORDER, each layer numbered from 1 in that order
+    for (let i = 0; i < R.LAYER_ORDER.length; i++) {
+        const name = R.LAYER_ORDER[i];
+        if (i > 0) assert.ok(R.LAYER[name] > R.LAYER[R.LAYER_ORDER[i - 1]], `${name} sits above ${R.LAYER_ORDER[i - 1]}`);
+        assert.equal(M.layerRanks.get(R.LAYER[name]), i + 1, `${name} is draw layer ${i + 1}`);
+    }
+    // offsets: the same slope factor, units strictly more negative (pulled nearer) per layer, a constant 2 steps apart
+    let prev = null;
+    for (let layer = 1; layer <= R.LAYER_ORDER.length; layer++) {
+        const [factor, units] = R.layerPolygonOffset(layer);
+        assert.equal(factor, -1);
+        if (prev) assert.equal(prev - units, 2, `layer ${layer} is 2 depth steps nearer than layer ${layer - 1}`);
+        prev = units;
+    }
+    // a real edge mesh groups its triangles by registered layers, lowest first (the order the renderer draws them in)
+    const e = firstEdge(x => x.cls === 'A' && x.len > 150 && !x.bridge && !x.tunnel);
+    const mesh = R.buildEdgeMesh(world, e, 2000);
+    assert.ok(mesh.groups && mesh.groups.length >= 2, 'surface, kerb and markings are separate draw groups');
+    mesh.groups.forEach((g, i) => { if (i > 0) assert.ok(g.layer > mesh.groups[i - 1].layer, 'groups ascend'); assert.ok(g.layer >= 1 && g.layer <= R.LAYER_ORDER.length, 'a registered layer'); });
+});
+
+test('plan 0012 phase 6: the corridor road detail is a pure function of distance outside the hysteresis band, and holds inside it', async () => {
+    const { createFrameDriver, corridorOf, ROAD_DETAIL, HYSTERESIS, ROAD_HYSTERESIS } = await import('../../Games.Client/wwwroot/games/delivery-driver/render/gl/chunk-build.js');
+    const { CHUNK_SIZE } = await import('../../Games.Client/wwwroot/games/delivery-driver/config.js');
+    assert.ok(ROAD_HYSTERESIS >= 2 * HYSTERESIS, 'the road detail edge has at least twice the ground margin');
+    for (const quality of [{ roadDetail: 240, roadLevel: 1 }, { roadDetail: 330, roadLevel: 2 }, { roadDetail: 480, roadLevel: 2 }]) {
+        const { reach, level } = corridorOf(quality);
+        const { roadLevelFor } = createFrameDriver({ world: null, cache: { hasTime: () => true }, quality, radius: 560 });
+        // outside the band the answer does not depend on the present level
+        for (const d of [0, reach * 0.5, reach - ROAD_HYSTERESIS - 1]) for (const cur of [undefined, ROAD_DETAIL.coarse, level]) assert.equal(roadLevelFor(d, cur), level, `d ${d} cur ${cur}`);
+        for (const d of [reach + ROAD_HYSTERESIS, reach + 2 * CHUNK_SIZE, 3000]) for (const cur of [undefined, ROAD_DETAIL.coarse, level]) assert.equal(roadLevelFor(d, cur), ROAD_DETAIL.coarse, `d ${d} cur ${cur}`);
+        // inside the band the present level holds
+        for (const d of [reach - ROAD_HYSTERESIS + 1, reach, reach + ROAD_HYSTERESIS - 1]) {
+            assert.equal(roadLevelFor(d, ROAD_DETAIL.coarse), ROAD_DETAIL.coarse, `coarse holds at ${d}`);
+            assert.equal(roadLevelFor(d, level), level, `detail holds at ${d}`);
+        }
+        // a chunk whose distance swings +-60 m about the edge swaps at most once (it used to swap on every swing)
+        let cur = level, swaps = 0;
+        for (let k = 0; k < 40; k++) { const next = roadLevelFor(reach + (k % 2 ? 60 : -60), cur); if (next !== cur) swaps++; cur = next; }
+        assert.ok(swaps <= 1, `${swaps} swaps for reach ${reach}`);
+        // the layers and the level agree: with the corridor off every chunk keeps the full level
+        assert.equal(createFrameDriver({ world: null, cache: { hasTime: () => true }, quality, radius: 560, corridor: false }).roadLevelFor(5000, ROAD_DETAIL.coarse), ROAD_DETAIL.full);
+    }
+});
