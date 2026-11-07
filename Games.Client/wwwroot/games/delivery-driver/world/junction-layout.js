@@ -118,6 +118,24 @@ export function mouthRadius(graph, node, year = 2100) {
     return layoutJunction(graph, node, year).reach;
 }
 
+/**
+ * Height of each arm of a layout at its mouth (where the edge strip stops), from `heightAt(edge, d)` (roadHeightAt), or null
+ * for an arm whose edge has no graded profile. The junction surface joins each arm at exactly this height (road-mesh.js).
+ */
+export function armMouthHeights(lay, heightAt) {
+    return lay.arms.map(a => (a.edge.z ? heightAt(a.edge, a.end === 'a' ? a.trim : a.edge.len - a.trim) : null));
+}
+
+/**
+ * The mean of a junction's arm mouth heights: the level the arms agree on, node.z (the ground-fitted node height) as the
+ * fallback. Measurement only (plan 0012 phase 4): the surface is still drawn at node.z, because the ground pad is graded to
+ * node.z and a ring at the arm mean shows the ground through it where the mean is lower.
+ */
+export function junctionLevel(node, lay, heightAt) {
+    const zs = armMouthHeights(lay, heightAt).filter(z => z !== null);
+    return zs.length ? zs.reduce((s, z) => s + z, 0) / zs.length : node.z;
+}
+
 // ---- neighbouring junctions --------------------------------------------------------------------------------------
 
 const nodeGrids = new WeakMap(); // graph -> { n (node count), cells }

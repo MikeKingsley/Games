@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGraph, ROAD_CLASS } from '../../Games.Client/wwwroot/games/delivery-driver/world/roadgraph.js';
 import {
-    layoutJunction, junctionSignature, trimFor, mouthRadius, polygonsOverlap, selfIntersects,
+    layoutJunction, junctionSignature, trimFor, mouthRadius, polygonsOverlap, selfIntersects, junctionLevel, armMouthHeights,
     CORNER_RADIUS, RING_CLASS, ringTierOf, RI_MIN, RI_MAX, MINI_RADIUS, TIGHT_TRIM,
 } from '../../Games.Client/wwwroot/games/delivery-driver/world/junction-layout.js';
 
@@ -414,4 +414,54 @@ test('plan 0011 phase 6: greybox roundabout pieces use their tier and the double
     }
     // the two rings do not overlap
     assert.ok(Math.hypot(l.n.x - r.n.x, l.n.y - r.n.y) > l.L.ring.ro + r.L.ring.ro);
+});
+
+// ---- plan 0012 phase 4: junctions and roundabouts on slopes -------------------------------------------------------
+import { roadHeightAt } from '../../Games.Client/wwwroot/games/delivery-driver/world/terrain.js';
+import { buildNodeMesh } from '../../Games.Client/wwwroot/games/delivery-driver/render/gl/road-mesh.js';
+
+/** Gives every arm edge of a star a graded profile `zAt(x, y)` sampled every 4 m, and the centre the short-landing height `zNode` (grading keeps only a few metres flat). */
+function gradeStar(g, c, zAt, zNode) {
+    for (const e of g.edges) {
+        const n = Math.ceil(e.len / 4) + 1, z = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+            const d = Math.min(e.len, i * 4), f = d / e.len;
+            z[i] = zAt(e.pts[0] + (e.pts[2] - e.pts[0]) * f, e.pts[1] + (e.pts[3] - e.pts[1]) * f);
+        }
+        e.z = z; e.zStep = 4;
+    }
+    c.z = zNode;
+}
+
+test('plan 0012 phase 4: a sloped crossroads and roundabout meet their arms at the arm heights, and junctionLevel is the arm mean', () => {
+    const tol = 0.15;
+    const cases = [
+        ['crossroads in a bowl (every arm climbs away from a short flat)', { junction: 'giveway' }, [{ deg: 0 }, { deg: 90 }, { deg: 180 }, { deg: 270 }], (x, y) => 0.05 * Math.hypot(x, y)],
+        ['crossroads on a cross slope', { junction: 'giveway' }, [{ deg: 0 }, { deg: 90 }, { deg: 180 }, { deg: 270 }], x => 0.04 * x + 3],
+        ['roundabout in a bowl', { junction: 'roundabout', roundaboutFrom: 0, ringRadius: 3.5 }, [{ deg: 0 }, { deg: 120 }, { deg: 240 }], (x, y) => 0.05 * Math.hypot(x, y)],
+        ['roundabout on a cross slope', { junction: 'roundabout', roundaboutFrom: 0, ringRadius: 3.5 }, [{ deg: 0 }, { deg: 90 }, { deg: 180 }, { deg: 270 }], x => 0.04 * x + 3],
+    ];
+    for (const [name, props, arms, zAt] of cases) {
+        const { g, c } = star(arms, props);
+        gradeStar(g, c, zAt, 0); // (grading keeps only a short landing flat, so node.z is off the arms at their trims: terrain.js, see the plan)
+        const L = layoutJunction(g, c, 2024);
+        const zs = armMouthHeights(L, roadHeightAt);
+        assert.ok(zs.every(z => z !== null), `${name}: every arm graded`);
+        const level = junctionLevel(c, L, roadHeightAt);
+        near(level, zs.reduce((s, z) => s + z, 0) / zs.length, 1e-9, `${name}: level is the mean of the arm heights`);
+        assert.ok(level >= Math.min(...zs) - 1e-9 && level <= Math.max(...zs) + 1e-9, `${name}: level between the arms`);
+        // the surface: the mouth corners of every arm sit at that arm's own height, so the arm strips and the surface meet exactly
+        g.index = { near: () => [] }; // (no neighbouring roads to keep the kerb bands off)
+        const mesh = buildNodeMesh({ graph: g }, c, 2024);
+        assert.ok(mesh, name);
+        const at = (x, y) => { for (let k = 0; k < mesh.positions.length; k += 3) if (Math.hypot(mesh.positions[k] - x, mesh.positions[k + 1] - y) < 1e-4) return mesh.positions[k + 2]; return null; };
+        L.arms.forEach((a, i) => {
+            for (const p of [a.mL, a.mR]) {
+                const z = at(p.x, p.y);
+                assert.ok(z !== null && Math.abs(z - zs[i]) < tol, `${name}: arm ${i} mouth corner ${z} vs arm ${zs[i]}`);
+            }
+        });
+        // bowl cases: all arms agree, so the whole junction agrees with them within tolerance
+        if (name.includes('bowl')) for (const z of zs) assert.ok(Math.abs(z - level) <= tol, `${name}: arm ${z} vs level ${level}`);
+    }
 });
