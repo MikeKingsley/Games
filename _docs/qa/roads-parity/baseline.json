@@ -21,46 +21,46 @@
         "samples": 28509,
         "tolerance": 0.15,
         "float": {
-          "count": 2942,
-          "edges": 131,
-          "max": 6.759,
+          "count": 1986,
+          "edges": 154,
+          "max": 6.354,
           "worst": {
-            "m": 6.76,
+            "m": 6.35,
             "edge": 18725,
             "cls": "A",
-            "x": 33705.5,
-            "y": -11245.8,
-            "at": "centre"
+            "x": 33700.4,
+            "y": -11241.4,
+            "at": "pavement"
           }
         },
         "sink": {
-          "count": 1667,
-          "edges": 72,
-          "max": 6.945,
+          "count": 958,
+          "edges": 66,
+          "max": 6.456,
           "worst": {
-            "m": 6.95,
+            "m": 6.46,
             "edge": 29607,
             "cls": "lane",
-            "x": 33701.9,
-            "y": -11256.6,
+            "x": 33698.4,
+            "y": -11251.3,
             "at": "kerb"
           }
         },
         "byOffset": {
           "centre": {
             "samples": 9503,
-            "float": 560,
-            "sink": 367
+            "float": 23,
+            "sink": 21
           },
           "kerb": {
             "samples": 9503,
-            "float": 696,
-            "sink": 374
+            "float": 20,
+            "sink": 25
           },
           "pavement": {
             "samples": 9503,
-            "float": 1686,
-            "sink": 926
+            "float": 1943,
+            "sink": 912
           }
         }
       },
@@ -68,24 +68,24 @@
         "samples": 28509,
         "tolerance": 0.15,
         "sink": {
-          "count": 44,
+          "count": 45,
           "edges": 7,
-          "max": 5.827,
+          "max": 5.457,
           "worst": {
-            "m": 5.83,
-            "edge": 29607,
-            "cls": "lane",
-            "x": 33700.4,
-            "y": -11257.8,
+            "m": 5.46,
+            "edge": 19262,
+            "cls": "B",
+            "x": 32998.5,
+            "y": -11682,
             "at": "pavement"
           }
         },
         "gap": {
-          "count": 3571,
-          "edges": 178,
-          "max": 5.726,
+          "count": 3377,
+          "edges": 193,
+          "max": 6.12,
           "worst": {
-            "m": 5.73,
+            "m": 6.12,
             "edge": 18725,
             "cls": "A",
             "x": 33700.4,
@@ -96,18 +96,18 @@
         "byOffset": {
           "centre": {
             "samples": 9503,
-            "sink": 9,
-            "gap": 982
+            "sink": 10,
+            "gap": 655
           },
           "kerb": {
             "samples": 9503,
             "sink": 15,
-            "gap": 1168
+            "gap": 1167
           },
           "pavement": {
             "samples": 9503,
             "sink": 20,
-            "gap": 1421
+            "gap": 1555
           }
         }
       },
@@ -116,13 +116,13 @@
         "arms": 1127,
         "noZ": 0,
         "tolerance": 0.15,
-        "mismatchedArms": 176,
-        "mismatchedNodes": 83,
-        "max": 1.899,
+        "mismatchedArms": 20,
+        "mismatchedNodes": 17,
+        "max": 1.185,
         "worst": {
-          "m": 1.9,
+          "m": -1.18,
           "node": 25670,
-          "edge": 33335,
+          "edge": 20328,
           "x": 34672.2,
           "y": -12647.6,
           "kind": "roundabout"
@@ -152,8 +152,8 @@
         "samples": 25896,
         "tolerance": 0.15,
         "float": {
-          "count": 2223,
-          "edges": 88,
+          "count": 1604,
+          "edges": 93,
           "max": 13.394,
           "worst": {
             "m": 13.39,
@@ -165,33 +165,33 @@
           }
         },
         "sink": {
-          "count": 659,
-          "edges": 44,
-          "max": 4.243,
+          "count": 431,
+          "edges": 53,
+          "max": 2.032,
           "worst": {
-            "m": 4.24,
-            "edge": 11783,
+            "m": 2.03,
+            "edge": 11902,
             "cls": "A",
-            "x": 13551.1,
-            "y": 7231.9,
+            "x": 13656.8,
+            "y": 7187.2,
             "at": "pavement"
           }
         },
         "byOffset": {
           "centre": {
             "samples": 8632,
-            "float": 365,
-            "sink": 222
+            "float": 24,
+            "sink": 2
           },
           "kerb": {
             "samples": 8632,
-            "float": 535,
-            "sink": 116
+            "float": 58,
+            "sink": 12
           },
           "pavement": {
             "samples": 8632,
-            "float": 1323,
-            "sink": 321
+            "float": 1522,
+            "sink": 417
           }
         }
       },
@@ -199,21 +199,21 @@
         "samples": 25896,
         "tolerance": 0.15,
         "sink": {
-          "count": 10,
-          "edges": 2,
-          "max": 1.431,
+          "count": 5,
+          "edges": 1,
+          "max": 0.499,
           "worst": {
-            "m": 1.43,
-            "edge": 11783,
+            "m": 0.5,
+            "edge": 26614,
             "cls": "A",
-            "x": 13545.3,
-            "y": 7233.5,
+            "x": 11623.9,
+            "y": 5460.5,
             "at": "pavement"
           }
         },
         "gap": {
-          "count": 2906,
-          "edges": 139,
+          "count": 2635,
+          "edges": 140,
           "max": 12.352,
           "worst": {
             "m": 12.35,
@@ -227,18 +227,18 @@
         "byOffset": {
           "centre": {
             "samples": 8632,
-            "sink": 3,
-            "gap": 756
+            "sink": 1,
+            "gap": 518
           },
           "kerb": {
             "samples": 8632,
-            "sink": 3,
-            "gap": 987
+            "sink": 2,
+            "gap": 901
           },
           "pavement": {
             "samples": 8632,
-            "sink": 4,
-            "gap": 1163
+            "sink": 2,
+            "gap": 1216
           }
         }
       },
@@ -247,8 +247,8 @@
         "arms": 1473,
         "noZ": 0,
         "tolerance": 0.15,
-        "mismatchedArms": 117,
-        "mismatchedNodes": 59,
+        "mismatchedArms": 18,
+        "mismatchedNodes": 12,
         "max": 3.15,
         "worst": {
           "m": -3.15,
@@ -283,8 +283,8 @@
         "samples": 21954,
         "tolerance": 0.15,
         "float": {
-          "count": 3836,
-          "edges": 86,
+          "count": 1783,
+          "edges": 84,
           "max": 9.384,
           "worst": {
             "m": 9.38,
@@ -296,33 +296,33 @@
           }
         },
         "sink": {
-          "count": 2159,
+          "count": 1151,
           "edges": 60,
-          "max": 8.292,
+          "max": 2.168,
           "worst": {
-            "m": 8.29,
-            "edge": 24885,
-            "cls": "lane",
-            "x": -18880.8,
-            "y": 13708.5,
+            "m": 2.17,
+            "edge": 24852,
+            "cls": "A",
+            "x": -17768.3,
+            "y": 12457.5,
             "at": "pavement"
           }
         },
         "byOffset": {
           "centre": {
             "samples": 7318,
-            "float": 995,
-            "sink": 473
+            "float": 59,
+            "sink": 0
           },
           "kerb": {
             "samples": 7318,
-            "float": 1212,
-            "sink": 646
+            "float": 123,
+            "sink": 2
           },
           "pavement": {
             "samples": 7318,
-            "float": 1629,
-            "sink": 1040
+            "float": 1601,
+            "sink": 1149
           }
         }
       },
@@ -336,15 +336,15 @@
           "worst": null
         },
         "gap": {
-          "count": 4239,
-          "edges": 123,
-          "max": 9.06,
+          "count": 2737,
+          "edges": 121,
+          "max": 8.889,
           "worst": {
-            "m": 9.06,
+            "m": 8.89,
             "edge": 6083,
             "cls": "street",
-            "x": -19302,
-            "y": 13350.1,
+            "x": -19270.4,
+            "y": 13422.1,
             "at": "pavement"
           }
         },
@@ -352,17 +352,17 @@
           "centre": {
             "samples": 7318,
             "sink": 0,
-            "gap": 1258
+            "gap": 525
           },
           "kerb": {
             "samples": 7318,
             "sink": 0,
-            "gap": 1440
+            "gap": 928
           },
           "pavement": {
             "samples": 7318,
             "sink": 0,
-            "gap": 1541
+            "gap": 1284
           }
         }
       },
@@ -371,15 +371,15 @@
         "arms": 635,
         "noZ": 0,
         "tolerance": 0.15,
-        "mismatchedArms": 96,
-        "mismatchedNodes": 46,
-        "max": 1.828,
+        "mismatchedArms": 4,
+        "mismatchedNodes": 4,
+        "max": 0.589,
         "worst": {
-          "m": 1.83,
-          "node": 6675,
-          "edge": 5683,
-          "x": -19975.4,
-          "y": 12613.4,
+          "m": 0.59,
+          "node": 7030,
+          "edge": 24421,
+          "x": -20646.6,
+          "y": 13713.4,
           "kind": "plain"
         }
       },
@@ -407,11 +407,11 @@
         "samples": 20205,
         "tolerance": 0.15,
         "float": {
-          "count": 2821,
-          "edges": 104,
-          "max": 23.908,
+          "count": 1742,
+          "edges": 110,
+          "max": 24.048,
           "worst": {
-            "m": 23.91,
+            "m": 24.05,
             "edge": 31730,
             "cls": "street",
             "x": -36575,
@@ -420,33 +420,33 @@
           }
         },
         "sink": {
-          "count": 1715,
-          "edges": 61,
-          "max": 2.046,
+          "count": 613,
+          "edges": 53,
+          "max": 0.845,
           "worst": {
-            "m": 2.05,
-            "edge": 22177,
+            "m": 0.84,
+            "edge": 22247,
             "cls": "B",
-            "x": -36792.8,
-            "y": 22424.8,
-            "at": "centre"
+            "x": -37184.1,
+            "y": 21765.5,
+            "at": "pavement"
           }
         },
         "byOffset": {
           "centre": {
             "samples": 6735,
-            "float": 546,
-            "sink": 323
+            "float": 4,
+            "sink": 1
           },
           "kerb": {
             "samples": 6735,
-            "float": 797,
-            "sink": 482
+            "float": 41,
+            "sink": 5
           },
           "pavement": {
             "samples": 6735,
-            "float": 1478,
-            "sink": 910
+            "float": 1697,
+            "sink": 607
           }
         }
       },
@@ -454,24 +454,17 @@
         "samples": 20205,
         "tolerance": 0.15,
         "sink": {
-          "count": 5,
-          "edges": 1,
-          "max": 0.67,
-          "worst": {
-            "m": 0.67,
-            "edge": 35762,
-            "cls": "street",
-            "x": -36489.9,
-            "y": 20758.6,
-            "at": "kerb"
-          }
+          "count": 0,
+          "edges": 0,
+          "max": 0,
+          "worst": null
         },
         "gap": {
-          "count": 3756,
-          "edges": 156,
-          "max": 23.327,
+          "count": 2810,
+          "edges": 151,
+          "max": 23.719,
           "worst": {
-            "m": 23.33,
+            "m": 23.72,
             "edge": 31730,
             "cls": "street",
             "x": -36579,
@@ -482,18 +475,18 @@
         "byOffset": {
           "centre": {
             "samples": 6735,
-            "sink": 1,
-            "gap": 1013
+            "sink": 0,
+            "gap": 570
           },
           "kerb": {
             "samples": 6735,
-            "sink": 2,
-            "gap": 1308
+            "sink": 0,
+            "gap": 983
           },
           "pavement": {
             "samples": 6735,
-            "sink": 2,
-            "gap": 1435
+            "sink": 0,
+            "gap": 1257
           }
         }
       },
@@ -502,13 +495,13 @@
         "arms": 572,
         "noZ": 0,
         "tolerance": 0.15,
-        "mismatchedArms": 171,
-        "mismatchedNodes": 75,
-        "max": 1.8,
+        "mismatchedArms": 8,
+        "mismatchedNodes": 5,
+        "max": 0.72,
         "worst": {
-          "m": -1.8,
+          "m": 0.72,
           "node": 25276,
-          "edge": 601,
+          "edge": 31123,
           "x": -36272.4,
           "y": 20638.6,
           "kind": "roundabout"
@@ -527,5 +520,5 @@
       }
     }
   },
-  "seconds": 8.3
+  "seconds": 15
 }

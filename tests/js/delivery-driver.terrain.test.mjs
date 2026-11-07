@@ -7,6 +7,7 @@ import { buildRegion, isLand, waterAt } from '../../Games.Client/wwwroot/games/d
 import {
     terrainHeight, waterLevel, groundZ, roadHeightAt, slopeAt, slopeFrom, groundNormal, gridHeight, GRID_N,
 } from '../../Games.Client/wwwroot/games/delivery-driver/world/terrain.js';
+import { edgeSpline } from '../../Games.Client/wwwroot/games/delivery-driver/world/junction-layout.js';
 import { pointAt } from '../../Games.Client/wwwroot/games/delivery-driver/world/geom.js';
 import { CHUNK_SIZE, WORLD_SCALE } from '../../Games.Client/wwwroot/games/delivery-driver/config.js';
 
@@ -186,7 +187,8 @@ test('bridge decks are straight between their abutments and clear the water', ()
         // anywhere a graded road crosses water, it is on a straight deck
         if (whole) continue;
         for (let k = 1; k < last; k++) {
-            const p = pointAt(e.pts, k * e.zStep);
+            // (the grading samples the spline the road is drawn on, mapped to polyline metres)
+            const spl = edgeSpline(e), p = spl ? spl.at((k * e.zStep * spl.length) / e.len) : pointAt(e.pts, k * e.zStep);
             if (waterAt(region, p.x, p.y) > 0) assert.ok(e.zBridges.some(([a, b]) => a < k && k < b), `edge ${e.id} sample ${k} over water`);
         }
     }
@@ -271,4 +273,43 @@ test('chunks carry a 17x17 height grid matching the ground and their neighbours;
     assert.ok(c.buildings.length && c.trees.length + c.lamps.length > 0);
     for (const b of c.buildings) assert.ok(Number.isFinite(b.z) && b.z <= groundZ(world, b.x, b.y) + 1e-9, `building ${b.id}`);
     for (const o of [...c.trees, ...c.lamps, ...c.signs, ...c.rocks]) assert.equal(o.z, groundZ(world, o.x, o.y));
+});
+
+test('plan 0012 phase 9: the ground and the graded profile follow the spline the road mesh draws, on a sparse-lane edge', async () => {
+    const { edgeSpline, layoutJunction, armMouthHeights } = await import('../../Games.Client/wwwroot/games/delivery-driver/world/junction-layout.js');
+    const { closestOnPoly } = await import('../../Games.Client/wwwroot/games/delivery-driver/world/geom.js');
+    // the open-road edge whose spline strays furthest from its baked polyline (no structure on it)
+    let best = null, bestOff = 0;
+    for (const e of graph.edges) {
+        if (!e.zPts || e.zones || e.len < 80 || !e.z) continue;
+        const spl = edgeSpline(e);
+        let off = 0;
+        for (let i = 0; i <= 20; i++) { const p = spl.at((spl.length * i) / 20); off = Math.max(off, closestOnPoly(e.pts, p.x, p.y).d); }
+        if (off > bestOff) { bestOff = off; best = e; }
+    }
+    assert.ok(best && bestOff > 2, `a sparse-lane edge exists (spline up to ${bestOff.toFixed(1)} m off its polyline)`);
+    const spl = edgeSpline(best), k = best.len / spl.length;
+    let checked = 0;
+    for (let s = 0.2 * spl.length; s <= 0.8 * spl.length; s += 1.5) {
+        const p = spl.at(s), d = s * k;
+        // (skip spots another road's carriageway is near: the ground there blends both)
+        const others = graph.index.near(p.x, p.y, 25).some(sg => sg.edge !== best.id);
+        if (others) continue;
+        const want = roadHeightAt(best, d);
+        // the graded profile is the height the surface drawn at the spline point has; the ground under the carriageway is it
+        assert.ok(Math.abs(groundZ(world, p.x, p.y) - want) < 0.05, `edge ${best.id} at ${d.toFixed(1)} m: ${groundZ(world, p.x, p.y)} vs ${want}`);
+        checked++;
+    }
+    assert.ok(checked >= 5, `${checked} spline points checked`);
+
+    // junctions: an arm is flat to its trim, so its mouth is at node.z (nodes with a bridge, tunnel or ramp arm excepted)
+    let arms = 0, off = 0;
+    for (const n of graph.nodes) {
+        if (n.edges.length < 3) continue;
+        const lay = layoutJunction(graph, n, 2024);
+        if (lay.arms.some(a => !a.edge.z || a.edge.zones)) continue;
+        for (const h of armMouthHeights(lay, roadHeightAt)) { arms++; if (Math.abs(h - n.z) > 0.15) off++; }
+    }
+    assert.ok(arms > 500, `${arms} plain arms`);
+    assert.ok(off <= arms * 0.03, `${off} of ${arms} arm mouths are over 0.15 m from node.z`);
 });

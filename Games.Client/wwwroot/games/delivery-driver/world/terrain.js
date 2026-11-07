@@ -7,7 +7,10 @@
 // generator's tor sites); river valleys cut down to each river's level; flat pads under towns; the river channels
 // themselves; and last a ramp down to the sea at the coastline (a beach, a cliff, or a quay wall in towns).
 import { inPolygon, isLand, moorAt, waterAt } from './region.js';
-import { ROAD_CLASS } from './roadgraph.js';
+import { ROAD_CLASS, createSegmentIndex } from './roadgraph.js';
+import { edgeSpline, layoutJunction } from './junction-layout.js';
+import { sampleAdaptive } from './road-spline.js';
+import { closestOnPoly } from './geom.js';
 import { sat } from '../sim/collision.js';
 import { seededRng, hashSeed, range, smoothNoise } from '../engine/rng.js';
 import { CHUNK_SIZE } from '../config.js';
@@ -652,7 +655,7 @@ function roadTarget(region, x, y, pin = null, land = undefined) {
 function townLength(region, e) {
     const n = Math.max(1, Math.ceil(e.len / 8));
     const xs = new Float64Array(n + 1), ys = new Float64Array(n + 1);
-    samplePolyline(e.pts, e.len, n, xs, ys);
+    sampleRoad(e, n, xs, ys);
     const t = prep(region);
     let on = 0;
     for (let i = 0; i <= n; i++) if (townPad(t, xs[i], ys[i], roadPad).w >= 1) on++;
@@ -669,6 +672,46 @@ function nodeTarget(region, x, y) {
     if (pin.on || !(waterAt(region, x, y) > 0)) return h;
     return Math.max(h, (waterLevel(region, x, y) ?? 0) + DECK_CLEARANCE);
 }
+
+/**
+ * Positions every `L/n` metres along the edge's spline (n + 1, both ends): the curve the road mesh draws (edgeSpline,
+ * mapped to polyline metres by the same ratio), so a graded sample sits under the surface it is the height of. Falls back
+ * to the polyline for an edge without a spline.
+ */
+function sampleRoad(e, n, xs, ys) {
+    const spl = edgeSpline(e);
+    if (!spl || !(spl.length > 0)) return samplePolyline(e.pts, e.len, n, xs, ys);
+    for (let i = 0; i <= n; i++) {
+        const p = spl.at((spl.length * i) / n);
+        xs[i] = p.x;
+        ys[i] = p.y;
+    }
+}
+
+/** A spline further than this from its polyline anywhere gets its own track for the height lookups (m). */
+const TRACK_TOL = 0.25;
+
+/**
+ * Sets `e.zPts` (flat x, y points) and `e.zPtsCum` (polyline metres at each, as `roadHeightAt` takes them) to a polyline
+ * that follows the edge's spline, or clears them when the baked polyline is already within TRACK_TOL of it. groundZ and
+ * its siblings look the road up on this track, so the height they read is the one the mesh draws at that spot.
+ */
+function setTrack(e) {
+    e.zPts = e.zPtsCum = null;
+    const spl = e.pts.length > 4 ? edgeSpline(e) : null;
+    if (!spl || !(spl.length > 0)) return;
+    const raw = sampleAdaptive(spl, { minStep: 1, maxStep: 8, tol: 0.05 });
+    let off = 0;
+    for (const p of raw) off = Math.max(off, closestOnPoly(e.pts, p.x, p.y).d);
+    if (off <= TRACK_TOL) return;
+    const k = e.len / spl.length, pts = new Float64Array(raw.length * 2), cum = new Float64Array(raw.length);
+    raw.forEach((p, i) => { pts[2 * i] = p.x; pts[2 * i + 1] = p.y; cum[i] = Math.min(e.len, p.s * k); });
+    e.zPts = pts;
+    e.zPtsCum = cum;
+}
+
+/** Distance along the edge's track of the point `u` (0 to 1) along its segment `seg`. */
+const trackAlong = (cum, seg, u) => cum[seg] + (cum[seg + 1] - cum[seg]) * u;
 
 /** Positions every `L/n` metres along a flat polyline (n + 1 of them, both ends included). */
 function samplePolyline(pts, len, n, xs, ys) {
@@ -729,9 +772,9 @@ function landUnder(region, e, n, linear) {
     if (hit && hit.n === n && hit.linear === linear) return hit;
     const step = e.len / n;
     const xs = new Float64Array(n + 1), ys = new Float64Array(n + 1), ground = new Float64Array(n + 1);
-    samplePolyline(e.pts, e.len, n, xs, ys);
+    sampleRoad(e, n, xs, ys);
     for (let i = 0; i <= n; i++) ground[i] = terrainHeight(region, xs[i], ys[i]);
-    const out = { n, linear, xs, ys, ground, land: null, pinned: null, runs: [] };
+    const out ={ n, linear, xs, ys, ground, land: null, pinned: null, runs: [] };
     if (!linear) {
         const land = new Float64Array(n + 1), pinned = new Uint8Array(n + 1), wet = new Uint8Array(n + 1), pin = { on: false };
         // samples on a bridge or tunnel span (baked spans): they leave the land and run straight between its ends
@@ -973,6 +1016,24 @@ export function gradeRoads(world) {
     }
 }
 
+/** Years whose junction layouts set the flat landings (the plainest and the fullest: the trim grows with a roundabout). */
+const LANDING_YEARS = [1950, 2100];
+
+/** The longest trim (m) of each junction arm over LANDING_YEARS, keyed `edge id * 2 + (0 at the a end, 1 at the b end)`. */
+function armTrims(graph) {
+    const trims = new Map();
+    for (const n of graph.nodes) {
+        if (n.edges.length < 3) continue;
+        for (const year of LANDING_YEARS) {
+            for (const arm of layoutJunction(graph, n, year).arms) {
+                const key = arm.edge.id * 2 + (arm.end === 'a' ? 0 : 1);
+                trims.set(key, Math.max(trims.get(key) ?? 0, arm.trim));
+            }
+        }
+    }
+    return trims;
+}
+
 function gradeNetwork(world) {
     const { region, graph } = world;
     const { nodes, edges } = graph;
@@ -988,16 +1049,23 @@ function gradeNetwork(world) {
         e.zones = zones.get(e.id) ?? null;
         e.underGround = !!e.zones?.some(zn => zn.kind === 'tunnel');
     }
+    // the height lookups follow the edges' splines (what the road mesh draws): a track and a spatial index of them
+    for (const e of edges) setTrack(e);
+    graph.roadIndex = createSegmentIndex({ edges: edges.map(e => ({ id: e.id, pts: e.zPts ?? [] })) });
     const landing = nodes.map(n => {
         if (n.edges.length >= 3) return Math.max(...n.edges.map(id => halfWidthOf(edges[id]))) + JUNCTION_FLAT;
         if (n.edges.length === 1 && (n.kind === 'depot' || n.kind === 'site' || n.kind === 'farm')) return YARD_FLAT;
         return 0;
     });
+    // each arm is flat to its junction's trim (where the junction surface meets the road strip), in the roundabout or
+    // signalled layout too, so the strip starts at the node's height instead of climbing before the mouth
+    const trims = armTrims(graph);
     const info = edges.map(e => {
         // a ferry, or an edge flagged a bridge as a whole (hand-made seeds; baked edges carry spans instead), is one
         // straight deck between its nodes
         const linear = e.cls === 'ferry' || (!!e.bridge && !Array.isArray(e.spans));
-        const la = linear ? 0 : Math.min(landing[e.a], 0.4 * e.len), lb = linear ? 0 : Math.min(landing[e.b], 0.4 * e.len);
+        const flatEnd = (id, end) => Math.min(Math.max(landing[id], trims.get(e.id * 2 + end) ?? 0), 0.4 * e.len);
+        const la = linear ? 0 : flatEnd(e.a, 0), lb = linear ? 0 : flatEnd(e.b, 1);
         const g = gradeLimit(region, e);
         // the stretch on a town pad stays on it (pinned in gradeEdge), so only the rest can climb
         const town = linear ? 0 : townLength(region, e);
@@ -1010,7 +1078,7 @@ function gradeNetwork(world) {
     for (const e of edges) {
         if (!e.bridge || e.cls === 'ferry') continue;
         const n = Math.max(1, Math.ceil(e.len / 2)), xs = new Float64Array(n + 1), ys = new Float64Array(n + 1);
-        samplePolyline(e.pts, e.len, n, xs, ys);
+        sampleRoad(e, n, xs, ys);
         let lvl = -Infinity;
         for (let i = 0; i <= n; i++) if (waterAt(region, xs[i], ys[i]) > 0) lvl = Math.max(lvl, waterLevel(region, xs[i], ys[i]) ?? 0);
         if (lvl > -Infinity) for (const id of [e.a, e.b]) target[id] = Math.max(target[id], lvl + DECK_CLEARANCE);
@@ -1289,6 +1357,31 @@ const SEPARATE = 2.5, SEPARATE_REACH = 3;
 export const STEP_UP = 1;
 
 /**
+ * Adds to the hit lists (from slot `m`) the nearest point of each edge within reach in `index`: on the baked polyline
+ * (`track` 0) or on the edge's spline track (`track` 1, only edges that have one). A hit is keyed `edge id * 2 + track`.
+ * Without `both` (not a vehicle) an edge with a spline track is read on the track alone. Returns the new count.
+ */
+function nearestHits(graph, index, x, y, track, both, m) {
+    for (const s of index.near(x, y, ROAD_REACH, near)) {
+        const e = graph.edges[s.edge];
+        if (!e.z || (track === 0 && e.zPts && !both)) continue;
+        const p = track ? e.zPts : e.pts, k = 2 * s.seg;
+        if (!p) continue;
+        const ax = p[k], ay = p[k + 1], dx = p[k + 2] - ax, dy = p[k + 3] - ay;
+        const l2 = dx * dx + dy * dy;
+        const u = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+        const d = Math.hypot(ax + dx * u - x, ay + dy * u - y);
+        if (d >= e.zHalf + BLEND_MAX) continue;
+        const key = s.edge * 2 + track;
+        let h = 0;
+        while (h < m && hitEdge[h] !== key) h++;
+        if (h === m) { hitEdge[m] = key; hitD[m] = Infinity; m++; }
+        if (d < hitD[h]) { hitD[h] = d; hitAlong[h] = trackAlong(track ? e.zPtsCum : e.zCum, s.seg, u); }
+    }
+    return m;
+}
+
+/**
  * Height of the surface vehicles drive on at (x, y). Roads are layered (plan 0009): the stretches of a road on a
  * bridge deck or in a tunnel (edge.zones) are surfaces of their own; everything else (roads on the ground, yard pads,
  * the land) blends into one ground surface, smoothly across road shoulders and yard edges. `hint` picks the layer:
@@ -1303,27 +1396,14 @@ export function groundZ(world, x, y, hint) {
     const T = world.terrain, region = world.region;
     const mesh = hint === false;
     if (!T || (mesh && waterAt(region, x, y) > 0)) return terrainHeight(region, x, y);
-    // each edge's nearest point within reach
-    let m = 0;
-    const graph = world.graph;
-    for (const s of graph.index.near(x, y, ROAD_REACH, near)) {
-        const e = graph.edges[s.edge];
-        if (!e.z) continue;
-        const p = e.pts, k = 2 * s.seg;
-        const ax = p[k], ay = p[k + 1], dx = p[k + 2] - ax, dy = p[k + 3] - ay;
-        const l2 = dx * dx + dy * dy;
-        const u = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
-        const d = Math.hypot(ax + dx * u - x, ay + dy * u - y);
-        if (d >= e.zHalf + BLEND_MAX) continue;
-        let h = 0;
-        while (h < m && hitEdge[h] !== s.edge) h++;
-        if (h === m) { hitEdge[m] = s.edge; hitD[m] = Infinity; m++; }
-        if (d < hitD[h]) { hitD[h] = d; hitAlong[h] = e.zCum[s.seg] + Math.sqrt(l2) * u; }
-    }
+    // each edge's nearest point within reach. The ground and the props see the road where it is drawn (its spline, when
+    // that strays from the baked polyline); a vehicle or a prop query (any hint but false) also sees the polyline, the line the traffic drives
+    const graph = world.graph, vehicle = typeof hint === 'number', both = hint !== false;
+    let m = nearestHits(graph, graph.index, x, y, 0, both, 0);
+    if (graph.roadIndex) m = nearestHits(graph, graph.roadIndex, x, y, 1, both, m);
     // two blends: the ground (every ground-level road, yard pad and the land), and for a vehicle (a numeric hint)
     // its own: only the roads and pads within SEPARATE of its height, so a road at another height beside or across
     // its carriageway never mixes into the surface it drives on
-    const vehicle = typeof hint === 'number';
     let layers = 0;
     const G = { wmax: 0, osum: 0, zsum: 0 }, V = { wmax: 0, osum: 0, zsum: 0 };
     // `out`: metres beyond the flat surface (<= 0 on it); the surface you are on dominates, nearer ones next, and a
@@ -1340,13 +1420,13 @@ export function groundZ(world, x, y, hint) {
     // deck that spills past its edge's end or its zone) is a layer of its own too, not ground
     let floor = Infinity;
     for (let h = 0; h < m; h++) {
-        const e = graph.edges[hitEdge[h]];
+        const e = graph.edges[hitEdge[h] >> 1];
         hitZ[h] = roadHeightAt(e, hitAlong[h]);
         hitLayer[h] = e.zones && zoneAt(e.zones, hitAlong[h]) ? 1 : 0;
         if (!hitLayer[h] && hitD[h] <= e.zHalf + SEPARATE_REACH) floor = Math.min(floor, hitZ[h]);
     }
     for (let h = 0; h < m; h++) {
-        const e = graph.edges[hitEdge[h]];
+        const e = graph.edges[hitEdge[h] >> 1];
         const blend = hitLayer[h] ? 0 : Math.min(BLEND_MAX, BLEND_MIN + 1.5 * Math.abs(sampleProfile(e.zFill, e.zStep, hitAlong[h])));
         if (vehicle && !hitLayer[h] && Math.abs(hitZ[h] - hint) <= SEPARATE) add(V, hitZ[h], hitD[h] - e.zHalf, blend, affinity(hitZ[h] - hint));
         if (hitLayer[h] || (hitD[h] <= e.zHalf && hitZ[h] > floor + SEPARATE)) {
@@ -1403,6 +1483,14 @@ export function groundZ(world, x, y, hint) {
     return best === -Infinity ? lowest : best;
 }
 
+/** Road segments within `r` of (x, y): each edge on its spline track when it has one, else on its baked polyline (`track` tells which). */
+function roadSegs(graph, x, y, r) {
+    const out = [];
+    for (const s of graph.index.near(x, y, r, near)) if (!graph.edges[s.edge].zPts) out.push({ edge: s.edge, seg: s.seg, track: 0 });
+    if (graph.roadIndex) for (const s of graph.roadIndex.near(x, y, r, near)) out.push({ edge: s.edge, seg: s.seg, track: 1 });
+    return out;
+}
+
 /**
  * The height of the ground-level road under or within `reach` m of the carriageway edge at (x, y), or null when none
  * is that close (the nearest road wins; decks and tunnels are not the ground). The ground mesh uses it to keep its
@@ -1411,16 +1499,16 @@ export function groundZ(world, x, y, hint) {
 export function roadDeckNear(world, x, y, reach) {
     const graph = world.graph;
     let best = null, bestOut = Infinity;
-    for (const s of graph.index.near(x, y, reach + ROAD_CLASS.M.width / 2 + 1, near)) {
+    for (const s of roadSegs(graph, x, y, reach + ROAD_CLASS.M.width / 2 + 1)) {
         const e = graph.edges[s.edge];
         if (!e.z) continue;
-        const p = e.pts, k = 2 * s.seg;
+        const p = s.track ? e.zPts : e.pts, k = 2 * s.seg;
         const ax = p[k], ay = p[k + 1], dx = p[k + 2] - ax, dy = p[k + 3] - ay;
         const l2 = dx * dx + dy * dy;
         const u = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
         const out = Math.hypot(ax + dx * u - x, ay + dy * u - y) - e.zHalf;
         if (!(out < reach && out < bestOut)) continue;
-        const along = e.zCum[s.seg] + Math.sqrt(l2) * u;
+        const along = trackAlong(s.track ? e.zPtsCum : e.zCum, s.seg, u);
         if (e.zones && zoneAt(e.zones, along)) continue;
         bestOut = out;
         best = roadHeightAt(e, along);
@@ -1440,16 +1528,16 @@ export function roadFillAt(edge, t) {
 export function tunnelFloorNear(world, x, y, reach) {
     const graph = world.graph;
     let best = null, bestOut = Infinity;
-    for (const s of graph.index.near(x, y, reach + ROAD_CLASS.M.width / 2 + 1, near)) {
+    for (const s of roadSegs(graph, x, y, reach + ROAD_CLASS.M.width / 2 + 1)) {
         const e = graph.edges[s.edge];
         if (!e.z || !e.underGround) continue;
-        const p = e.pts, k = 2 * s.seg;
+        const p = s.track ? e.zPts : e.pts, k = 2 * s.seg;
         const ax = p[k], ay = p[k + 1], dx = p[k + 2] - ax, dy = p[k + 3] - ay;
         const l2 = dx * dx + dy * dy;
         const u = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
         const out = Math.hypot(ax + dx * u - x, ay + dy * u - y) - e.zHalf;
         if (!(out < reach && out < bestOut)) continue;
-        const along = e.zCum[s.seg] + Math.sqrt(l2) * u;
+        const along = trackAlong(s.track ? e.zPtsCum : e.zCum, s.seg, u);
         const zone = zoneAt(e.zones, along);
         if (!zone || zone.kind !== 'tunnel') continue;
         bestOut = out;
@@ -1465,15 +1553,15 @@ export function tunnelFloorNear(world, x, y, reach) {
 export function decksAt(world, x, y, out = []) {
     out.length = 0;
     const graph = world.graph;
-    for (const s of graph.index.near(x, y, ROAD_CLASS.M.width / 2 + 2, near)) {
+    for (const s of roadSegs(graph, x, y, ROAD_CLASS.M.width / 2 + 2)) {
         const e = graph.edges[s.edge];
         if (!e.z || !e.zones) continue;
-        const p = e.pts, k = 2 * s.seg;
+        const p = s.track ? e.zPts : e.pts, k = 2 * s.seg;
         const ax = p[k], ay = p[k + 1], dx = p[k + 2] - ax, dy = p[k + 3] - ay;
         const l2 = dx * dx + dy * dy;
         const u = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
         if (Math.hypot(ax + dx * u - x, ay + dy * u - y) > e.zHalf + 0.8) continue;
-        const along = e.zCum[s.seg] + Math.sqrt(l2) * u;
+        const along = trackAlong(s.track ? e.zPtsCum : e.zCum, s.seg, u);
         const zone = zoneAt(e.zones, along);
         if (zone && zone.kind === 'deck') out.push(roadHeightAt(e, along));
     }

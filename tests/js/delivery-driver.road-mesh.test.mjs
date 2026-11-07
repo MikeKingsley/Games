@@ -159,7 +159,8 @@ test('ferries: dry approaches are road, the crossing is a dashed route on the wa
 });
 
 test('junctions: roundabouts get an island above the node, ordinary nodes with 3+ roads a patch, dead ends nothing', () => {
-    const ra = graph.nodes.find(n => n.junction === 'roundabout');
+    // (a ring with a raised island: a mini-roundabout is a flat disc, and with the arms flat to the junction trim its mesh no longer stands above the node)
+    const ra = graph.nodes.find(n => n.junction === 'roundabout' && layoutJunction(graph, n, 2020).islands.some(i => i.kind === 'island'));
     const mesh = R.buildNodeMesh(world, ra, 2020);
     assert.ok(mesh);
     const bb = M.meshBounds(mesh);
