@@ -1,0 +1,626 @@
+{
+  "year": 2024,
+  "tolerance": 0.15,
+  "step": 6,
+  "radius": 1500,
+  "assumptions": [
+    "sink/float compares edge.z + LAYER.surface with groundZ(world, x, y, false) (the exact ground blend), not the interpolated chunk ground mesh grid",
+    "sink/float samples ground-level edges outside junction trims and deck/tunnel zones, at centreline, kerb edge and pavement outer edge",
+    "marking and pavement presence is re-derived from road-mesh.js rules (full detail) and laneProfile, not read from vertex data"
+  ],
+  "towns": {
+    "exeter": {
+      "box": {
+        "minX": 32703.914284851955,
+        "maxX": 35703.914284851955,
+        "minY": -13574.680800000144,
+        "maxY": -10574.680800000144
+      },
+      "sinkFloat": {
+        "edges": 725,
+        "samples": 28509,
+        "tolerance": 0.15,
+        "float": {
+          "count": 2942,
+          "edges": 131,
+          "max": 6.759,
+          "worst": {
+            "m": 6.76,
+            "edge": 18725,
+            "cls": "A",
+            "x": 33705.5,
+            "y": -11245.8,
+            "at": "centre"
+          }
+        },
+        "sink": {
+          "count": 1667,
+          "edges": 72,
+          "max": 6.945,
+          "worst": {
+            "m": 6.95,
+            "edge": 29607,
+            "cls": "lane",
+            "x": 33701.9,
+            "y": -11256.6,
+            "at": "kerb"
+          }
+        },
+        "byOffset": {
+          "centre": {
+            "samples": 9503,
+            "float": 560,
+            "sink": 367
+          },
+          "kerb": {
+            "samples": 9503,
+            "float": 696,
+            "sink": 374
+          },
+          "pavement": {
+            "samples": 9503,
+            "float": 1686,
+            "sink": 926
+          }
+        }
+      },
+      "junctions": {
+        "junctions": 331,
+        "arms": 1127,
+        "noZ": 0,
+        "tolerance": 0.15,
+        "mismatchedArms": 176,
+        "mismatchedNodes": 83,
+        "max": 1.899,
+        "worst": {
+          "m": 1.9,
+          "node": 25670,
+          "edge": 33335,
+          "x": 34672.2,
+          "y": -12647.6,
+          "kind": "roundabout"
+        }
+      },
+      "markings": {
+        "edges": 761,
+        "structureEdgesWithPavementRule": 56,
+        "features": {
+          "pavement": {
+            "extra": 28,
+            "missing": 92
+          }
+        },
+        "examples": {
+          "pavement:missing": [
+            {
+              "edge": 18739,
+              "cls": "street",
+              "x": 33726.7,
+              "y": -11825.5
+            },
+            {
+              "edge": 18739,
+              "cls": "street",
+              "x": 33726.7,
+              "y": -11825.5
+            },
+            {
+              "edge": 18748,
+              "cls": "A",
+              "x": 34137.5,
+              "y": -12138.7
+            },
+            {
+              "edge": 18751,
+              "cls": "street",
+              "x": 34143.6,
+              "y": -12158
+            },
+            {
+              "edge": 18753,
+              "cls": "street",
+              "x": 34145.9,
+              "y": -12575.2
+            }
+          ],
+          "pavement:extra": [
+            {
+              "edge": 18958,
+              "cls": "A",
+              "x": 34040.9,
+              "y": -11332.7
+            },
+            {
+              "edge": 18958,
+              "cls": "A",
+              "x": 34040.9,
+              "y": -11332.7
+            },
+            {
+              "edge": 19393,
+              "cls": "A",
+              "x": 34051.3,
+              "y": -11362.6
+            },
+            {
+              "edge": 19393,
+              "cls": "A",
+              "x": 34051.3,
+              "y": -11362.6
+            },
+            {
+              "edge": 19429,
+              "cls": "A",
+              "x": 34051.3,
+              "y": -11362.6
+            }
+          ]
+        },
+        "total": {
+          "extra": 28,
+          "missing": 92
+        }
+      }
+    },
+    "plymouth": {
+      "box": {
+        "minX": 11149.889839537955,
+        "maxX": 14149.889839537955,
+        "minY": 5383.231499999868,
+        "maxY": 8383.231499999867
+      },
+      "sinkFloat": {
+        "edges": 879,
+        "samples": 25896,
+        "tolerance": 0.15,
+        "float": {
+          "count": 2223,
+          "edges": 88,
+          "max": 13.394,
+          "worst": {
+            "m": 13.39,
+            "edge": 11774,
+            "cls": "B",
+            "x": 12207.6,
+            "y": 7332.3,
+            "at": "pavement"
+          }
+        },
+        "sink": {
+          "count": 659,
+          "edges": 44,
+          "max": 4.243,
+          "worst": {
+            "m": 4.24,
+            "edge": 11783,
+            "cls": "A",
+            "x": 13551.1,
+            "y": 7231.9,
+            "at": "pavement"
+          }
+        },
+        "byOffset": {
+          "centre": {
+            "samples": 8632,
+            "float": 365,
+            "sink": 222
+          },
+          "kerb": {
+            "samples": 8632,
+            "float": 535,
+            "sink": 116
+          },
+          "pavement": {
+            "samples": 8632,
+            "float": 1323,
+            "sink": 321
+          }
+        }
+      },
+      "junctions": {
+        "junctions": 402,
+        "arms": 1473,
+        "noZ": 0,
+        "tolerance": 0.15,
+        "mismatchedArms": 117,
+        "mismatchedNodes": 59,
+        "max": 3.15,
+        "worst": {
+          "m": -3.15,
+          "node": 25514,
+          "edge": 33020,
+          "x": 12895.2,
+          "y": 5497,
+          "kind": "roundabout"
+        }
+      },
+      "markings": {
+        "edges": 904,
+        "structureEdgesWithPavementRule": 32,
+        "features": {
+          "pavement": {
+            "extra": 62,
+            "missing": 75
+          }
+        },
+        "examples": {
+          "pavement:missing": [
+            {
+              "edge": 11506,
+              "cls": "B",
+              "x": 12456.6,
+              "y": 7193.8
+            },
+            {
+              "edge": 11506,
+              "cls": "B",
+              "x": 12456.6,
+              "y": 7193.8
+            },
+            {
+              "edge": 11622,
+              "cls": "B",
+              "x": 12579.2,
+              "y": 7283.2
+            },
+            {
+              "edge": 11623,
+              "cls": "street",
+              "x": 12955.1,
+              "y": 7027.4
+            },
+            {
+              "edge": 11623,
+              "cls": "street",
+              "x": 12955.1,
+              "y": 7027.4
+            }
+          ],
+          "pavement:extra": [
+            {
+              "edge": 11660,
+              "cls": "A",
+              "x": 12131.7,
+              "y": 6332.2
+            },
+            {
+              "edge": 11660,
+              "cls": "A",
+              "x": 12131.7,
+              "y": 6332.2
+            },
+            {
+              "edge": 11850,
+              "cls": "A",
+              "x": 13282.4,
+              "y": 7202.7
+            },
+            {
+              "edge": 22130,
+              "cls": "A",
+              "x": 11404.9,
+              "y": 5791.1
+            },
+            {
+              "edge": 22130,
+              "cls": "A",
+              "x": 11404.9,
+              "y": 5791.1
+            }
+          ]
+        },
+        "total": {
+          "extra": 62,
+          "missing": 75
+        }
+      }
+    },
+    "truro": {
+      "box": {
+        "minX": -21007.666671103856,
+        "maxX": -18007.666671103856,
+        "minY": 11591.96160000013,
+        "maxY": 14591.96160000013
+      },
+      "sinkFloat": {
+        "edges": 399,
+        "samples": 21954,
+        "tolerance": 0.15,
+        "float": {
+          "count": 3836,
+          "edges": 86,
+          "max": 9.384,
+          "worst": {
+            "m": 9.38,
+            "edge": 5272,
+            "cls": "street",
+            "x": -19443.6,
+            "y": 13148.2,
+            "at": "pavement"
+          }
+        },
+        "sink": {
+          "count": 2159,
+          "edges": 60,
+          "max": 8.292,
+          "worst": {
+            "m": 8.29,
+            "edge": 24885,
+            "cls": "lane",
+            "x": -18880.8,
+            "y": 13708.5,
+            "at": "pavement"
+          }
+        },
+        "byOffset": {
+          "centre": {
+            "samples": 7318,
+            "float": 995,
+            "sink": 473
+          },
+          "kerb": {
+            "samples": 7318,
+            "float": 1212,
+            "sink": 646
+          },
+          "pavement": {
+            "samples": 7318,
+            "float": 1629,
+            "sink": 1040
+          }
+        }
+      },
+      "junctions": {
+        "junctions": 189,
+        "arms": 635,
+        "noZ": 0,
+        "tolerance": 0.15,
+        "mismatchedArms": 96,
+        "mismatchedNodes": 46,
+        "max": 1.828,
+        "worst": {
+          "m": 1.83,
+          "node": 6675,
+          "edge": 5683,
+          "x": -19975.4,
+          "y": 12613.4,
+          "kind": "plain"
+        }
+      },
+      "markings": {
+        "edges": 412,
+        "structureEdgesWithPavementRule": 18,
+        "features": {
+          "pavement": {
+            "extra": 10,
+            "missing": 39
+          }
+        },
+        "examples": {
+          "pavement:missing": [
+            {
+              "edge": 5236,
+              "cls": "street",
+              "x": -19866.6,
+              "y": 13188.4
+            },
+            {
+              "edge": 5243,
+              "cls": "street",
+              "x": -19340.4,
+              "y": 13073.9
+            },
+            {
+              "edge": 5243,
+              "cls": "street",
+              "x": -19340.4,
+              "y": 13073.9
+            },
+            {
+              "edge": 5322,
+              "cls": "street",
+              "x": -19529.3,
+              "y": 13208.4
+            },
+            {
+              "edge": 5334,
+              "cls": "street",
+              "x": -19695.9,
+              "y": 13011.2
+            }
+          ],
+          "pavement:extra": [
+            {
+              "edge": 31272,
+              "cls": "A",
+              "x": -20104.7,
+              "y": 13219.3
+            },
+            {
+              "edge": 31272,
+              "cls": "A",
+              "x": -20104.7,
+              "y": 13219.3
+            },
+            {
+              "edge": 31279,
+              "cls": "A",
+              "x": -20200.1,
+              "y": 13192.6
+            },
+            {
+              "edge": 31279,
+              "cls": "A",
+              "x": -20200.1,
+              "y": 13192.6
+            },
+            {
+              "edge": 31293,
+              "cls": "A",
+              "x": -20156.5,
+              "y": 13201.5
+            }
+          ]
+        },
+        "total": {
+          "extra": 10,
+          "missing": 39
+        }
+      }
+    },
+    "penzance": {
+      "box": {
+        "minX": -38550.6,
+        "maxX": -35550.6,
+        "minY": 19326.7,
+        "maxY": 22326.7
+      },
+      "sinkFloat": {
+        "edges": 359,
+        "samples": 20205,
+        "tolerance": 0.15,
+        "float": {
+          "count": 2821,
+          "edges": 104,
+          "max": 23.908,
+          "worst": {
+            "m": 23.91,
+            "edge": 31730,
+            "cls": "street",
+            "x": -36575,
+            "y": 21045,
+            "at": "kerb"
+          }
+        },
+        "sink": {
+          "count": 1715,
+          "edges": 61,
+          "max": 2.046,
+          "worst": {
+            "m": 2.05,
+            "edge": 22177,
+            "cls": "B",
+            "x": -36792.8,
+            "y": 22424.8,
+            "at": "centre"
+          }
+        },
+        "byOffset": {
+          "centre": {
+            "samples": 6735,
+            "float": 546,
+            "sink": 323
+          },
+          "kerb": {
+            "samples": 6735,
+            "float": 797,
+            "sink": 482
+          },
+          "pavement": {
+            "samples": 6735,
+            "float": 1478,
+            "sink": 910
+          }
+        }
+      },
+      "junctions": {
+        "junctions": 163,
+        "arms": 572,
+        "noZ": 0,
+        "tolerance": 0.15,
+        "mismatchedArms": 171,
+        "mismatchedNodes": 75,
+        "max": 1.8,
+        "worst": {
+          "m": -1.8,
+          "node": 25276,
+          "edge": 601,
+          "x": -36272.4,
+          "y": 20638.6,
+          "kind": "roundabout"
+        }
+      },
+      "markings": {
+        "edges": 373,
+        "structureEdgesWithPavementRule": 22,
+        "features": {
+          "pavement": {
+            "extra": 12,
+            "missing": 40
+          }
+        },
+        "examples": {
+          "pavement:missing": [
+            {
+              "edge": 48,
+              "cls": "street",
+              "x": -36599.6,
+              "y": 21142.3
+            },
+            {
+              "edge": 48,
+              "cls": "street",
+              "x": -36599.6,
+              "y": 21142.3
+            },
+            {
+              "edge": 140,
+              "cls": "street",
+              "x": -36873.3,
+              "y": 21025.5
+            },
+            {
+              "edge": 246,
+              "cls": "street",
+              "x": -37129.8,
+              "y": 21186.1
+            },
+            {
+              "edge": 246,
+              "cls": "street",
+              "x": -37129.8,
+              "y": 21186.1
+            }
+          ],
+          "pavement:extra": [
+            {
+              "edge": 31118,
+              "cls": "A",
+              "x": -37427.5,
+              "y": 21337.8
+            },
+            {
+              "edge": 31118,
+              "cls": "A",
+              "x": -37427.5,
+              "y": 21337.8
+            },
+            {
+              "edge": 31119,
+              "cls": "A",
+              "x": -37427.5,
+              "y": 21337.8
+            },
+            {
+              "edge": 31119,
+              "cls": "A",
+              "x": -37427.5,
+              "y": 21337.8
+            },
+            {
+              "edge": 31122,
+              "cls": "A",
+              "x": -36214.1,
+              "y": 20632.5
+            }
+          ]
+        },
+        "total": {
+          "extra": 12,
+          "missing": 40
+        }
+      }
+    }
+  },
+  "seconds": 7
+}
