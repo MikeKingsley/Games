@@ -149,19 +149,19 @@ Effort: medium
 `solver.js` (abstract pull/push model, `solveAbstract`, `solveLevel`, `applyOps`), `levels.js` (`levelParams`, `generateLevel`, deterministic from level number; classic -> long/ladder layouts, stuck wagons from level 15), `logic.js`, `autoplay.js`. Verified against the real sim: autoplaying the solution for 12 levels wins with uncouplings == par. Levels 1-200 generate in about 2 s total. Phase 5 should use `buildSetup(level)`, `checkWin`, `movesOf`, `starsFor`, and `level.solution` for hints. 14 new tests; `npm test` all pass.
 
 ## Phase 5: SVG renderer and input
-Status: Not started
+Status: Complete
 Depends on: 3, 4
 Files: Games.Client/wwwroot/games/inglenook/render.js, Games.Client/wwwroot/games/inglenook/ui.js, Games.Client/wwwroot/games/inglenook/index.js, Games.Client/wwwroot/games/inglenook/styles.css
 Model: sonnet
 Effort: medium
 
-- [ ] Implement `render.js`: draw the static board (baize/grass, sleepers, rails, buffer stops with lamps, scenery: goods shed, signal box, water tower, fence) from the layout geometry, and the dynamic layer (shunter, wagons with colour and number, couplings with tappable hook hit areas, point blades with tappable switch levers) as SVG elements updated each frame.
-- [ ] Draw period details: a generic 1960s diesel shunter (blue/green livery, no logos), 16-ton mineral wagons, vans, open wagons and tank wagons in muted liveries, plain `B 482113`-style numbers. Wagon colours must stay distinguishable (also by number and a small shape marker) for colour-blind safety.
-- [ ] Implement `ui.js`: HUD with level number, moves, par, stars, goal strip (target wagon order and a tick when matched), Forward / Stop / Reverse buttons, Undo, Reset, Skip level, Mute, and a win overlay with stars and Next level.
-- [ ] Input: tap point levers and coupling hooks (44px hit areas), keyboard W/S/↑/↓ for reverse/forward, Space for stop, 1-9 to flip points, U for undo, R for reset; tap-to-stop on the board background.
-- [ ] Wire `index.js`: fixed-timestep loop (60 Hz) driving `sim.step`, level load from progress, win detection, `onReward(stars)` on completion, `unmount` cleanup (cancel rAF, remove listeners).
-- [ ] Undo is implemented by snapshotting the sim state before each coupling/uncoupling/point change (cap of 50 snapshots); Reset restores the level start.
-- [ ] Add the `window.__ig` debug hook (only when `options.debug`): `state`, `level`, `solve()` (hint), `tryMove(script)`, `winNow()` for e2e.
+- ✅ Implement `render.js`: draw the static board (baize/grass, sleepers, rails, buffer stops with lamps, scenery: goods shed, signal box, water tower, fence) from the layout geometry, and the dynamic layer (shunter, wagons with colour and number, couplings with tappable hook hit areas, point blades with tappable switch levers) as SVG elements updated each frame.
+- ✅ Draw period details: a generic 1960s diesel shunter (blue/green livery, no logos), 16-ton mineral wagons, vans, open wagons and tank wagons in muted liveries, plain `B 482113`-style numbers. Wagon colours must stay distinguishable (also by number and a small shape marker) for colour-blind safety.
+- ✅ Implement `ui.js`: HUD with level number, moves, par, stars, goal strip (target wagon order and a tick when matched), Forward / Stop / Reverse buttons, Undo, Reset, Skip level, Mute, and a win overlay with stars and Next level.
+- ✅ Input: tap point levers and coupling hooks (44px hit areas), keyboard W/S/↑/↓ for reverse/forward, Space for stop, 1-9 to flip points, U for undo, R for reset; tap-to-stop on the board background.
+- ✅ Wire `index.js`: fixed-timestep loop (60 Hz) driving `sim.step`, level load from progress, win detection, `onReward(stars)` on completion, `unmount` cleanup (cancel rAF, remove listeners).
+- ✅ Undo is implemented by snapshotting the sim state before each coupling/uncoupling/point change (cap of 50 snapshots); Reset restores the level start.
+- ✅ Add the `window.__ig` debug hook (only when `options.debug`): `state`, `level`, `solve()` (hint), `tryMove(script)`, `winNow()` for e2e.
 
 ### Verification Plan
 - `npm test` passes.
@@ -169,7 +169,7 @@ Effort: medium
 - Launch via the `run` workflow: start the app, open `/play/inglenook`, take a screenshot of level 1, confirm the board, goal strip and controls render without console errors (Playwright MCP or Edge).
 
 ### Phase Summary
-_(write when phase completes)_
+`render.js` (track, scenery, period wagons/shunter, point levers and coupling hooks, per-frame update), `ui.js` (HUD, goal strip, drive buttons, toast, win panel), `index.js` (fixed 60 Hz loop, undo snapshots, win detection, progress save, keys W/S/arrows/Space/U/R/M/1-9, `window.__ig` debug hook with `solve()`), `styles.css`. Verified in the browser at localhost: level 1 and level 61 render, a real click on a point lever plus Forward coupled the loco, `__ig.solve()` wins with 3 stars and moves = par. Only console error is the service-worker script fetch in the dev server (not from this game). Sound hook point: `listeners`/`handleEvents` in `index.js` (phase 6).
 
 ## Phase 6: Audio, progress, e2e and docs
 Status: Not started

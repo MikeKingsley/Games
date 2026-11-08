@@ -3,37 +3,140 @@
     inset: 0;
     display: flex;
     flex-direction: column;
-    background: #2f5d34;
+    background: #2a4d2c;
     color: #f4efe0;
     font-family: system-ui, sans-serif;
     user-select: none;
+    -webkit-user-select: none;
     touch-action: manipulation;
+    overflow: hidden;
 }
 
 .ig-hud {
     display: flex;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 6px 14px;
     align-items: center;
-    padding: 8px 12px 8px 64px; /* room for the shell gear at top-left */
-    background: rgba(0, 0, 0, 0.35);
-    font-size: 16px;
+    padding: 6px 12px 6px 64px; /* room for the shell gear at top-left */
+    background: rgba(0, 0, 0, 0.4);
+    font-size: 15px;
 }
 
-.ig-title { font-weight: 700; margin-right: auto; }
+.ig-title { font-weight: 800; letter-spacing: 0.02em; margin-right: auto; }
+.ig-level { font-weight: 700; }
+.ig-best { color: #ffd966; }
 
-.ig-board { flex: 1; min-height: 0; width: 100%; display: block; }
+.ig-goalbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 6px 12px;
+    background: rgba(0, 0, 0, 0.25);
+    font-size: 14px;
+}
+
+.ig-goalstrip { display: inline-flex; gap: 4px; }
+.ig-goalok { color: #7ee07e; font-size: 22px; font-weight: 800; min-width: 1ch; }
+
+.ig-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    min-width: 46px;
+    justify-content: center;
+    border-radius: 6px;
+    border: 2px solid rgba(0, 0, 0, 0.5);
+    color: #fff;
+    font-size: 17px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+.ig-chip-shape { width: 14px; height: 14px; }
+
+.ig-board {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    display: block;
+    touch-action: manipulation;
+}
+
+.ig-point, .ig-hook { cursor: pointer; }
+.ig-point:hover circle:nth-child(2) { stroke: #ffdf50; }
+
+.ig-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.ig-tools { display: flex; gap: 6px; margin-left: 12px; }
 
 .ig-btn {
     min-width: 44px;
     min-height: 44px;
     padding: 0 14px;
     border: 0;
-    border-radius: 8px;
+    border-radius: 10px;
     background: #e8e0c8;
     color: #222;
     font: inherit;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
 }
 
 .ig-btn:active { transform: translateY(1px); }
+.ig-btn:focus-visible { outline: 3px solid #ffdf50; outline-offset: 2px; }
+.ig-small { font-size: 14px; padding: 0 12px; }
+
+.ig-drive { min-width: 120px; min-height: 52px; font-size: 18px; background: #cdd8e4; }
+.ig-drive.on { background: #ffdf50; }
+.ig-stop { background: #e2b4ad; }
+.ig-stop.on { background: #ff8a7a; }
+
+.ig-toast {
+    position: absolute;
+    left: 50%;
+    bottom: 96px;
+    transform: translateX(-50%);
+    max-width: 90%;
+    padding: 8px 16px;
+    border-radius: 10px;
+    background: rgba(20, 20, 20, 0.88);
+    color: #fff;
+    font-size: 15px;
+    text-align: center;
+    pointer-events: none;
+}
+
+.ig-toast[hidden], .ig-win[hidden] { display: none; }
+
+.ig-win {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(360px, 90%);
+    padding: 20px;
+    border-radius: 16px;
+    background: rgba(20, 30, 20, 0.94);
+    border: 2px solid #ffdf50;
+    text-align: center;
+}
+
+.ig-win h2 { margin: 0 0 6px; font-size: 24px; }
+.ig-winstars { font-size: 40px; color: #ffd966; letter-spacing: 6px; }
+.ig-winbuttons { display: flex; gap: 10px; justify-content: center; margin-top: 12px; }
+.ig-next { background: #ffdf50; padding: 0 18px; }
+
+@media (max-width: 560px) {
+    .ig-goallabel { flex-basis: 100%; }
+    .ig-drive { min-width: 96px; font-size: 16px; }
+    .ig-tools { margin-left: 0; }
+}
