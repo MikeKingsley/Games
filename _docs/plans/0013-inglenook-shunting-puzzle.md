@@ -172,18 +172,21 @@ Effort: medium
 `render.js` (track, scenery, period wagons/shunter, point levers and coupling hooks, per-frame update), `ui.js` (HUD, goal strip, drive buttons, toast, win panel), `index.js` (fixed 60 Hz loop, undo snapshots, win detection, progress save, keys W/S/arrows/Space/U/R/M/1-9, `window.__ig` debug hook with `solve()`), `styles.css`. Verified in the browser at localhost: level 1 and level 61 render, a real click on a point lever plus Forward coupled the loco, `__ig.solve()` wins with 3 stars and moves = par. Only console error is the service-worker script fetch in the dev server (not from this game). Sound hook point: `listeners`/`handleEvents` in `index.js` (phase 6).
 
 ## Phase 6: Audio, progress, e2e and docs
-Status: Not started
+Status: Complete
 Depends on: 5
 Files: Games.Client/wwwroot/games/inglenook/audio.js, Games.Client/wwwroot/games/inglenook/index.js, tests/e2e/inglenook.spec.mjs, tests/js/inglenook.save.test.mjs, README.md, _docs/code-docs/
 Model: sonnet
 Effort: medium
 
-- [ ] Implement `audio.js`: WebAudio synth only: diesel idle rumble that rises with speed, coupling clank, buffer thump, point click, success whistle; honour `soundEnabled` and the in-game Mute; resume the AudioContext on the first gesture.
-- [ ] Implement progress save in `logic.js`/`index.js`: `{ level, best: { [n]: { stars, moves } }, muted }` via `loadProgress`/`saveProgress`, tolerant of missing or malformed data; unit test in `tests/js/inglenook.save.test.mjs`.
-- [ ] Add `tests/e2e/inglenook.spec.mjs`: open `/play/inglenook`, use `window.__ig.solve()` to apply the solver's moves via the real controls where practical (or `winNow()` as a fallback), assert the win overlay and stars appear, assert Next level loads level 2 and Reset restores it.
-- [ ] Phone fit: check the board and controls at a phone-size viewport (add Inglenook to the existing phone-fit pattern or a dedicated check in the new spec); fix any overflow.
-- [ ] Add an **Inglenook** section to `README.md`: how to play, controls table, difficulty curve, folder layout, debug hook, the 1960s setting and the no-real-logos note.
-- [ ] Run the `doc-code`-equivalent pass is not needed (JS only); instead confirm the README lists every new module.
+- ✅ Implement `audio.js`: WebAudio synth only: diesel idle rumble that rises with speed, coupling clank, buffer thump, point click, success whistle; honour `soundEnabled` and the in-game Mute; resume the AudioContext on the first gesture.
+- ✅ Implement progress save in `logic.js`/`index.js`: `{ level, best: { [n]: { stars, moves } }, muted }` via `loadProgress`/`saveProgress`, tolerant of missing or malformed data; unit test in `tests/js/inglenook.save.test.mjs`.
+- ✅ Add `tests/e2e/inglenook.spec.mjs`: open `/play/inglenook`, use `window.__ig.solve()` to apply the solver's moves via the real controls where practical (or `winNow()` as a fallback), assert the win overlay and stars appear, assert Next level loads level 2 and Reset restores it.
+- ✅ Phone fit: check the board and controls at a phone-size viewport (add Inglenook to the existing phone-fit pattern or a dedicated check in the new spec); fix any overflow.
+- ✅ Add an **Inglenook** section to `README.md`: how to play, controls table, difficulty curve, folder layout, debug hook, the 1960s setting and the no-real-logos note.
+- ✅ Run the `doc-code`-equivalent pass is not needed (JS only); instead confirm the README lists every new module.
+
+- **Assumption:** adding a second game made the Options page show two "Reset levels" rows, which broke the existing `animal-feeding.spec.mjs` click; the test now scopes the click to the Feed the Animals row. `main` has no shell `features` flag (it exists on the Delivery Driver branches), so the Hardcore button and Level/Reset rows still appear for Inglenook until that flag lands; harmless (Reset levels clears Inglenook progress).
+- The `doc-code` step is not applicable (no C# classes changed); the README lists every new module instead.
 
 ### Verification Plan
 - `npm test` passes.
@@ -191,10 +194,13 @@ Effort: medium
 - `npx playwright test tests/e2e/inglenook.spec.mjs` passes (unrelated Delivery Driver e2e failures are out of scope).
 
 ### Phase Summary
-_(write when phase completes)_
+Added `audio.js` (WebAudio diesel idle that follows speed, coupling clank, buffer thump, point click, win chime, resumed on first gesture), `normalizeProgress` in `logic.js` (3 tests), `tests/e2e/inglenook.spec.mjs` (10 tests: home tile and board, real clicks through point/couple/uncouple/undo, solve + win + Next/Reset + saved stars, level 61, six phone viewports), and the README section. Gates: `npm test` 100 pass, `dotnet test` 27 pass, full Playwright run 92 pass (after the one-line animal-feeding selector fix).
 
 ## Final Recap
-_(write when all phases complete: summary of the entire piece of work)_
+Inglenook is a new game in the Games shell: a top-down SVG 1960s UK goods-yard shunting puzzle with a diesel shunter, period wagons, tappable points and couplings, latching forward/reverse with auto-stop at buffers and auto-couple, undo/reset/skip, synth sound and saved stars. Levels are endless and seeded (level N is always the same): they are built by scrambling a solved yard so they are always solvable, par comes from an abstract pull/push solver (moves = uncouplings), and difficulty grows from a 4-wagon inglenook through the full 5/3/3 inglenook with 8 wagons, fixed (stuck) wagons, a longer inglenook and 4-5 siding ladders. The solver's model was verified against the real simulation by autoplaying solutions. 100 Node tests, 27 shell tests and 92 Playwright tests pass. Known gaps: the run-round `loop` layout exists but is not generated (needs both-end access in the solver), `par` is an upper bound on the biggest layouts when the search cap is hit (`level.exact`), and `main` lacks the shell `features` flag, so shell Hardcore/Level rows show for Inglenook. No C# changed, so code docs were not regenerated.
 
 ## Deployment Plan
-_(write when all phases complete: step-by-step deployment instructions. Authorised final step per Decisions & Answers: merge `feature/inglenook` into `main` and `git push origin main`; confirm the Pages workflow run starts.)_
+1. From the main checkout (not the worktree): `git switch main` is blocked there by uncommitted Delivery Driver work, so merge in the worktree instead: in `F:\Documents\Files\Apps\Games-inglenook` run `git fetch origin`, then `git merge --no-edit origin/main` into `feature/inglenook` if `origin/main` moved, re-run `npm test`, `dotnet test Games.slnx`, `npx playwright test tests/e2e/inglenook.spec.mjs`.
+2. Fast-forward `main` to the branch tip from the worktree: `git push origin feature/inglenook:main` (authorised in Decisions & Answers; this is the only push). The `.github/workflows/pages.yml` workflow runs tests, publishes and deploys GitHub Pages.
+3. Check the run: `gh run list --workflow pages.yml --limit 1`; then open https://mikekingsley.github.io/Games/ and play Inglenook. Installed PWAs show the "New version ready" pill.
+4. Local `main` in the main checkout will be behind `origin/main`; update it later with `git pull --ff-only` when that checkout is clean.

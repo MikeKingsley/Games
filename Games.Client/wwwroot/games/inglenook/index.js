@@ -2,7 +2,8 @@
 import { getLayout } from './layouts.js';
 import { createSim } from './sim.js';
 import { generateLevel } from './levels.js';
-import { buildSetup, checkWin, movesOf, starsFor } from './logic.js';
+import { buildSetup, checkWin, movesOf, starsFor, normalizeProgress } from './logic.js';
+import { createAudio } from './audio.js';
 import { createRenderer } from './render.js';
 import { createUi } from './ui.js';
 import { UNDO_LIMIT } from './config.js';
@@ -16,9 +17,9 @@ const MESSAGES = {
 export function mount(container, options = {}) {
     let paused = false;
     let muted = options.soundEnabled === false;
-    const progress = { level: 1, best: {}, muted: false, ...(options.loadProgress?.() ?? {}) };
-    if (!progress.best || typeof progress.best !== 'object') progress.best = {};
-    if (!(progress.level >= 1)) progress.level = 1;
+    const progress = normalizeProgress(options.loadProgress?.());
+    if (progress.muted) muted = true;
+    const audio = createAudio(!muted);
 
     const abort = new AbortController();
     const { signal } = abort;
@@ -46,8 +47,15 @@ export function mount(container, options = {}) {
         onReset: () => startLevel(level.n),
         onSkip: () => startLevel(level.n + 1),
         onNext: () => startLevel(level.n + 1),
-        onMute: () => { muted = !muted; ui.setMuted(muted); save(); },
+        onMute: () => toggleMute(),
     }, signal);
+
+    function toggleMute() {
+        muted = !muted;
+        audio.setEnabled(!muted);
+        ui.setMuted(muted);
+        save();
+    }
 
     function save() { options.saveProgress?.({ level: progress.level, best: progress.best, muted }); }
 
@@ -99,6 +107,7 @@ export function mount(container, options = {}) {
         if (!prev || stars > prev.stars || (stars === prev.stars && moves < prev.moves)) progress.best[level.n] = { stars, moves };
         progress.level = level.n + 1;
         save();
+        audio.play('win');
         options.onReward?.(stars);
         ui.showWin({ stars, moves, par: level.par, level: level.n });
     }
@@ -106,6 +115,7 @@ export function mount(container, options = {}) {
     function handleEvents() {
         for (const e of sim.drainEvents()) {
             for (const l of listeners) l(e);
+            audio.play(e.type);
             if (e.type === 'uncoupleBlocked') ui.toast(e.reason === 'moving' ? 'Stop the loco before uncoupling.' : 'Move the wagons clear of the points before uncoupling.');
             else if (MESSAGES[e.type]) ui.toast(MESSAGES[e.type]);
             if (e.type === 'coupled' || e.type === 'buffer' || e.type === 'bumped') ui.setCommand('stop');
@@ -120,6 +130,7 @@ export function mount(container, options = {}) {
             acc += dt;
             while (acc >= STEP) { sim.step(STEP); acc -= STEP; }
             handleEvents();
+            audio.setSpeed(sim.speed);
             ui.setMoves(movesOf(sim), level.par);
             const met = checkWin(sim, level);
             ui.setGoalMet(met);
@@ -135,7 +146,7 @@ export function mount(container, options = {}) {
         else if (k === ' ') drive('stop');
         else if (k === 'u') undo();
         else if (k === 'r') startLevel(level.n);
-        else if (k === 'm') { muted = !muted; ui.setMuted(muted); save(); }
+        else if (k === 'm') toggleMute();
         else if (/^[1-9]$/.test(k)) {
             const id = layout.pointIds[Number(k) - 1];
             if (id && !won) { snapshot(); if (!sim.togglePoint(id)) undoStack.pop(); }
@@ -143,6 +154,10 @@ export function mount(container, options = {}) {
         e.preventDefault();
     }
     window.addEventListener('keydown', onKey, { signal });
+    // browsers only allow sound after a gesture
+    const wake = () => audio.resume();
+    container.addEventListener('pointerdown', wake, { signal });
+    window.addEventListener('keydown', wake, { signal });
 
     startLevel(progress.level);
     raf = requestAnimationFrame(t => { last = t; frame(t); });
@@ -171,13 +186,14 @@ export function mount(container, options = {}) {
             abort.abort();
             renderer?.destroy();
             ui.destroy();
+            audio.destroy();
             stylesheet.remove();
             listeners = [];
             if (options.debug && window.__ig) delete window.__ig;
         },
         setOptions(next = {}) {
             if (typeof next.paused === 'boolean') paused = next.paused;
-            if (typeof next.soundEnabled === 'boolean') { muted = !next.soundEnabled; ui.setMuted(muted); }
+            if (typeof next.soundEnabled === 'boolean') { muted = !next.soundEnabled; audio.setEnabled(!muted); ui.setMuted(muted); }
         },
     };
 }

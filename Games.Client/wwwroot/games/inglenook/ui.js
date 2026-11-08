@@ -68,8 +68,8 @@ export function createUi(container, cb, signal) {
     const fwd = button('Forward ▶', 'ig-drive', () => cb.onDrive('forward'), signal, 'Forward (W or Right arrow)');
     const tools = h('div', 'ig-tools');
     const undo = button('Undo', 'ig-small', () => cb.onUndo(), signal, 'Undo (U)');
-    const reset = button('Reset', 'ig-small', () => cb.onReset(), signal, 'Restart the level (R)');
-    const skip = button('Skip', 'ig-small', () => cb.onSkip(), signal, 'Skip to the next level');
+    const reset = button('Reset', 'ig-small', () => cb.onReset(), signal, 'Reset the level (R)');
+    const skip = button('Skip', 'ig-small', () => cb.onSkip(), signal, 'Skip level');
     const mute = button('🔊', 'ig-small', () => cb.onMute(), signal, 'Sound on or off (M)');
     tools.append(undo, reset, skip, mute);
     controls.append(rev, stop, fwd, tools);

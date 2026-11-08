@@ -60,3 +60,18 @@ export function abstractFromSim(sim, level) {
     for (const id of layout.sidings) tracks[id] = labelsFor(stackOf(sim, id), level.goal, stuck);
     return { H: labelsFor(H, level.goal, stuck), tracks };
 }
+
+/** Saved progress, tolerant of missing or damaged data: { level, best: { [level]: { stars, moves } }, muted }. */
+export function normalizeProgress(raw) {
+    const out = { level: 1, best: {}, muted: false };
+    if (!raw || typeof raw !== 'object') return out;
+    if (Number.isInteger(raw.level) && raw.level >= 1) out.level = raw.level;
+    if (raw.best && typeof raw.best === 'object') {
+        for (const [k, v] of Object.entries(raw.best)) {
+            const n = Number(k);
+            if (Number.isInteger(n) && n >= 1 && v && [1, 2, 3].includes(v.stars) && Number.isInteger(v.moves) && v.moves >= 0) out.best[n] = { stars: v.stars, moves: v.moves };
+        }
+    }
+    out.muted = raw.muted === true;
+    return out;
+}

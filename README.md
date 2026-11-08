@@ -64,6 +64,41 @@ The background and the animals change with the level (defined in `WORLDS` in `an
 | 21-30 | Dinosaur Land | 81-90 | Outer Space |
 | 31-40 | Enchanted Forest | 91+ | Unicorn Rainbow Land |
 
+## Inglenook
+
+A top-down 2D SVG shunting puzzle set in a UK goods yard in the 1960s: a small diesel shunter, 16-ton mineral wagons, vans and tank wagons (generic period styling, no real logos). Make up the train shown in the goal strip on the long siding, nearest the points first. For older kids and adults. Levels are endless: level N is always the same level (seeded) and is always solvable.
+
+### Controls
+
+| Input | What |
+|---|---|
+| Forward / Reverse buttons, W / S, arrow keys | Latching drive: press once and the loco eases up to a slow speed; it stops itself at a buffer stop and when it couples to wagons |
+| Stop button, Space | Stop |
+| Tap a point lever (or keys 1-9) | Throw that point. Locked while any vehicle is on it |
+| Tap a coupling hook between vehicles | Uncouple there (only when stopped, and not if the wagons left behind would stand beside a point) |
+| Undo (U), Reset (R), Skip, Mute (M) | Undo the last action, restart the level, skip it, sound on/off |
+
+### How it plays
+
+- **Moves** are uncouplings. Par comes from a solver: 3 stars at par or better, 2 within 1.5x par, otherwise 1. There is no fail state; Undo and Reset are free.
+- **Pull and push:** the loco drives into a siding and couples to its wagons (taking all of them is free), brings them out, then pushes them into another siding and uncouples. A pull then a push keeps the wagons' order along the siding. Taking only part of a siding needs an extra uncoupling.
+- **Difficulty:** level 1-3 a small 5/3/3 inglenook with 4 wagons; 4-14 classic inglenook with up to 8 wagons and a longer goal; 15+ fixed wagons that cannot be moved; 25+ a longer inglenook or a 4-5 siding ladder with longer goals. Tuning is `levelParams` in `levels.js`.
+- **Layouts** (`layouts.js`): `classic`, `classic-long`, `ladder4`, `ladder5`. A `loop` layout (run-round loop) exists and is validated but is not used by the generator yet.
+- **Save:** `{ level, best: { [level]: { stars, moves } }, muted }` in the shell's progress store (`games.progress.inglenook`).
+
+### Code (`Games.Client/wwwroot/games/inglenook/`)
+
+| File | What |
+|---|---|
+| `index.js`, `ui.js`, `styles.css` | Mount/unmount, game loop, undo, HUD and controls |
+| `render.js` | SVG board: track, scenery, wagons, shunter, point levers, coupling hooks |
+| `track.js`, `layouts.js` | Track graph, points, walking along tracks, foul zones, layout templates and validation |
+| `sim.js` | Train simulation: rakes, easing, buffers, auto-couple, uncouple, points |
+| `solver.js`, `levels.js`, `logic.js` | Abstract solver (par), seeded level generator, win check, stars, progress |
+| `autoplay.js`, `audio.js`, `config.js` | Plays solver moves through the sim (tests/debug), WebAudio synth, constants |
+
+Logic is DOM-free and tested in Node (`tests/js/inglenook.*.test.mjs`); `tests/e2e/inglenook.spec.mjs` drives the real game. **Debug hook** (Development environment only): `window.__ig` exposes `sim`, `level`, `won`, `start(n)`, `solve()` (plays the solver's moves through the sim) and `onEvent(fn)`.
+
 ## Parent corner
 
 A small gear in the top-left of the home screen and of every game. Tap it. On the home screen it opens the Options page; in a game it opens a panel with sound, speech, fullscreen, Hardcore Mode, Options and exit. The Options page (`/options`) has the sound/speech/fullscreen switches and, per game, its current level with a two-tap "Reset levels".

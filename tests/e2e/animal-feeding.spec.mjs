@@ -160,7 +160,7 @@ test('each animal shows the foods it accepts; Hardcore Mode (one-way) restarts a
     await page.reload();
     await expect(page.locator('.af-root')).toHaveAttribute('data-hardcore', 'true');
     await page.goto('/options');
-    await page.getByRole('button', { name: /Reset levels/ }).click();
+    await page.locator('.game-row', { hasText: 'Feed the Animals' }).getByRole('button', { name: /Reset levels/ }).click(); // one row per game
     await page.getByRole('button', { name: /Tap again/ }).click();
     await page.goto('/play/animal-feeding');
     await expect(page.locator('.af-root')).toHaveAttribute('data-hardcore', 'false');
