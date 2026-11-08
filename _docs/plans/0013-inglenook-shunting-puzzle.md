@@ -123,27 +123,30 @@ Effort: medium
 `sim.js`: `createSim(layout, {vehicles, rakes, loco})`. Vehicles are grouped into rakes that own a path of track pieces (tail to head), so they follow the driven route through points. Latching `setDirection`, eased speed, auto-stop at buffers, auto-couple on contact (head or tail), stuck wagons only bump, `uncouple(rakeId, index)` refused while moving or if a loco-less rake would stand in a foul zone, `togglePoint` locked while any rake covers the point (`POINT_CLEAR` 0.5). Exposes `poses()`, `couplings()`, `onTrack(id)`, `stats` (couplings/uncouplings), `drainEvents()`, `snapshot()/restore()`. 13 tests; `npm test` all pass.
 
 ## Phase 4: Levels, solver and stars
-Status: Not started
+Status: Complete
 Depends on: 2, 3
 Files: Games.Client/wwwroot/games/inglenook/levels.js, Games.Client/wwwroot/games/inglenook/solver.js, Games.Client/wwwroot/games/inglenook/logic.js, tests/js/inglenook.levels.test.mjs, tests/js/inglenook.solver.test.mjs
 Model: sonnet
 Effort: medium
 
-- [ ] Add `rng.js`-style seeded RNG inside `levels.js` (mulberry32 or the repo's existing seeded RNG if reusable) so `generateLevel(n)` is deterministic: the same level number gives the same level on every device.
-- [ ] Define the difficulty curve in `levels.js`: level number to `{ template, wagonCount, goalLength, stuckWagons, blockedSidings }`. Level 1-5 classic with 4-5 wagons and a goal of 3; classic 8 wagons and goal of 5 from level 6; obstacles from about level 15; bigger layouts from about level 25; cap the growth so level 100+ stays solvable and fast to generate.
-- [ ] Define the abstract move model in `solver.js` (document in the file header): one "move" = couple the loco to a rake at one end of a siding (taking 1..k wagons), travel through the points to a destination siding, and uncouple the rake there (fully or partly). Count one move per such transfer. Points that need flipping are implied by the route.
-- [ ] Implement the BFS solver over abstract state (wagon order per siding, loco side) with a state cap of `SOLVER_STATE_CAP`; return the minimum number of moves (the par) and an optional solution for a hint.
-- [ ] Generator loop: build a random level, run the solver, accept only if solvable and par is within the intended band for that level; otherwise retry with sub-seed + 1 (bounded retries; fallback to the template's guaranteed-solvable base position).
-- [ ] Implement `logic.js`: `checkWin(sim, goal)`, `countMoves(events)` consistent with the solver's definition, `starsFor(moves, par)` (3 / 2 / 1 per the assumption above), `levelSummary(n)`.
-- [ ] Tests: determinism for levels 1..200, every generated level solvable with par >= 1, par never above a sane cap, abstract move count matches the sim for scripted solutions on `classic`, star thresholds, win detection with irrelevant wagons elsewhere.
-- [ ] Performance guard test: generating levels 1..200 stays under a few seconds in Node.
+- ✅ Add `rng.js`-style seeded RNG inside `levels.js` (mulberry32 or the repo's existing seeded RNG if reusable) so `generateLevel(n)` is deterministic: the same level number gives the same level on every device.
+- ✅ Define the difficulty curve in `levels.js`: level number to `{ template, wagonCount, goalLength, stuckWagons, blockedSidings }`. Level 1-5 classic with 4-5 wagons and a goal of 3; classic 8 wagons and goal of 5 from level 6; obstacles from about level 15; bigger layouts from about level 25; cap the growth so level 100+ stays solvable and fast to generate.
+- ✅ Define the abstract move model in `solver.js` (document in the file header): one "move" = couple the loco to a rake at one end of a siding (taking 1..k wagons), travel through the points to a destination siding, and uncouple the rake there (fully or partly). Count one move per such transfer. Points that need flipping are implied by the route.
+- ✅ Implement the BFS solver over abstract state (wagon order per siding, loco side) with a state cap of `SOLVER_STATE_CAP`; return the minimum number of moves (the par) and an optional solution for a hint.
+- ✅ Generator loop: build a random level, run the solver, accept only if solvable and par is within the intended band for that level; otherwise retry with sub-seed + 1 (bounded retries; fallback to the template's guaranteed-solvable base position).
+- ✅ Implement `logic.js`: `checkWin(sim, goal)`, `countMoves(events)` consistent with the solver's definition, `starsFor(moves, par)` (3 / 2 / 1 per the assumption above), `levelSummary(n)`.
+- ✅ Tests: determinism for levels 1..200, every generated level solvable with par >= 1, par never above a sane cap, abstract move count matches the sim for scripted solutions on `classic`, star thresholds, win detection with irrelevant wagons elsewhere.
+- ✅ Performance guard test: generating levels 1..200 stays under a few seconds in Node.
+
+- **Assumption (deviation):** the generator scrambles a solved yard with random order-preserving transfers (so every level is solvable by construction) instead of generating random placements and filtering; the BFS (0-1 BFS over uncouplings) then gives the exact par, or the scramble's undo cost as an upper bound when the search exceeds `SOLVER_STATE_CAP` (`level.exact` flags which). The `loop` template is NOT used by the generator: its through-tracks need both-end access in the abstract model (future plan). Move = uncoupling (`stats.uncouplings`); a pull of all of a siding is free, a partial pull and every push cost 1.
+- **Extra files:** `autoplay.js` (drives solver ops through the real sim) and `logic.js` helpers (`buildSetup`, `checkWin`, `starsFor`, `abstractFromSim`).
 
 ### Verification Plan
 - `node --test tests/js/inglenook.levels.test.mjs tests/js/inglenook.solver.test.mjs` passes.
 - `npm test` passes.
 
 ### Phase Summary
-_(write when phase completes)_
+`solver.js` (abstract pull/push model, `solveAbstract`, `solveLevel`, `applyOps`), `levels.js` (`levelParams`, `generateLevel`, deterministic from level number; classic -> long/ladder layouts, stuck wagons from level 15), `logic.js`, `autoplay.js`. Verified against the real sim: autoplaying the solution for 12 levels wins with uncouplings == par. Levels 1-200 generate in about 2 s total. Phase 5 should use `buildSetup(level)`, `checkWin`, `movesOf`, `starsFor`, and `level.solution` for hints. 14 new tests; `npm test` all pass.
 
 ## Phase 5: SVG renderer and input
 Status: Not started

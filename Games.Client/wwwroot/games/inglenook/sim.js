@@ -67,7 +67,7 @@ function endPos(path, atHead) {
 // ---- simulation ----------------------------------------------------------------------------------------------------------------
 /**
  * setup: { vehicles: [{ id, color, number, stuck?, kind?, len? }],
- *          rakes: [{ track, flush: 'a'|'b', vehicles: [ids in order of increasing d] }],
+ *          rakes: [{ track, flush: 'a'|'b', inset?, vehicles: [ids in order of increasing d] }],   (inset: distance from the flush end)
  *          loco?: { track, flush } }   (default: on the headshunt, flush to its buffer end)
  */
 export function createSim(layout, setup) {
@@ -84,11 +84,11 @@ export function createSim(layout, setup) {
         return S.rakes[id];
     }
     const spanOf = ids => ids.reduce((s, id) => s + S.vehicles[id].len, 0) + GAP * (ids.length - 1);
-    function place(trackId, flush, ids) {
+    function place(trackId, flush, ids, inset = 0) {
         const t = layout.tracks[trackId];
         const span = spanOf(ids);
-        if (span > t.length + EPS) throw new Error(`rake of ${ids.length} does not fit on ${trackId}`);
-        const start = flush === 'a' ? 0 : t.length - span;
+        if (span + inset > t.length + EPS) throw new Error(`rake of ${ids.length} does not fit on ${trackId}`);
+        const start = flush === 'a' ? inset : t.length - span - inset;
         return newRake(ids, [{ track: trackId, from: start, to: start + span }]);
     }
 
@@ -97,7 +97,7 @@ export function createSim(layout, setup) {
     const locoSpec = setup.loco ?? { track: layout.head, flush: head.ends.a.type === 'buffer' ? 'a' : 'b' };
     addVehicle({ id: 'loco', kind: 'loco', facing: locoSpec.flush === 'a' ? 1 : -1 });
     place(locoSpec.track, locoSpec.flush, ['loco']);
-    for (const r of setup.rakes ?? []) place(r.track, r.flush, r.vehicles);
+    for (const r of setup.rakes ?? []) place(r.track, r.flush, r.vehicles, r.inset ?? 0);
 
     const locoRake = () => Object.values(S.rakes).find(r => r.vehicles.includes('loco'));
     const offsets = rake => {
