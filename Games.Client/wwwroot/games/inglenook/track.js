@@ -11,6 +11,7 @@
 import { COUPLING_GAP, LOCO_LEN, WAGON_LEN } from './config.js';
 
 export const POINT_FOUL = 2.9;
+export const POINT_CLEAR = 0.5; // a point cannot be thrown while a vehicle is this close to it
 export const PITCH = WAGON_LEN + COUPLING_GAP; // length one coupled wagon takes up
 export const LEGS = ['toe', 'straight', 'diverging'];
 const EPS = 1e-6;
@@ -139,12 +140,12 @@ export function walk(layout, pos, dist, state) {
     return { pos: { track, d, dir }, moved: dist - remaining, blocked, pieces };
 }
 
-/** Intervals of the three legs of a point that count as "at the point". */
-export function pointZones(layout, pointId) {
+/** Intervals of the three legs of a point within `size` of it (default: the foul zone). */
+export function pointZones(layout, pointId, size = POINT_FOUL) {
     return LEGS.map(leg => {
         const { track, end } = layout.points[pointId].legs[leg];
         const t = layout.tracks[track];
-        return end === 'a' ? { track, from: 0, to: Math.min(POINT_FOUL, t.length) } : { track, from: Math.max(0, t.length - POINT_FOUL), to: t.length };
+        return end === 'a' ? { track, from: 0, to: Math.min(size, t.length) } : { track, from: Math.max(0, t.length - size), to: t.length };
     });
 }
 

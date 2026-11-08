@@ -101,26 +101,26 @@ Effort: medium
 `track.js` (graph, `buildLayout`, `walk`, `pointAt`, foul zones, `validateLayout`) and `layouts.js` (`classic`, `classic-long`, `ladder4`, `ladder5`, `loop`; `getLayout(id)`). Units are wagon lengths; positions are `{track, d, dir}`; trailing moves always pass to the toe. Every point leg has a 2.9 foul zone (`POINT_FOUL`): phase 3 must refuse uncoupling and point-throwing there. Capacities are derived from track length (classic 5/3/3, headshunt loco+3). `walk` returns `pieces` for extending a rake path. 12 new tests; `npm test` 70 pass.
 
 ## Phase 3: Train simulation
-Status: Not started
+Status: Complete
 Depends on: 2
 Files: Games.Client/wwwroot/games/inglenook/sim.js, tests/js/inglenook.sim.test.mjs
 Model: sonnet
 Effort: medium
 
-- [ ] Implement `createSim(layout, wagons)` holding loco and wagon positions as distances along the graph, plus couplings between adjacent vehicles on the same track (loco-wagon and wagon-wagon).
-- [ ] Implement `step(dt)` with latching controls `setDirection('forward'|'reverse'|'stop')`, easing speed over `ACCEL_TIME`, fixed top speed, and motion of the whole coupled rake as one unit.
-- [ ] Auto-stop: stop at buffer stops (loco or rake end reaches the buffer), and stop when the leading vehicle meets an uncoupled vehicle; couple automatically on contact (loco to wagon, rake to wagon) with a `coupled` event and a small impact event for sound.
-- [ ] Implement `toggleCoupling(index)` (uncouple at a tap) and `togglePoint(id)`; only allowed while the train is stopped or moving slowly? Decision: points may only be flipped when no vehicle occupies or is within one wagon length of the point (otherwise ignored with a `pointLocked` event); couplings may only be changed when stopped.
-- [ ] Wagons that are uncoupled stay put (handbrake assumed); "stuck" obstacle wagons cannot be coupled (the loco stops against them without coupling).
-- [ ] Emit events (`coupled`, `uncoupled`, `buffer`, `pointLocked`, `moved`) for the UI and a move counter definition used by phase 4.
-- [ ] Tests: easing and stop distance, auto-couple, auto-stop at buffer, push then uncouple leaves wagons exactly where they were, point lock rules, stuck wagons never couple, deterministic replay of an input script yields identical final state.
+- ✅ Implement `createSim(layout, wagons)` holding loco and wagon positions as distances along the graph, plus couplings between adjacent vehicles on the same track (loco-wagon and wagon-wagon).
+- ✅ Implement `step(dt)` with latching controls `setDirection('forward'|'reverse'|'stop')`, easing speed over `ACCEL_TIME`, fixed top speed, and motion of the whole coupled rake as one unit.
+- ✅ Auto-stop: stop at buffer stops (loco or rake end reaches the buffer), and stop when the leading vehicle meets an uncoupled vehicle; couple automatically on contact (loco to wagon, rake to wagon) with a `coupled` event and a small impact event for sound.
+- ✅ Implement `toggleCoupling(index)` (uncouple at a tap) and `togglePoint(id)`; only allowed while the train is stopped or moving slowly? Decision: points may only be flipped when no vehicle occupies or is within one wagon length of the point (otherwise ignored with a `pointLocked` event); couplings may only be changed when stopped.
+- ✅ Wagons that are uncoupled stay put (handbrake assumed); "stuck" obstacle wagons cannot be coupled (the loco stops against them without coupling).
+- ✅ Emit events (`coupled`, `uncoupled`, `buffer`, `pointLocked`, `moved`) for the UI and a move counter definition used by phase 4.
+- ✅ Tests: easing and stop distance, auto-couple, auto-stop at buffer, push then uncouple leaves wagons exactly where they were, point lock rules, stuck wagons never couple, deterministic replay of an input script yields identical final state.
 
 ### Verification Plan
 - `node --test tests/js/inglenook.sim.test.mjs` passes.
 - `npm test` passes.
 
 ### Phase Summary
-_(write when phase completes)_
+`sim.js`: `createSim(layout, {vehicles, rakes, loco})`. Vehicles are grouped into rakes that own a path of track pieces (tail to head), so they follow the driven route through points. Latching `setDirection`, eased speed, auto-stop at buffers, auto-couple on contact (head or tail), stuck wagons only bump, `uncouple(rakeId, index)` refused while moving or if a loco-less rake would stand in a foul zone, `togglePoint` locked while any rake covers the point (`POINT_CLEAR` 0.5). Exposes `poses()`, `couplings()`, `onTrack(id)`, `stats` (couplings/uncouplings), `drainEvents()`, `snapshot()/restore()`. 13 tests; `npm test` all pass.
 
 ## Phase 4: Levels, solver and stars
 Status: Not started
