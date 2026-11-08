@@ -421,7 +421,6 @@ export function mount(container, options = {}) {
 
         if (round.animals.some(id => animalById(id).rare)) {
             sound.sparkle();
-            say('A unicorn!');
         }
         renderStars();
         levelEl.textContent = `Level ${levelFor(progress.rounds)}`;
@@ -485,7 +484,6 @@ export function mount(container, options = {}) {
             progress.rounds = 0;
             previousAnimals = [];
             saveProgress();
-            say('Back to level 1!');
         } else if (progress.stars > 0) {
             progress.stars = loseStar(progress.stars);
             saveProgress();
@@ -519,7 +517,6 @@ export function mount(container, options = {}) {
         renderStars();
         confetti();
         sound.success();
-        say('Hooray!');
         if (earned > 0) later(() => showReward(earned), 900);
         else later(startRound, NEXT_ROUND_MS);
     }
@@ -592,7 +589,7 @@ export function mount(container, options = {}) {
     }
 
     const REJECT_AFTER_MS = 500;
-    const REJECT_PHRASES = ['Yuck!', 'No thank you!', 'Eww!', 'Not that!'];
+    const REJECT_PHRASES = ['Yuck!', 'No thank you!', 'Gross!', 'Not that!'];
     let rejectCount = 0;
 
     /** The animal pulls a face: it shakes its head, makes a "yuck" noise and says so. */
