@@ -1,0 +1,39 @@
+.ig-root {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: #2f5d34;
+    color: #f4efe0;
+    font-family: system-ui, sans-serif;
+    user-select: none;
+    touch-action: manipulation;
+}
+
+.ig-hud {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 12px 8px 64px; /* room for the shell gear at top-left */
+    background: rgba(0, 0, 0, 0.35);
+    font-size: 16px;
+}
+
+.ig-title { font-weight: 700; margin-right: auto; }
+
+.ig-board { flex: 1; min-height: 0; width: 100%; display: block; }
+
+.ig-btn {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 8px;
+    background: #e8e0c8;
+    color: #222;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.ig-btn:active { transform: translateY(1px); }

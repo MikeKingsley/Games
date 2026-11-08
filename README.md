@@ -2,6 +2,8 @@
 
 Kids' games written in JavaScript, hosted in a static Blazor WebAssembly shell (.NET 10). Built for toddlers (2-4) on touch tablets: big targets, no reading, no fail states. First game: **Feed the Animals** (drag each food to the animal that eats it).
 
+- **Inglenook** (older kids and adults): a 1960s UK goods-yard shunting puzzle (`games/inglenook/`, 2D SVG).
+
 Installable as an offline PWA. No accounts or backend; settings and progress live in `localStorage`.
 
 ## Run
