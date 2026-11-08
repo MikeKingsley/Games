@@ -279,28 +279,56 @@ Effort: medium
 - Known: the remaining float/sink is mostly kerb and pavement embankments, crossings and ramps; crossings are still found on polylines (`crossings.js`), so a deck zone can sit a few metres off the drawn spline on sparse edges.
 
 ## Phase 8: Final gates and recap
-Status: Not started
+Status: In progress
 Depends on: 7, 9
 Files: `_docs/plans/0012-delivery-driver-greybox-to-real-map-roads.md`
 Model: haiku
 Effort: medium
 
-- [ ] Run `npm run test:e2e` once (final gate) and record the pass and fail counts; compare with the baseline (124 pass, 2 fail, both flaky under load); any new failure is a regression and must be fixed or recorded as a blocker
-- [ ] Run `npm test`, `node scripts/validate-roads.mjs --greybox` and `node scripts/validate-roads.mjs --strict` and record the results
-- [ ] Run `dotnet build Games.Client`, restart the dev server on port 5210 and confirm `/play/delivery-driver` returns 200
-- [ ] Fill in **Final Recap** and **Deployment Plan** with the actual results
+- ⛔ Run `npm run test:e2e` once (final gate) and record the pass and fail counts; compare with the baseline (124 pass, 2 fail, both flaky under load); any new failure is a regression and must be fixed or recorded as a blocker
+  - **Blocked:** full run gave 124 pass, 2 fail (matching the baseline count). The failures are (1) `delivery-driver.spec.mjs:45` "Exeter depot ... runs smoothly": 13 frame samples, expected more than 20 (the known load-sensitive software-canvas budget); and (2) `phone-fit.spec.mjs:106` "game, hardcore with a crowded row" at 375x667, which looks for `.af-food` on the animal-feeding game. Rerunning just the two tests gave 9 failures: phone-fit now fails at all 8 viewports, not one. That is a consistent failure, not the flaky one recorded in plan 0011. The only animal-feeding change in this range is `80ce7ad` (spoken lines and reject phrases, no food rendering), so this plan does not appear to cause it, but I have not confirmed it passes on the pre-plan code (9b26550). Run logs: `C:\Users\Mike\AppData\Local\Temp\claude\...\p12\e2e.txt` and `e2e-rerun.txt` (session temp).
+- ✅ Run `npm test`, `node scripts/validate-roads.mjs --greybox` and `node scripts/validate-roads.mjs --strict` and record the results
+  - **Result:** `npm test` 496 pass, 0 fail. `--strict` exit 0, 0 hard failures. `--greybox` exit 0, 0 hard failures.
+- ✅ Run `dotnet build Games.Client`, restart the dev server on port 5210 and confirm `/play/delivery-driver` returns 200
+  - **Result:** build 0 warnings, 0 errors. `/play/delivery-driver` returns 200 on the running server (started after phase 9's build).
+- ✅ Fill in **Final Recap** and **Deployment Plan** with the actual results
 
 ### Verification Plan
-- `npm run test:e2e` has no new failure versus the baseline (124 pass, 2 known flaky)
-- `npm test` passes, 0 fail
-- `node scripts/validate-roads.mjs --strict` and `--greybox` exit 0
-- `dotnet build Games.Client` succeeds; `/play/delivery-driver` returns 200
+- `npm run test:e2e` has no new failure versus the baseline (124 pass, 2 known flaky): **NOT MET.** 124 pass and 2 fail, but the phone-fit hardcore test now fails at all 8 viewports, which is not the recorded flaky pattern. Unresolved.
+- `npm test` passes, 0 fail: met (496 pass).
+- `node scripts/validate-roads.mjs --strict` and `--greybox` exit 0: met.
+- `dotnet build Games.Client` succeeds; `/play/delivery-driver` returns 200: met.
 
 ### Phase Summary
-_(write when phase completes)_
+- Final gates: `npm test` 496 pass, 0 fail; both validators exit 0; build clean; dev server returns 200.
+- e2e: 124 pass, 2 fail. The delivery-driver "runs smoothly" frame-count test failed at 13 samples against 20 (load-sensitive). The animal-feeding `phone-fit` hardcore test fails at all viewports on rerun. Not confirmed as pre-existing or caused by this plan; needs a check on the pre-plan commit before the phase can close.
+- Phase left `In progress` because of the e2e item. Nothing else is blocked.
 
 ## Final Recap
-_(write when all phases complete: summary of the entire piece of work)_
+Plan 0012 brought the real map's roads, junctions and markings in line with the greybox, which is the reference. The work went in nine phases, each committed locally on `feature/delivery-driver-spline-roads` and never pushed.
+
+- **Phase 1** committed the greybox WIP (rolling-hills terrain, graded roads, exact camera) as `d33f7ba`. It also loosened two wall-clock budgets so the suite passes on this machine.
+- **Phase 2** added `scripts/roads-parity-check.mjs` and a baseline. The baseline showed sink and float up to 24 m, junction arms off node height in every town, and pavement mismatches.
+- **Phase 3** (`340af08`) stopped the ground cap hiding roads at crossings and ramps (806 ground-hides-road samples down to 59).
+- **Phase 4** (`429b926`) added helpers and a sloped-junction test. The mismatch was a grading problem, not a mesh one; the mesh change tried was reverted because the ground showed through a ring.
+- **Phase 5** (`80932a3`) made the parity check's pavement rules match the mesh. The mesh was right; the check was wrong about bridges, rural dual verges and short edges.
+- **Phase 6** (`4e10e71`) found that the flicker was a corridor LOD band swapping whole chunks, not depth fighting. It widened the road-detail hysteresis. The visible pop remains: the road shader has no fade path.
+- **Phase 7** (`60f21d9`) ran one clean iteration pass across the four towns and checked year gates at 1930, 1950 and 1975. No road type appeared at the wrong year.
+- **Phase 9** (`875b918`) made grading and `groundZ` follow the road splines and extended the junction landing to the trim. It was approved after the blocker. Junction mismatches fell from 560 to 50 across the towns, and exact-ground sink and float fell by roughly a third. Your coast-grid change in `world/terrain.js` stayed out of the commit.
+
+**Remaining known issues**
+1. Vehicles, crossings and props still read the drawn polyline. On sparse edges a bridge or ramp deck can sit a few metres from the drawn road.
+2. The corridor LOD pop remains at the band edge (no fade in the road shader).
+3. About 50 ground-hides-road samples remain, mostly a lane beside a ramp over 6 m higher.
+4. Kerb and pavement embankments, crossings and ramps still account for most of the remaining sink and float.
+5. **e2e regression, unresolved:** the animal-feeding `phone-fit` hardcore test fails at all viewports (see Phase 8).
+6. The coast-grid change in `world/terrain.js` is uncommitted, by your decision.
 
 ## Deployment Plan
-_(write when all phases complete: step-by-step deployment instructions)_
+1. Resolve the e2e item first. Check out `9b26550` in a scratch worktree (`git worktree add`), start its dev server on another port, and run `npx playwright test tests/e2e/phone-fit.spec.mjs -g "hardcore with a crowded row"`. If it fails there too, it predates this plan and the phase can close with that recorded. If it passes there, bisect the animal-feeding commit `80ce7ad` and fix it before deploying.
+2. Decide the `world/terrain.js` coast-grid change: commit it (review first), or revert it. The grading change is already in `875b918`.
+3. Run `npm test` (expect 496 pass, 0 fail), `node scripts/validate-roads.mjs --strict` and `--greybox` (expect exit 0).
+4. Run `dotnet build Games.Client`, then restart the dev server: `dotnet run --project Games.Client --urls http://0.0.0.0:5210 --no-launch-profile`. Confirm `/play/delivery-driver` and `/games/delivery-driver/greybox/greybox.html` return 200.
+5. Phone checks (the user tests on a phone): a single-track lane with passing places, a one-way street, a two-way A road with a centre line, a sloped crossroads and roundabout, and a bridge over a road. Look for the LOD pop at distance and sink or float on embankments.
+6. Push the branch and open a PR to `main` only when the user asks. The greybox page is dev-only and unlinked.
+7. Follow-ups: fade for the LOD pop; spline-following crossings and props; the e2e regression if it stays unresolved.
