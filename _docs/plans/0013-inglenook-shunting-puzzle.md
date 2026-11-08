@@ -81,24 +81,24 @@ Effort: medium
 Scaffolded `games/inglenook/` (`index.js` mount/unmount with Back button and `paused` handling, `config.js` constants, `styles.css`), registered in `registry.json`, README games list updated. Verified: `npm test` 58 pass, `dotnet test` 27 pass, registry and module served 200. `main` lacks the shell `features` flag (see assumption); worktree uses `npm install` already done. Later phases import constants from `config.js`.
 
 ## Phase 2: Track model and layouts
-Status: Not started
+Status: Complete
 Depends on: 1
 Files: Games.Client/wwwroot/games/inglenook/track.js, Games.Client/wwwroot/games/inglenook/layouts.js, tests/js/inglenook.track.test.mjs
 Model: sonnet
 Effort: medium
 
-- [ ] Implement `track.js`: a track graph of nodes and edges (each edge a straight or arc piece with length), points as nodes with `straight`/`diverging` exits and a current state, buffer stops as dead-end nodes, `positionAt(edge, distance)` returning `{x, y, angle}` for rendering.
-- [ ] Implement route walking: `advance(position, distance, direction, pointsState)` returning the new position, stopping flags at buffers, and how points are traversed facing (trailing points behave correctly: a trailing move through a point set against it is ignored/forced by design; decide and document in code: trailing moves follow the point's setting, no derailment).
-- [ ] Implement `layouts.js` with templates `classic` (5/3/3 capacity, headshunt, 2 points), `classic-long`, `ladder4`, `ladder5`, `loop` (run-round loop); each returns graph, siding list with capacities, goal siding id, loco start, plus SVG-ready geometry (coordinates in a fixed viewBox).
-- [ ] Add a validator `validateLayout(layout)` (connected graph, all capacities > 0, no overlapping geometry, buffers at siding ends).
-- [ ] Tests: walking along each template, point-state routing, buffer stop clamping, capacities match the template table, `validateLayout` passes for all templates and fails for deliberately broken ones.
+- ✅ Implement `track.js`: a track graph of nodes and edges (each edge a straight or arc piece with length), points as nodes with `straight`/`diverging` exits and a current state, buffer stops as dead-end nodes, `positionAt(edge, distance)` returning `{x, y, angle}` for rendering.
+- ✅ Implement route walking: `advance(position, distance, direction, pointsState)` returning the new position, stopping flags at buffers, and how points are traversed facing (trailing points behave correctly: a trailing move through a point set against it is ignored/forced by design; decide and document in code: trailing moves follow the point's setting, no derailment).
+- ✅ Implement `layouts.js` with templates `classic` (5/3/3 capacity, headshunt, 2 points), `classic-long`, `ladder4`, `ladder5`, `loop` (run-round loop); each returns graph, siding list with capacities, goal siding id, loco start, plus SVG-ready geometry (coordinates in a fixed viewBox).
+- ✅ Add a validator `validateLayout(layout)` (connected graph, all capacities > 0, no overlapping geometry, buffers at siding ends).
+- ✅ Tests: walking along each template, point-state routing, buffer stop clamping, capacities match the template table, `validateLayout` passes for all templates and fails for deliberately broken ones.
 
 ### Verification Plan
 - `node --test tests/js/inglenook.track.test.mjs` passes.
 - `npm test` passes.
 
 ### Phase Summary
-_(write when phase completes)_
+`track.js` (graph, `buildLayout`, `walk`, `pointAt`, foul zones, `validateLayout`) and `layouts.js` (`classic`, `classic-long`, `ladder4`, `ladder5`, `loop`; `getLayout(id)`). Units are wagon lengths; positions are `{track, d, dir}`; trailing moves always pass to the toe. Every point leg has a 2.9 foul zone (`POINT_FOUL`): phase 3 must refuse uncoupling and point-throwing there. Capacities are derived from track length (classic 5/3/3, headshunt loco+3). `walk` returns `pieces` for extending a rake path. 12 new tests; `npm test` 70 pass.
 
 ## Phase 3: Train simulation
 Status: Not started
