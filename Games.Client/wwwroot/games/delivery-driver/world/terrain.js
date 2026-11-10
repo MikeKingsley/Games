@@ -91,7 +91,7 @@ function nearestSq(segs, x, y) {
     return best;
 }
 
-const GRID = 512;
+const GRID = 1024;
 /**
  * A grid over a segment list (the baked coast has ~20,000 segments): cells hold the segments passing within `reach`
  * of them, so a nearest query only looks in the rings around the point.
@@ -220,7 +220,7 @@ function coastDistance(t, x, y) {
     return exactCoastDistance(t, x, y);
 }
 
-const COARSE_CELL = 24, COARSE_NEAR = 120;
+const COARSE_CELL = 48, COARSE_NEAR = 120; // (24 at 1:4: the lattice cell doubles with the map so a road costs the same number of exact lookups)
 function exactCoastDistance(t, x, y) {
     const d = Math.sqrt(nearestGridSq(t.coast, x, y));
     return isLand(t.region, x, y) ? d : -d;
