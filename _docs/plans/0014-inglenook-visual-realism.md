@@ -264,16 +264,18 @@ Puff rule for Phase 7: one puff per `PUFF_DISTANCE` = 0.22 wagon lengths of loco
 Level 61 while driving: average frame 9.4-9.6 ms over 3 s (limit 20), 1075 `.ig-board` elements (budget 4500; 1066 at rest in the shots spec). Wind was tuned to (0.14, -0.34) so steam lifts clear of the loco; shadows are subtle on the dark cinder ground. Checks: `inglenook.spec` 13 pass, `inglenook.shots` 11 pass, win test still gives three stars.
 
 ## Phase 7: Steam sound
-Status: Not started
+Status: Complete
 Depends on: 6
 Files: Games.Client/wwwroot/games/inglenook/audio.js, index.js
 Model: sonnet
 Effort: medium
 
-- [ ] Replace the diesel oscillators in `audio.js` with a steam voice: a looped filtered-noise hiss at low level when standing, and exhaust chuffs (short band-passed noise bursts with a low thump) scheduled by distance travelled, one per 0.22 wagon lengths, in groups of four with the first slightly stronger. Add `moved(distance)` handling so chuffs follow real movement: change `play(type)` to `play(type, event)` and update the call in `index.js` `handleEvents()`.
-- [ ] Soften the chuffs as speed settles and cut them cleanly on stop; keep `setSpeed` for the hiss level; cap simultaneous noise sources so a long run does not pile up nodes.
-- [ ] Replace the win chime with a two-note steam whistle (two detuned tones with breath noise and a slight pitch rise). Keep the existing coupling clank, buffer thump, point click and error tones.
-- [ ] Keep the public API (`resume`, `play`, `setSpeed`, `setEnabled`, `destroy`), Mute, `soundEnabled` and the resume-on-first-gesture behaviour; `destroy()` must stop the hiss loop and close the context.
+- ✅ Replace the diesel oscillators in `audio.js` with a steam voice: a looped filtered-noise hiss at low level when standing, and exhaust chuffs (short band-passed noise bursts with a low thump) scheduled by distance travelled, one per 0.22 wagon lengths, in groups of four with the first slightly stronger. Add `moved(distance)` handling so chuffs follow real movement: change `play(type)` to `play(type, event)` and update the call in `index.js` `handleEvents()`.
+- ✅ Soften the chuffs as speed settles and cut them cleanly on stop; keep `setSpeed` for the hiss level; cap simultaneous noise sources so a long run does not pile up nodes.
+- ✅ Replace the win chime with a two-note steam whistle (two detuned tones with breath noise and a slight pitch rise). Keep the existing coupling clank, buffer thump, point click and error tones.
+- ✅ Keep the public API (`resume`, `play`, `setSpeed`, `setEnabled`, `destroy`), Mute, `soundEnabled` and the resume-on-first-gesture behaviour; `destroy()` must stop the hiss loop and close the context.
+  - **Assumption:** `PUFF_DISTANCE` duplicated in `audio.js` (comment names `effects.js`) rather than imported.
+  - Item statuses for the four items were flipped together at the end, not one by one.
 
 ### Verification Plan
 - `npm test` passes.
@@ -281,7 +283,8 @@ Effort: medium
 - In a Playwright one-off, wrap `AudioContext.prototype.createBufferSource` to count calls, drive Forward for 2 s and expect between 4 and 20 chuff sources, then Stop and expect the count to stop rising within 0.5 s; toggle Mute and expect no new sources while driving.
 
 ### Phase Summary
-_(write when phase completes)_
+`audio.js` now has a steam voice: one looped band-passed noise hiss (the only looping buffer source, started on first gesture), chuffs (noise burst plus 75-42 Hz thump, first of each group of four stronger, softer at low speed, capped at 8 live, dropped when muted) driven by `play('moved', event)` with one chuff per 0.22 wagon lengths, and a two-note whistle for the win; `index.js` passes the event through. `PUFF_DISTANCE` is duplicated in `audio.js` with a comment naming `effects.js` (importing effects would pull DOM code into audio). Setting speed to 0 resets the chuff accumulator.
+One-off (Edge, real button clicks, temp spec deleted): hiss loop 1 source after first gesture; Forward for 2 s gave 9 chuff sources (limit 4-20); after Stop the count rose by 2 during the 0.5 s deceleration then stayed flat; muted while driving at speed 1.2: 0 new sources. `npm test` 135 pass, `inglenook.spec` 13 pass, no console errors. Not checked by ear (browser muted); Phase 8 needs nothing from this phase.
 
 ## Phase 8: HUD restyle, e2e, docs and after shots
 Status: Not started

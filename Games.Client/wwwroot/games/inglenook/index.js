@@ -127,7 +127,7 @@ export function mount(container, options = {}) {
     function handleEvents() {
         for (const e of sim.drainEvents()) {
             for (const l of listeners) l(e);
-            audio.play(e.type);
+            audio.play(e.type, e);
             renderer.onEvent(e);
             if (e.type === 'uncoupleBlocked') ui.toast(e.reason === 'moving' ? 'Stop the loco before uncoupling.' : 'Move the wagons clear of the points before uncoupling.');
             else if (MESSAGES[e.type]) ui.toast(MESSAGES[e.type]);
