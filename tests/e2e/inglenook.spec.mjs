@@ -106,3 +106,50 @@ for (const [w, h] of VIEWPORTS) {
         }
     });
 }
+
+// effects (steam, shadows, quality fallback)
+test('steam appears while driving at high quality, and goes with shadows when quality drops to low', async ({ page }) => {
+    const errors = await open(page);
+    expect(await page.evaluate(() => window.__ig.quality)).toBe('high');
+    await expect(page.locator('.ig-vshadow')).not.toHaveCount(0);
+    await page.getByRole('button', { name: 'Forward' }).click();
+    await page.waitForTimeout(1000);
+    expect(await page.locator('.ig-steam').count()).toBeGreaterThan(0);
+    await page.evaluate(() => window.__ig.setQuality('low'));
+    await expect(page.locator('.ig-steam')).toHaveCount(0);
+    await expect(page.locator('.ig-vshadow')).toHaveCount(0);
+    await expect(page.locator('.ig-weather')).toHaveCount(0);
+    await page.waitForTimeout(500);
+    await expect(page.locator('.ig-steam')).toHaveCount(0); // and none are made afterwards
+    expect(errors).toEqual([]);
+});
+
+test('reduced motion: no steam while driving', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const errors = await open(page);
+    await page.getByRole('button', { name: 'Forward' }).click();
+    await page.waitForTimeout(1000);
+    expect(await page.evaluate(() => window.__ig.sim.speed)).toBeGreaterThan(0);
+    await expect(page.locator('.ig-steam')).toHaveCount(0);
+    expect(errors).toEqual([]);
+});
+
+test('frame time while driving on level 61 averages under 20 ms', async ({ page }) => {
+    const errors = await open(page, 61);
+    await page.getByRole('button', { name: 'Forward' }).click();
+    const avg = await page.evaluate(() => new Promise(resolve => {
+        const times = [];
+        let last = performance.now();
+        const end = last + 3000;
+        const tick = now => {
+            times.push(now - last); last = now;
+            if (now < end) requestAnimationFrame(tick); else resolve(times.reduce((a, b) => a + b, 0) / times.length);
+        };
+        requestAnimationFrame(tick);
+    }));
+    console.log(`IG_FRAME_AVG ${avg.toFixed(2)} ms`);
+    expect(avg).toBeLessThan(20);
+    expect(await page.evaluate(() => window.__ig.quality)).toBe('high');
+    console.log(`IG_DOM_MOVING ${await page.evaluate(() => document.querySelectorAll('.ig-board *').length)}`);
+    expect(errors).toEqual([]);
+});

@@ -105,11 +105,12 @@ export function drawWagon(parent, w, ctx) {
 
     // weathering: grime streaks, rust patches and brake dust, varying per wagon; skipped on a slow device
     if (ctx?.quality !== 'low') {
-        if (tex) el('rect', { x: -L / 2, y: -H / 2, width: L, height: H, rx: 0.03, fill: `url(#${tex.grime})`, opacity: (spec.weathering * 0.6).toFixed(2), transform: spec.seed & 2 ? 'scale(-1 1)' : '' }, body);
+        const wx = el('g', { class: 'ig-weather' }, body); // one group so render.js can drop it when quality falls
+        if (tex) el('rect', { x: -L / 2, y: -H / 2, width: L, height: H, rx: 0.03, fill: `url(#${tex.grime})`, opacity: (spec.weathering * 0.6).toFixed(2), transform: spec.seed & 2 ? 'scale(-1 1)' : '' }, wx);
         const patches = w.stuck ? 5 : Math.round(spec.weathering * 4);
         for (let i = 0; i < patches; i++)
-            el('ellipse', { cx: ((rand() - 0.5) * 0.85).toFixed(3), cy: ((rand() - 0.5) * 0.4).toFixed(3), rx: (0.03 + rand() * 0.06).toFixed(3), ry: (0.02 + rand() * 0.03).toFixed(3), fill: '#8a4a22', opacity: (0.25 + rand() * 0.35).toFixed(2) }, body);
-        for (const sx of [-1, 1]) el('rect', { x: sx * 0.3 - 0.07, y: -H / 2 + 0.01, width: 0.14, height: H - 0.02, fill: 'rgba(40,25,15,0.18)', rx: 0.04 }, body); // brake dust over the axles
+            el('ellipse', { cx: ((rand() - 0.5) * 0.85).toFixed(3), cy: ((rand() - 0.5) * 0.4).toFixed(3), rx: (0.03 + rand() * 0.06).toFixed(3), ry: (0.02 + rand() * 0.03).toFixed(3), fill: '#8a4a22', opacity: (0.25 + rand() * 0.35).toFixed(2) }, wx);
+        for (const sx of [-1, 1]) el('rect', { x: sx * 0.3 - 0.07, y: -H / 2 + 0.01, width: 0.14, height: H - 0.02, fill: 'rgba(40,25,15,0.18)', rx: 0.04 }, wx); // brake dust over the axles
     }
 
     const label = el('g', { class: 'ig-label' }, g); // kept upright
@@ -168,7 +169,7 @@ export function drawLoco(parent, ctx) {
     // red buffer beams and headlamp
     for (const sx of [-1, 1]) el('rect', { x: sx < 0 ? -hx : hx - 0.05, y: -H / 2, width: 0.05, height: H, fill: '#a3241f', stroke: '#3a0c0a', 'stroke-width': 0.01 }, body);
     el('circle', { cx: hx - 0.1, cy: 0, r: 0.03, fill: '#fff1b0' }, body);
-    if (ctx?.quality !== 'low' && tex) el('rect', { x: -hx, y: -H / 2, width: L, height: H, rx: 0.03, fill: `url(#${tex.grime})`, opacity: 0.3 }, body);
+    if (ctx?.quality !== 'low' && tex) el('rect', { class: 'ig-weather', x: -hx, y: -H / 2, width: L, height: H, rx: 0.03, fill: `url(#${tex.grime})`, opacity: 0.3 }, body);
     return g;
 }
 

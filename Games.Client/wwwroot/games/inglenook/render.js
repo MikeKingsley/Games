@@ -5,6 +5,7 @@ import { drawTrack } from './draw-track.js';
 import { drawWagon, drawLoco, drawCoupling } from './draw-stock.js';
 import { drawScenery } from './draw-scenery.js';
 import { createTextures } from './textures.js';
+import { createEffects } from './effects.js';
 
 export { BODY_W } from './draw-stock.js';
 
@@ -48,6 +49,7 @@ export function createRenderer(svg, layout, handlers = {}, opts = {}) {
     const ctx = { defs, textures: createTextures(defs), quality: 'high', seed: opts.level ?? 0, reducedMotion: !!opts.reducedMotion, labelEls, isTurned: () => turned };
     const scenery = drawScenery(layers, layout, [], ctx); // plans the yard from the level seed
     const trackArt = drawTrack(layers, layout, ctx);
+    const effects = createEffects(layers, ctx);
 
     const vehicleEls = {};
     let hookKey = '';
@@ -66,6 +68,7 @@ export function createRenderer(svg, layout, handlers = {}, opts = {}) {
         update(sim, dt) {
             trackArt.update(sim, dt);
             const poses = sim.poses();
+            effects.update(sim, poses, dt); // shadows, steam and the squeeze/slack/rocking offsets (render-only)
             for (const v of poses) {
                 let ve = vehicleEls[v.id];
                 if (!ve) {
@@ -73,8 +76,9 @@ export function createRenderer(svg, layout, handlers = {}, opts = {}) {
                     const art = v.kind === 'loco' ? drawLoco(root, ctx) : drawWagon(root, v, ctx);
                     ve = vehicleEls[v.id] = { root, art, label: art.querySelector('.ig-label') };
                 }
-                const deg = v.angle * 180 / Math.PI;
-                ve.root.setAttribute('transform', `translate(${v.x} ${v.y}) rotate(${deg})`);
+                const o = effects.offsetOf(v.id);
+                const deg = v.angle * 180 / Math.PI + o.rot;
+                ve.root.setAttribute('transform', `translate(${v.x + o.x} ${v.y + o.y}) rotate(${deg})`);
                 if (v.kind === 'loco') ve.art.setAttribute('transform', v.flip ? 'scale(-1 1)' : '');
                 // always upright on screen, whichever way the wagon faces (reversing must not flip the number) and however the yard is turned
                 if (ve.label) ve.label.setAttribute('transform', `rotate(${-deg - (turned ? 90 : 0)})`);
@@ -95,10 +99,16 @@ export function createRenderer(svg, layout, handlers = {}, opts = {}) {
                 hookEls[i].setAttribute('transform', `translate(${h.x} ${h.y}) rotate(${deg})`);
             });
         },
-        onEvent(e) { trackArt.onEvent(e); },
-        reset() {},
-        setQuality(q) { ctx.quality = q; scenery.setQuality(q); },
+        onEvent(e) { trackArt.onEvent(e); effects.onEvent(e); },
+        reset() { effects.reset(); },
+        setQuality(q) {
+            ctx.quality = q;
+            scenery.setQuality(q);
+            effects.setQuality(q);
+            if (q === 'low') for (const w of [...svg.querySelectorAll('.ig-weather')]) w.remove(); // weathering is read only when a vehicle is first drawn, so drop it here
+        },
         destroy() {
+            effects.destroy();
             svg.removeEventListener('pointerdown', onPointerDown);
             resizeObserver?.disconnect();
             while (svg.firstChild) svg.removeChild(svg.firstChild);

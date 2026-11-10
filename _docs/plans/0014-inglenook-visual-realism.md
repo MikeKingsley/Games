@@ -233,20 +233,24 @@ Sun/shadows: `SUN` = (0.78, 0.62), so shadows fall down-right in yard coordinate
 `layout.bounds` and the yard size are unchanged (scenery fits inside; the shed, apron and lorry may come to 0.6 of the goal siding). Level 61 now renders 1043 `.ig-board` elements (budget 4500, assertion updated in the shots spec). Checks: `npm test` 130, `inglenook.spec` 10, `inglenook.shots` 11 pass; all six full-board PNGs read and meet the criteria.
 
 ## Phase 6: Motion, effects and quality fallback
-Status: Not started
+Status: Complete
 Depends on: 3, 4, 5
 Files: Games.Client/wwwroot/games/inglenook/effects.js, quality.js, render.js, index.js; tests/js/inglenook.quality.test.mjs; tests/e2e/inglenook.spec.mjs
 Model: sonnet
 Effort: medium
 
-- [ ] Add `quality.js` (DOM-free): `createQualityMonitor({ reducedMotion })` with `sample(dtMs)` and `level`. Start at `high`; step down to `low` when the average frame time over a 2 s window exceeds 22 ms for two consecutive windows; never step back up; ignore single frames over 250 ms (tab switches). Unit-test these rules.
-- [ ] Wire it in `index.js`: call `sample` every frame and `renderer.setQuality(level)` on change; expose `quality` and `setQuality(q)` on `window.__ig` for tests. `reducedMotion` turns off particles, rocking, squeeze and blade tweens regardless of quality.
-- [ ] `effects.js` vehicle shadows: one offset dark rounded shape per vehicle in the `shadows` layer, following position and angle, no filter; hidden at quality `low`.
-- [ ] Steam and smoke from the pannier's chimney in the `steam` layer: puffs emitted in time with distance travelled (one puff per 0.22 wagon lengths, matching the Phase 7 chuff), drifting with a fixed wind, growing and fading over about 1.5 s; a faint wisp from the safety valve when standing; a short burst of drain-cock steam at the front when starting from rest. Pool at most 40 elements and reuse them; none at quality `low`.
-- [ ] Buffer squeeze and coupling slack: on `coupled`, `buffer` and `bumped` the vehicles nearest the contact close up by a few hundredths of a wagon length and spring back over 250 ms; on starting to pull, gaps open by the same amount one wagon after another. Purely a render offset: the simulation state, win check and hook hit positions are never changed.
-- [ ] Gentle rocking: while moving, each vehicle gets a tiny seeded sway (under 0.6 degrees) that settles when stopped.
-- [ ] `reset()` (called on undo and on level start) clears particles and any running squeeze so nothing animates across a teleport; `destroy()` removes everything.
-- [ ] Extend `tests/e2e/inglenook.spec.mjs`: (a) drive Forward for 1 s and expect steam elements to exist at quality `high`; (b) call `__ig.setQuality('low')` and expect no steam or shadow elements; (c) with `page.emulateMedia({ reducedMotion: 'reduce' })` expect no steam while driving; (d) measure 3 s of `requestAnimationFrame` intervals while driving on level 61 and expect the average under 20 ms.
+- ✅ Add `quality.js` (DOM-free): `createQualityMonitor({ reducedMotion })` with `sample(dtMs)` and `level`. Start at `high`; step down to `low` when the average frame time over a 2 s window exceeds 22 ms for two consecutive windows; never step back up; ignore single frames over 250 ms (tab switches). Unit-test these rules.
+- ✅ Wire it in `index.js`: call `sample` every frame and `renderer.setQuality(level)` on change; expose `quality` and `setQuality(q)` on `window.__ig` for tests. `reducedMotion` turns off particles, rocking, squeeze and blade tweens regardless of quality.
+- ✅ `effects.js` vehicle shadows: one offset dark rounded shape per vehicle in the `shadows` layer, following position and angle, no filter; hidden at quality `low`.
+  - Class `.ig-vshadow` (black, opacity 0.3, offset `shadowOffset(0.3)`); at `low` the elements are removed, not hidden. `effects.js` also exposes `offsetOf(id)` (render offsets used by `render.js`).
+- ✅ Steam and smoke from the pannier's chimney in the `steam` layer: puffs emitted in time with distance travelled (one puff per 0.22 wagon lengths, matching the Phase 7 chuff), drifting with a fixed wind, growing and fading over about 1.5 s; a faint wisp from the safety valve when standing; a short burst of drain-cock steam at the front when starting from rest. Pool at most 40 elements and reuse them; none at quality `low`.
+  - Puff rule: one puff per `PUFF_DISTANCE` = 0.22 wagon lengths of loco travel (measured from loco pose deltas, exported from `effects.js`); puffs are `.ig-steam` circles (pool of at most 40, lazily created, 1.5 s life, fixed wind); a wisp from the safety valve every 0.5 s while standing; two drain-cock puffs at the front on starting from rest. At `low` or reduced motion no steam elements exist.
+  - Outside the Files line: `draw-stock.js` now puts weathering in a `.ig-weather` group (loco grime rect carries the class) so `render.js` `setQuality('low')` can remove it from vehicles already drawn.
+- ✅ Buffer squeeze and coupling slack: on `coupled`, `buffer` and `bumped` the vehicles nearest the contact close up by a few hundredths of a wagon length and spring back over 250 ms; on starting to pull, gaps open by the same amount one wagon after another. Purely a render offset: the simulation state, win check and hook hit positions are never changed.
+  - Render offsets only (`effects.offsetOf(id)` added to the pose in `render.js`); hooks and sim untouched. Squeeze 0.04 wagon lengths over 0.25 s along the last travel direction, graded by rank from the contact end (events carry no vehicle ids). Slack 0.018 per gap (capped at 4 gaps), each wagon 50 ms after the previous, 0.35 s.
+- ✅ Gentle rocking: while moving, each vehicle gets a tiny seeded sway (under 0.6 degrees) that settles when stopped.
+- ✅ `reset()` (called on undo and on level start) clears particles and any running squeeze so nothing animates across a teleport; `destroy()` removes everything.
+- ✅ Extend `tests/e2e/inglenook.spec.mjs`: (a) drive Forward for 1 s and expect steam elements to exist at quality `high`; (b) call `__ig.setQuality('low')` and expect no steam or shadow elements; (c) with `page.emulateMedia({ reducedMotion: 'reduce' })` expect no steam while driving; (d) measure 3 s of `requestAnimationFrame` intervals while driving on level 61 and expect the average under 20 ms.
 
 ### Verification Plan
 - `npm test` passes (quality tests included).
@@ -255,7 +259,9 @@ Effort: medium
 - Run the win test again and confirm moves still equal par (`__ig.solve()` gives three stars): effects did not alter the simulation.
 
 ### Phase Summary
-_(write when phase completes)_
+`quality.js` (2 s windows, >22 ms twice in a row steps to `low`, never back up, frames over 250 ms ignored; 5 tests, `npm test` 135) is wired in `index.js` (session-long monitor, re-applied to each new renderer); `effects.js` adds `.ig-vshadow` shapes (shadows layer) and `.ig-steam` circles (steam layer, pool of 40), plus render-only squeeze, slack and rocking via `effects.offsetOf(id)`. At `low` (or via `__ig.setQuality('low')`) shadows, steam and `.ig-weather` groups are removed; `reducedMotion` drops particles, squeeze, rocking and blade tweens.
+Puff rule for Phase 7: one puff per `PUFF_DISTANCE` = 0.22 wagon lengths of loco travel (exported from `effects.js`, measured from pose deltas, so it matches `moved` distance); at 1.2 wagon lengths/s that is about 5.5 chuffs per second. `window.__ig` now also exposes `quality` (getter) and `setQuality(q)`.
+Level 61 while driving: average frame 9.4-9.6 ms over 3 s (limit 20), 1075 `.ig-board` elements (budget 4500; 1066 at rest in the shots spec). Wind was tuned to (0.14, -0.34) so steam lifts clear of the loco; shadows are subtle on the dark cinder ground. Checks: `inglenook.spec` 13 pass, `inglenook.shots` 11 pass, win test still gives three stars.
 
 ## Phase 7: Steam sound
 Status: Not started

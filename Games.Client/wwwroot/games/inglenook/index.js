@@ -5,6 +5,7 @@ import { generateLevel } from './levels.js';
 import { buildSetup, checkWin, movesOf, starsFor, normalizeProgress } from './logic.js';
 import { createAudio } from './audio.js';
 import { createRenderer } from './render.js';
+import { createQualityMonitor } from './quality.js';
 import { createUi } from './ui.js';
 import { UNDO_LIMIT } from './config.js';
 
@@ -39,6 +40,15 @@ export function mount(container, options = {}) {
     let last = 0;
     let acc = 0;
     let listeners = [];
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    const monitor = createQualityMonitor({ reducedMotion }); // lives for the whole session so a slow device stays on 'low' across levels
+    let quality = 'high';
+
+    function applyQuality(q) {
+        if (q === quality) return;
+        quality = q;
+        renderer?.setQuality(q);
+    }
 
     const ui = createUi(container, {
         onExit: () => options.onExit?.(),
@@ -75,7 +85,8 @@ export function mount(container, options = {}) {
         renderer = createRenderer(ui.svg, layout, {
             onPoint: id => { if (!won) { snapshot(); if (!sim.togglePoint(id)) undoStack.pop(); } },
             onCoupling: (rakeId, index) => { if (!won) { snapshot(); if (!sim.uncouple(rakeId, index)) undoStack.pop(); } },
-        }, { level: level.n, reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false });
+        }, { level: level.n, reducedMotion });
+        if (quality !== 'high') renderer.setQuality(quality);
         progress.level = level.n;
         ui.setLevel(level, progress.best[level.n]?.stars ?? 0);
         ui.setMoves(0, level.par);
@@ -127,6 +138,8 @@ export function mount(container, options = {}) {
     function frame(now) {
         raf = requestAnimationFrame(frame);
         const dt = Math.min(0.05, (now - last) / 1000 || 0);
+        if (!paused) monitor.sample(now - last);
+        if (monitor.level === 'low') applyQuality('low'); // only ever steps down
         last = now;
         if (!paused && !won) {
             acc += dt;
@@ -170,6 +183,8 @@ export function mount(container, options = {}) {
             get level() { return level; },
             get won() { return won; },
             progress,
+            get quality() { return quality; },
+            setQuality: q => applyQuality(q),
             start: n => startLevel(n),
             onEvent: fn => { listeners.push(fn); },
             // run the solver's moves through the real simulation (fast-forwarded), as a player would
