@@ -287,18 +287,18 @@ Effort: medium
 One-off (Edge, real button clicks, temp spec deleted): hiss loop 1 source after first gesture; Forward for 2 s gave 9 chuff sources (limit 4-20); after Stop the count rose by 2 during the 0.5 s deceleration then stayed flat; muted while driving at speed 1.2: 0 new sources. `npm test` 135 pass, `inglenook.spec` 13 pass, no console errors. Not checked by ear (browser muted); Phase 8 needs nothing from this phase.
 
 ## Phase 8: HUD restyle, e2e, docs and after shots
-Status: Not started
+Status: Complete
 Depends on: 6, 7
 Files: Games.Client/wwwroot/games/inglenook/styles.css, ui.js; tests/e2e/inglenook.spec.mjs; README.md; _docs/plans/0014-shots/after/
 Model: sonnet
 Effort: medium
 
-- [ ] Restyle the HUD in `styles.css` with a light period touch: Western Region chocolate and cream, enamel-sign style title and level plate, the Gill Sans style font stack, buttons as cream enamel plates with dark lettering (Forward/Reverse/Stop keep clearly different colours and their `.on` state). Same layout, same element sizes; every button stays at least 44 px.
-- [ ] Goal strip as a shunter's wagon list: a cream card with a ruled line and the chips in order; chips keep their colour, number and shape and must match the wagons' ID panels. Keep the wording "Make up exactly this train on the long siding, nearest the points first:".
-- [ ] Restyle the win panel and toast to match. Change the Mute icon only if needed for contrast.
-- [ ] Run the six phone-fit viewports in `inglenook.spec.mjs` and fix any overflow caused by the restyle or by the longer headshunt.
-- [ ] Update `README.md` Inglenook section: the pannier tank replaces "a small diesel shunter", curved pointwork, code-generated textures, effects and automatic quality fallback, steam sound, and the new files in the Code table.
-- [ ] Capture the after set: run the shots spec with `IG_SHOTS=after` so `_docs/plans/0014-shots/after/` holds the same eight PNGs as `before/`.
+- ✅ Restyle the HUD in `styles.css` with a light period touch: Western Region chocolate and cream, enamel-sign style title and level plate, the Gill Sans style font stack, buttons as cream enamel plates with dark lettering (Forward/Reverse/Stop keep clearly different colours and their `.on` state). Same layout, same element sizes; every button stays at least 44 px.
+- ✅ Goal strip as a shunter's wagon list: a cream card with a ruled line and the chips in order; chips keep their colour, number and shape and must match the wagons' ID panels. Keep the wording "Make up exactly this train on the long siding, nearest the points first:".
+- ✅ Restyle the win panel and toast to match. Change the Mute icon only if needed for contrast.
+- ✅ Run the six phone-fit viewports in `inglenook.spec.mjs` and fix any overflow caused by the restyle or by the longer headshunt.
+- ✅ Update `README.md` Inglenook section: the pannier tank replaces "a small diesel shunter", curved pointwork, code-generated textures, effects and automatic quality fallback, steam sound, and the new files in the Code table.
+- ✅ Capture the after set: run the shots spec with `IG_SHOTS=after` so `_docs/plans/0014-shots/after/` holds the same eight PNGs as `before/`.
 
 ### Verification Plan
 - `npm test` passes.
@@ -308,10 +308,45 @@ Effort: medium
 - `git status --short` is clean after the checkpoint commit; nothing was pushed (`git log origin/main..HEAD --oneline` lists only this plan's commits).
 
 ### Phase Summary
-_(write when phase completes)_
+HUD restyled in `styles.css` only (no `ui.js` change): chocolate bars with cream rules drawn by inset box-shadow (no added height), uppercase title, cream level plate, cream-card goal strip with a ruled bottom line (wording and chips untouched), cream enamel buttons (Forward/Reverse/Stop keep distinct colours, `.on` gets a chocolate ring), chocolate toast and win panel, Gill Sans stack; mute icon unchanged. Layout and button sizes unchanged, all selectors kept.
+README Inglenook section updated (pannier, curves, textures, effects and quality fallback, steam sound, new files in the Code table); after set captured to `_docs/plans/0014-shots/after/` (8 PNGs, `before/` untouched).
+Checks: `npm test` 135 pass, `dotnet test Games.slnx` 27 pass, full `npx playwright test` 106 pass (incl. 13 inglenook.spec with six phone-fit viewports unchanged, 11 shots); ID panel min 10.5 px at 844x390 and 10.1 px at 390x844. Mute button looks faded as before (pre-existing emoji styling).
 
 ## Final Recap
-_(write when all phases complete: summary of the entire piece of work)_
+All eight phases are complete on `feature/inglenook-realism` (branched from `origin/main` 5a89883), one local commit per phase, nothing pushed. Each phase ran in a sonnet subagent; the orchestrating session reviewed screenshots and made the commits.
+
+**What changed**
+- **Track:** centre-lines are straights and true circular arcs (`TURNOUT_RADIUS` 3.5, fan angle about 42 degrees, ladder angle about 31 degrees); every leg leaves its point tangent to the toe. Vehicles sit on curves by two axle points.
+- **Loco:** a GWR 64xx pannier tank in BR green at true scale (`LOCO_LEN` 1.7), replacing the diesel shunter.
+- **Wagons:** four period types chosen from the wagon number (mineral with coal, ribbed-roof van, planked or sheeted open, tank), weathered, each with a bold ID panel matching the goal chips. Stuck wagons look crippled. Couplings are three-link chains with a yellow ring.
+- **Ground and trackwork:** code-generated textures (grass, cinder, ballast, setts, timber, coal, grime), two rails with joints, frogs, check rails, moving switch blades, rail-built buffer stops, weighted ground levers with a yellow marker.
+- **Scenery and light:** one composed goods yard per layout from a tested planner (shed, apron, lorry, signal box, staithes, water tower, office, lamps, fence, trees), seeded clutter per level, daylight shadows.
+- **Motion and sound:** chimney steam timed to distance, vehicle shadows, buffer squeeze, coupling slack, rocking; a frame-rate monitor that steps quality down and honours reduced motion; synthesised steam hiss, chuffs and a whistle.
+- **HUD:** chocolate and cream restyle in `styles.css` only; layout, sizes and selectors unchanged.
+
+**Evidence that puzzles did not change:** the level snapshot test (levels 1, 5, 10, 20, 25, 26, 61, 100) and the "exactly par uncouplings" test pass unmodified. Final counts: `npm test` 135 pass, `dotnet test Games.slnx` 27 pass, full `npx playwright test` 106 pass. Level 61 renders about 1,075 elements while moving (budget 4,500) at about 9.4 ms per frame (limit 20 ms). Before and after screenshots are in `_docs/plans/0014-shots/`.
+
+**Deviations from the plan**
+- The unused `loop` template's loop track is shorter (10.065, was 10.374; capacity 3, was 4). No level uses that template.
+- Wagon and loco bodies are 0.62 wide (`BODY_W`, was 0.5) so the wagon type shows around the ID panel.
+- The tank wagon is mid-grey, not black, so it does not read as a second coal wagon.
+- The shed, apron and lorry may come within 0.6 of the goal siding (the plan allowed that for the platform edge only).
+- Several phases made small edits outside their `Files:` line (`draw-track.js` in phase 2, `render.js` and the shots spec in phases 3 to 6, `draw-stock.js` in phase 6); each is noted under its item.
+
+**Known weak spots**
+- Wagon types are only modestly different at phone scale, because the required ID panel covers most of each wagon; mineral and tank are the closest pair.
+- Coal heaps and staithe coal read as large dark blobs. On `classic` the shed sits above the headshunt, not beside the goal siding; on `ladder5` the staithes sit by the top siding.
+- Vehicle shadows are faint on the dark cinder ground.
+- Not checked: how the steam sound sounds (the test browser is muted); how squeeze, slack and rocking look in motion; the automatic quality step-down on a real slow device (unit-tested and forced by hand only).
+- The ID panel is 10.1 px tall at 390x844 against a 10 px assertion, so there is almost no room to shrink the board in portrait.
+
+No C#/.NET types changed, so code docs were not refreshed.
 
 ## Deployment Plan
-_(write when all phases complete: step-by-step deployment instructions)_
+Nothing is deployed yet: the work is local commits on `feature/inglenook-realism`.
+
+1. **Play it locally first.** `dotnet run --project Games.Client` (or the repo's usual dev command), open Inglenook, and check by eye and ear what the tests could not: the steam sound, squeeze and rocking while shunting, and a phone in both orientations. Try levels 1, 20, 25, 26 and 61 (one per layout, plus a stuck wagon).
+2. **Open a pull request.** Run the `commit-and-pr` skill from this worktree. It pushes `feature/inglenook-realism` and opens a PR to `main`; there is nothing uncommitted to add.
+3. **Merge to `main`.** Every push to `main` runs `.github/workflows/pages.yml` (tests, then publish, then GitHub Pages), so merging the PR deploys to https://mikekingsley.github.io/Games/ . No config, data or saved-progress migration is needed: the saved progress format is unchanged.
+4. **Check the live site.** Installed and open copies show the "New version ready" pill; tap Update, then confirm Inglenook loads with the new yard and no 404s for the new files (`svg.js`, `noise.js`, `textures.js`, `draw-track.js`, `draw-stock.js`, `draw-scenery.js`, `scenery-plan.js`, `effects.js`, `quality.js`), and that it still starts offline after one online visit.
+5. **Roll back** if needed by reverting the merge commit on `main`; the workflow republishes the previous version.

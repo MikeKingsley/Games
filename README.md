@@ -66,7 +66,7 @@ The background and the animals change with the level (defined in `WORLDS` in `an
 
 ## Inglenook
 
-A top-down 2D SVG shunting puzzle set in a UK goods yard in the 1960s: a small diesel shunter, 16-ton mineral wagons, vans and tank wagons (generic period styling, no real logos). Make up the train shown in the goal strip on the long siding, nearest the points first. For older kids and adults. Levels are endless: level N is always the same level (seeded) and is always solvable.
+A top-down 2D SVG shunting puzzle set in a UK goods yard in the 1960s: a GWR 64xx pannier tank in BR green, 16-ton mineral wagons, vans, open wagons and tank wagons (generic period styling, no real logos). The yard is drawn in plan view with true curved pointwork, code-generated textures (no image files), daylight shadows, steam from the chimney and a composed goods yard per layout. The game measures its frame rate and quietly drops steam and soft shadows on a slow device, and honours the reduce-motion setting. Sound is synthesised steam: chuffs timed to the wheels, a hiss when standing and a whistle for the win. Puzzles, par and controls are unchanged by the visuals. Make up the train shown in the goal strip on the long siding, nearest the points first. For older kids and adults. Levels are endless: level N is always the same level (seeded) and is always solvable.
 
 ### Controls
 
@@ -90,12 +90,15 @@ A top-down 2D SVG shunting puzzle set in a UK goods yard in the 1960s: a small d
 
 | File | What |
 |---|---|
-| `index.js`, `ui.js`, `styles.css` | Mount/unmount, game loop, undo, HUD and controls |
-| `render.js` | SVG board: track, scenery, wagons, shunter, point levers, coupling hooks |
-| `track.js`, `layouts.js` | Track graph, points, walking along tracks, foul zones, layout templates and validation |
+| `index.js`, `ui.js`, `styles.css` | Mount/unmount, game loop, undo, HUD and controls (chocolate and cream period styling) |
+| `render.js`, `svg.js` | SVG board: layers, turning and fitting the yard, input, per-frame update |
+| `draw-track.js`, `draw-stock.js`, `draw-scenery.js` | Drawing: ground, rails, pointwork and levers; wagons, pannier tank and couplings; buildings, lamps, trees and shadows |
+| `scenery-plan.js`, `noise.js`, `textures.js` | DOM-free scenery placement and seeded noise; textures painted in code at load time |
+| `effects.js`, `quality.js` | Steam, vehicle shadows, squeeze and rocking; frame-rate monitor that drops effects on slow devices |
+| `track.js`, `layouts.js` | Track graph (straights and true arcs), points, walking along tracks, foul zones, layout templates and validation |
 | `sim.js` | Train simulation: rakes, easing, buffers, auto-couple, uncouple, points |
 | `solver.js`, `levels.js`, `logic.js` | Abstract solver (par), seeded level generator, win check, stars, progress |
-| `autoplay.js`, `audio.js`, `config.js` | Plays solver moves through the sim (tests/debug), WebAudio synth, constants |
+| `autoplay.js`, `audio.js`, `config.js` | Plays solver moves through the sim (tests/debug), WebAudio steam synth, constants |
 
 Logic is DOM-free and tested in Node (`tests/js/inglenook.*.test.mjs`); `tests/e2e/inglenook.spec.mjs` drives the real game. **Debug hook** (Development environment only): `window.__ig` exposes `sim`, `level`, `won`, `start(n)`, `solve()` (plays the solver's moves through the sim) and `onEvent(fn)`.
 
