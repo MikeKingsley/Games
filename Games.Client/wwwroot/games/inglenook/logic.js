@@ -35,11 +35,11 @@ export function buildSetup(level) {
     return { vehicles, rakes };
 }
 
-/** True when the goal siding's movable wagons, bottom to top, start with the goal order. */
+/** True when the goal siding's movable wagons, bottom to top, are exactly the goal train: right wagons, right order, none extra. */
 export function checkWin(sim, level) {
     const wagons = new Set(level.wagons.filter(w => !w.stuck).map(w => w.id));
     const stack = stackOf(sim, sim.layout.goal).filter(id => wagons.has(id));
-    return level.goal.every((id, i) => stack[i] === id);
+    return stack.length === level.goal.length && level.goal.every((id, i) => stack[i] === id);
 }
 
 /** Uncouplings so far: the "moves" the player is scored on (see solver.js for the model). */

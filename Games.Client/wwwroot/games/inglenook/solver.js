@@ -19,7 +19,7 @@ const STUCK = '#';
 /**
  * start: { H: '', tracks: { id: 'labels bottom->top' } } using one char per wagon: goal wagons 'a','b',... in goal order
  * (position i in the goal), '_' for any other wagon, '#' for a stuck wagon.
- * goal: string of labels bottom->top that must be the movable prefix of the goal siding.
+ * goal: string of labels bottom->top that must be exactly the movable wagons on the goal siding (nothing else may stand there).
  * Returns { par, ops: [{ type: 'pull'|'push', track, count }] } or null when unsolvable within the state cap.
  */
 export function solveAbstract(layout, start, goal, cap = SOLVER_STATE_CAP) {
@@ -34,7 +34,7 @@ export function solveAbstract(layout, start, goal, cap = SOLVER_STATE_CAP) {
         const s = parts[goalIdx];
         let i = 0;
         while (i < s.length && s[i] === STUCK) i++;
-        return s.startsWith(goal, i);
+        return s.length - i === goal.length && s.startsWith(goal, i); // the train is the whole siding: no extra wagons
     };
     const fixedOf = s => { let i = 0; while (i < s.length && s[i] === STUCK) i++; return i; };
     const rev = s => s.split('').reverse().join('');
