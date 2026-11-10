@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getLayout } from '../../Games.Client/wwwroot/games/inglenook/layouts.js';
+import { pointAt } from '../../Games.Client/wwwroot/games/inglenook/track.js';
 import { createSim, pathLength } from '../../Games.Client/wwwroot/games/inglenook/sim.js';
 import { COUPLING_GAP, LOCO_LEN, LOCO_SPEED, WAGON_LEN } from '../../Games.Client/wwwroot/games/inglenook/config.js';
 
@@ -200,4 +201,56 @@ test('rake paths stay as long as the vehicles they carry', () => {
         const span = r.vehicles.reduce((s, id) => s + sim.state.vehicles[id].len, 0) + COUPLING_GAP * (r.vehicles.length - 1);
         assert.ok(Math.abs(pathLength(r.path) - span) < 1e-6);
     }
+});
+
+test('the loco is a true-scale pannier: 1.7 wagon lengths', () => {
+    assert.equal(LOCO_LEN, 1.7);
+    assert.ok(LOCO_LEN > WAGON_LEN * 1.5);
+});
+
+test('on straight track a pose is exactly the centre pose', () => {
+    const sim = threeOnB();
+    for (const id of ['w1', 'w2', 'w3', 'loco']) {
+        const p = pose(sim, id);
+        const centre = pointAt(layout, p.track, p.d);
+        assert.ok(Math.abs(p.x - centre.x) < 1e-9 && Math.abs(p.y - centre.y) < 1e-9, id);
+        assert.ok(Math.abs(p.angle - centre.angle) < 1e-9, id);
+    }
+    // a loco running backwards points the other way, as before
+    const back = createSim(layout, { vehicles: [] });
+    back.setDirection('reverse');
+    run(back, 0.2);
+    assert.ok(Math.abs(Math.abs(pose(back, 'loco').angle) - Math.PI) < 1e-9);
+});
+
+test('a wagon on a curve sits between its two axles and points between their headings', () => {
+    // A starts with a reverse curve; a wagon 3.0 along it has both axles on the second arc
+    const sim = createSim(layout, { vehicles: wagons(1), rakes: [{ track: 'A', flush: 'a', inset: 2.5, vehicles: ['w1'] }] });
+    const p = pose(sim, 'w1');
+    assert.equal(p.track, 'A');
+    assert.ok(Math.abs(p.d - 3.0) < 1e-9, 'track and d stay the centre values');
+    const half = WAGON_LEN * 0.6 / 2;
+    const rear = pointAt(layout, 'A', p.d - half), front = pointAt(layout, 'A', p.d + half);
+    assert.ok(rear.angle < p.angle && p.angle < front.angle, `${rear.angle} < ${p.angle} < ${front.angle}`);
+    assert.ok(Math.abs(p.angle - Math.atan2(front.y - rear.y, front.x - rear.x)) < 1e-12);
+    assert.ok(Math.abs(p.x - (rear.x + front.x) / 2) < 1e-12 && Math.abs(p.y - (rear.y + front.y) / 2) < 1e-12);
+    // it stays within a hair of the centre line
+    const centre = pointAt(layout, 'A', p.d);
+    assert.ok(dist(p, centre) < 0.02 && dist(p, centre) > 0);
+});
+
+test('poses keep following the track through the points', () => {
+    const sim = threeOnB();
+    sim.setDirection('forward'); run(sim, 30);
+    sim.setDirection('reverse'); run(sim, 30);
+    sim.togglePoint('P1');
+    sim.setDirection('forward');
+    let last = null;
+    for (let i = 0; i < 60 * 12; i++) {
+        sim.step(1 / 60);
+        const loco = pose(sim, 'loco');
+        if (last) assert.ok(dist(loco, last) < 0.1, 'the loco never jumps between frames');
+        last = loco;
+    }
+    assert.equal(pose(sim, 'loco').track, 'A');
 });

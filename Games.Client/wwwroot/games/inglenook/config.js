@@ -1,7 +1,7 @@
 // Inglenook tuning constants. Lengths are in wagon lengths, times in seconds.
 export const WAGON_LEN = 1;
 export const COUPLING_GAP = 0.12; // visible gap between coupled vehicles
-export const LOCO_LEN = 1.1;
+export const LOCO_LEN = 1.7; // a 64xx pannier tank is about 1.7 times the length of a 16-ton mineral wagon
 export const LOCO_SPEED = 1.2; // top speed, wagon-lengths per second
 export const ACCEL_TIME = 0.4; // seconds to reach or lose top speed
 export const POINT_CLEARANCE = 1; // a point cannot be thrown with a vehicle this close

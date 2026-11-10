@@ -13,6 +13,8 @@ import { walk, pointAt, pointZones, inFoul, initialPoints, POINT_CLEAR } from '.
 
 const EPS = 1e-7;
 const GAP = COUPLING_GAP;
+const WAGON_WHEELBASE = 0.6; // distance between a wagon's two axles, as a fraction of its length
+const LOCO_WHEELBASE = 0.5; // the pannier's outer axles, as a fraction of its length
 const sgn = p => (p.to >= p.from ? 1 : -1);
 const plen = p => Math.abs(p.to - p.from);
 
@@ -226,15 +228,23 @@ export function createSim(layout, setup) {
         return true;
     }
 
+    const axlePoint = (path, s) => {
+        const pos = poseOnPath(path, s);
+        return pointAt(layout, pos.track, pos.d);
+    };
+
     function poses() {
         const out = [];
         for (const rake of Object.values(S.rakes)) {
             const off = offsets(rake);
             rake.vehicles.forEach((id, i) => {
                 const v = S.vehicles[id];
-                const pos = poseOnPath(rake.path, off[i] + v.len / 2);
-                const pt = pointAt(layout, pos.track, pos.d);
-                out.push({ id, kind: v.kind, rake: rake.id, index: i, track: pos.track, d: pos.d, x: pt.x, y: pt.y, angle: pt.angle + (pos.dir < 0 ? Math.PI : 0), flip: v.facing < 0, len: v.len, stuck: v.stuck, color: v.color, number: v.number, shape: v.shape });
+                const centre = off[i] + v.len / 2;
+                const pos = poseOnPath(rake.path, centre);
+                // a vehicle rests on its two axles: it sits halfway between them, pointing from the rear axle to the front one
+                const half = v.len * (v.kind === 'loco' ? LOCO_WHEELBASE : WAGON_WHEELBASE) / 2;
+                const rear = axlePoint(rake.path, centre - half), front = axlePoint(rake.path, centre + half);
+                out.push({ id, kind: v.kind, rake: rake.id, index: i, track: pos.track, d: pos.d, x: (rear.x + front.x) / 2, y: (rear.y + front.y) / 2, angle: Math.atan2(front.y - rear.y, front.x - rear.x), flip: v.facing < 0, len: v.len, stuck: v.stuck, color: v.color, number: v.number, shape: v.shape });
             });
         }
         return out;

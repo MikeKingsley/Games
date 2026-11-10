@@ -5,7 +5,7 @@
     flex-direction: column;
     background: #2a4d2c;
     color: #f4efe0;
-    font-family: system-ui, sans-serif;
+    font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
     user-select: none;
     -webkit-user-select: none;
     touch-action: manipulation;
@@ -18,12 +18,27 @@
     gap: 6px 14px;
     align-items: center;
     padding: 6px 12px 6px 64px; /* room for the shell gear at top-left */
-    background: rgba(0, 0, 0, 0.4);
+    background: #3b2418; /* Western Region chocolate */
+    box-shadow: inset 0 -2px 0 #d9c79a; /* cream rule, no extra height */
     font-size: 15px;
 }
 
-.ig-title { font-weight: 800; letter-spacing: 0.02em; margin-right: auto; }
-.ig-level { font-weight: 700; }
+/* Enamel nameplate and level plate: cream lettering on chocolate, cream plate with dark lettering */
+.ig-title {
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #f3e6c3;
+    margin-right: auto;
+}
+.ig-level {
+    font-weight: 700;
+    padding: 0 8px;
+    border-radius: 3px;
+    background: #f3e6c3;
+    color: #3b2418;
+    box-shadow: inset 0 0 0 1px #8a6a45;
+}
 .ig-best { color: #ffd966; }
 
 .ig-goalbar {
@@ -32,12 +47,14 @@
     align-items: center;
     gap: 6px 10px;
     padding: 6px 12px;
-    background: rgba(0, 0, 0, 0.25);
+    background: #f3e6c3; /* shunter's wagon list card */
+    color: #3b2418;
+    box-shadow: inset 0 -1px 0 #b9a06a, inset 0 -3px 0 #f3e6c3, inset 0 -4px 0 #b9a06a; /* ruled line */
     font-size: 14px;
 }
 
 .ig-goalstrip { display: inline-flex; gap: 4px; }
-.ig-goalok { color: #7ee07e; font-size: 22px; font-weight: 800; min-width: 1ch; }
+.ig-goalok { color: #1f6b2a; font-size: 22px; font-weight: 800; min-width: 1ch; }
 
 .ig-chip {
     display: inline-flex;
@@ -73,7 +90,8 @@
     align-items: center;
     justify-content: center;
     padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
-    background: rgba(0, 0, 0, 0.4);
+    background: #3b2418;
+    box-shadow: inset 0 2px 0 #d9c79a;
 }
 
 .ig-tools { display: flex; gap: 6px; margin-left: 12px; }
@@ -83,9 +101,10 @@
     min-height: 44px;
     padding: 0 14px;
     border: 0;
-    border-radius: 10px;
-    background: #e8e0c8;
-    color: #222;
+    border-radius: 8px;
+    background: #f3e6c3; /* cream enamel plate */
+    box-shadow: inset 0 0 0 2px #b9a06a;
+    color: #2b1a10;
     font: inherit;
     font-weight: 700;
     cursor: pointer;
@@ -95,10 +114,10 @@
 .ig-btn:focus-visible { outline: 3px solid #ffdf50; outline-offset: 2px; }
 .ig-small { font-size: 14px; padding: 0 12px; }
 
-.ig-drive { min-width: 120px; min-height: 52px; font-size: 18px; background: #cdd8e4; }
-.ig-drive.on { background: #ffdf50; }
-.ig-stop { background: #e2b4ad; }
-.ig-stop.on { background: #ff8a7a; }
+.ig-drive { min-width: 120px; min-height: 52px; font-size: 18px; background: #c9d6c4; }
+.ig-drive.on { background: #ffdf50; box-shadow: inset 0 0 0 3px #3b2418; }
+.ig-stop { background: #e6b3a6; }
+.ig-stop.on { background: #ff8a7a; box-shadow: inset 0 0 0 3px #3b2418; }
 
 .ig-toast {
     position: absolute;
@@ -107,9 +126,10 @@
     transform: translateX(-50%);
     max-width: 90%;
     padding: 8px 16px;
-    border-radius: 10px;
-    background: rgba(20, 20, 20, 0.88);
-    color: #fff;
+    border-radius: 6px;
+    background: #3b2418;
+    box-shadow: inset 0 0 0 2px #d9c79a;
+    color: #f3e6c3;
     font-size: 15px;
     text-align: center;
     pointer-events: none;
@@ -124,13 +144,15 @@
     transform: translate(-50%, -50%);
     width: min(360px, 90%);
     padding: 20px;
-    border-radius: 16px;
-    background: rgba(20, 30, 20, 0.94);
-    border: 2px solid #ffdf50;
+    border-radius: 10px;
+    background: #3b2418;
+    color: #f3e6c3;
+    border: 3px solid #d9c79a;
+    box-shadow: inset 0 0 0 2px #3b2418, inset 0 0 0 3px #b9a06a;
     text-align: center;
 }
 
-.ig-win h2 { margin: 0 0 6px; font-size: 24px; }
+.ig-win h2 { margin: 0 0 6px; font-size: 24px; letter-spacing: 0.06em; text-transform: uppercase; }
 .ig-winstars { font-size: 40px; color: #ffd966; letter-spacing: 6px; }
 .ig-winbuttons { display: flex; gap: 10px; justify-content: center; margin-top: 12px; }
 .ig-next { background: #ffdf50; padding: 0 18px; }

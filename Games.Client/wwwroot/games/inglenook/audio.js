@@ -2,7 +2,7 @@
 export function createAudio(enabled = true) {
     let ctx = null;
     let master = null;
-    let engine = null; // { osc, osc2, gain, filter }
+    let engine = null; // hiss loop: { src, gain, filter }
     let on = enabled;
 
     function ensure() {
@@ -21,27 +21,130 @@ export function createAudio(enabled = true) {
         return ctx;
     }
 
+    // Steam voice. The hiss is one looped filtered-noise source; chuffs are short noise bursts plus a low thump.
+    const PUFF_DISTANCE = 0.22; // same rule as PUFF_DISTANCE in effects.js: one chuff per 0.22 wagon lengths travelled
+    const MAX_CHUFFS = 8; // simultaneous chuff sources; extra chuffs are dropped rather than piling up nodes
+    let noiseBuf = null;
+    let chuffDist = 0; // distance accumulated towards the next chuff
+    let chuffIndex = 0; // position in the group of four
+    let chuffsLive = 0;
+    let level = 0; // 0..1 loco speed, set by setSpeed
+
+    function noiseBuffer(c) {
+        if (!noiseBuf || noiseBuf.sampleRate !== c.sampleRate) {
+            const len = Math.floor(c.sampleRate * 1.5);
+            noiseBuf = c.createBuffer(1, len, c.sampleRate);
+            const data = noiseBuf.getChannelData(0);
+            for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+        }
+        return noiseBuf;
+    }
+
     function startEngine() {
         const c = ensure();
         if (!c || engine) return;
-        const osc = c.createOscillator();
-        const osc2 = c.createOscillator();
-        const filter = c.createBiquadFilter();
-        const gain = c.createGain();
-        osc.type = 'sawtooth';
-        osc2.type = 'square';
-        osc.frequency.value = 38;
-        osc2.frequency.value = 19;
-        filter.type = 'lowpass';
-        filter.frequency.value = 220;
-        gain.gain.value = 0;
-        osc.connect(filter);
-        osc2.connect(filter);
-        filter.connect(gain);
-        gain.connect(master);
-        osc.start();
-        osc2.start();
-        engine = { osc, osc2, gain, filter };
+        try {
+            const src = c.createBufferSource();
+            const filter = c.createBiquadFilter();
+            const gain = c.createGain();
+            src.buffer = noiseBuffer(c);
+            src.loop = true;
+            filter.type = 'bandpass';
+            filter.frequency.value = 3200;
+            filter.Q.value = 0.5;
+            gain.gain.value = 0;
+            src.connect(filter);
+            filter.connect(gain);
+            gain.connect(master);
+            src.start();
+            engine = { src, gain, filter };
+            engine.gain.gain.setTargetAtTime(0.025, c.currentTime, 0.1);
+        } catch { engine = null; }
+    }
+
+    function chuff(strong) {
+        const c = ensure();
+        if (!c || !engine || chuffsLive >= MAX_CHUFFS) return;
+        const soft = 0.45 + 0.55 * level; // softer as the loco settles to a crawl
+        const vol = (strong ? 0.5 : 0.32) * soft;
+        const t = c.currentTime;
+        const src = c.createBufferSource();
+        const f = c.createBiquadFilter();
+        const g = c.createGain();
+        src.buffer = noiseBuffer(c);
+        f.type = 'bandpass';
+        f.frequency.value = 700 + 500 * level;
+        f.Q.value = 0.9;
+        g.gain.setValueAtTime(vol, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+        src.connect(f);
+        f.connect(g);
+        g.connect(master);
+        chuffsLive++;
+        src.onended = () => { chuffsLive = Math.max(0, chuffsLive - 1); };
+        src.start(t, Math.random());
+        src.stop(t + 0.11);
+        const o = c.createOscillator();
+        const og = c.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(75, t);
+        o.frequency.exponentialRampToValueAtTime(42, t + 0.09);
+        og.gain.setValueAtTime(vol * 0.7, t);
+        og.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+        o.connect(og);
+        og.connect(master);
+        o.start(t);
+        o.stop(t + 0.12);
+    }
+
+    function moved(distance) {
+        chuffDist += Math.abs(distance);
+        let n = 0;
+        while (chuffDist >= PUFF_DISTANCE && n < 3) {
+            chuffDist -= PUFF_DISTANCE;
+            chuff(chuffIndex % 4 === 0);
+            chuffIndex++;
+            n++;
+        }
+        if (chuffDist > PUFF_DISTANCE) chuffDist = 0;
+    }
+
+    function stopped() { chuffDist = 0; chuffIndex = 0; }
+
+    function whistle(freq, dur, delay, vol) {
+        const c = ensure();
+        if (!c) return;
+        const t = c.currentTime + delay;
+        const g = c.createGain();
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(vol, t + 0.06);
+        g.gain.setValueAtTime(vol, t + dur * 0.7);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        g.connect(master);
+        for (const detune of [0, 7]) { // two slightly detuned tones, with a small pitch rise at the start
+            const o = c.createOscillator();
+            o.type = 'triangle';
+            o.frequency.setValueAtTime(freq * 0.96, t);
+            o.frequency.exponentialRampToValueAtTime(freq, t + 0.1);
+            o.detune.value = detune;
+            o.connect(g);
+            o.start(t);
+            o.stop(t + dur + 0.02);
+        }
+        const src = c.createBufferSource(); // breath noise
+        const f = c.createBiquadFilter();
+        const ng = c.createGain();
+        src.buffer = noiseBuffer(c);
+        f.type = 'bandpass';
+        f.frequency.value = freq * 2;
+        f.Q.value = 1.5;
+        ng.gain.setValueAtTime(vol * 0.5, t);
+        ng.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        src.connect(f);
+        f.connect(ng);
+        ng.connect(master);
+        src.start(t, Math.random());
+        src.stop(t + dur + 0.02);
     }
 
     function tone(freq, dur, type = 'sine', vol = 0.3, slideTo = null, delay = 0) {
@@ -89,31 +192,36 @@ export function createAudio(enabled = true) {
         pointLocked() { tone(140, 0.12, 'sawtooth', 0.15, 100); },
         uncoupleBlocked() { tone(140, 0.12, 'sawtooth', 0.15, 100); },
         bumped() { tone(110, 0.15, 'square', 0.25, 60); },
-        win() { tone(523, 0.5, 'triangle', 0.25, 520); tone(659, 0.5, 'triangle', 0.22, 655, 0.04); tone(784, 0.9, 'triangle', 0.25, 780, 0.08); },
+        win() { whistle(587, 0.55, 0, 0.16); whistle(784, 0.95, 0.5, 0.16); },
     };
 
     return {
         /** Call on the first user gesture (browsers keep audio suspended until then). */
         resume() { startEngine(); },
-        play(type) { sounds[type]?.(); },
-        /** speed: loco speed in wagon-lengths per second (signed). Drives the diesel idle to a working note. */
+        /** event is the simulation event; `moved` events drive the chuffs. */
+        play(type, event) {
+            if (type === 'moved') { if (on) moved(event?.distance ?? 0); return; }
+            sounds[type]?.();
+        },
+        /** speed: loco speed in wagon-lengths per second (signed). Sets the hiss level; a stop cuts the chuffs. */
         setSpeed(speed) {
-            if (!engine || !ctx) return;
             const s = Math.min(1, Math.abs(speed) / 1.2);
+            if (s === 0 && level > 0) stopped();
+            level = s;
+            if (!engine || !ctx) return;
             const t = ctx.currentTime;
-            engine.osc.frequency.setTargetAtTime(38 + 22 * s, t, 0.1);
-            engine.osc2.frequency.setTargetAtTime(19 + 11 * s, t, 0.1);
-            engine.filter.frequency.setTargetAtTime(200 + 500 * s, t, 0.1);
-            engine.gain.gain.setTargetAtTime(on ? 0.08 + 0.12 * s : 0, t, 0.1);
+            engine.filter.frequency.setTargetAtTime(3200 + 1500 * s, t, 0.1);
+            engine.gain.gain.setTargetAtTime(on ? 0.025 + 0.03 * s : 0, t, 0.1);
         },
         setEnabled(v) {
             on = v;
             if (!on && engine && ctx) engine.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.05);
-            if (on) startEngine();
+            if (on) { startEngine(); if (engine && ctx) engine.gain.gain.setTargetAtTime(0.025, ctx.currentTime, 0.05); }
         },
         destroy() {
-            try { engine?.osc.stop(); engine?.osc2.stop(); } catch { /* already stopped */ }
+            try { engine?.src.stop(); } catch { /* already stopped */ }
             engine = null;
+            noiseBuf = null;
             ctx?.close?.().catch(() => {});
             ctx = null;
         },

@@ -5,6 +5,7 @@ import { generateLevel } from './levels.js';
 import { buildSetup, checkWin, movesOf, starsFor, normalizeProgress } from './logic.js';
 import { createAudio } from './audio.js';
 import { createRenderer } from './render.js';
+import { createQualityMonitor } from './quality.js';
 import { createUi } from './ui.js';
 import { UNDO_LIMIT } from './config.js';
 
@@ -39,6 +40,15 @@ export function mount(container, options = {}) {
     let last = 0;
     let acc = 0;
     let listeners = [];
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    const monitor = createQualityMonitor({ reducedMotion }); // lives for the whole session so a slow device stays on 'low' across levels
+    let quality = 'high';
+
+    function applyQuality(q) {
+        if (q === quality) return;
+        quality = q;
+        renderer?.setQuality(q);
+    }
 
     const ui = createUi(container, {
         onExit: () => options.onExit?.(),
@@ -75,14 +85,15 @@ export function mount(container, options = {}) {
         renderer = createRenderer(ui.svg, layout, {
             onPoint: id => { if (!won) { snapshot(); if (!sim.togglePoint(id)) undoStack.pop(); } },
             onCoupling: (rakeId, index) => { if (!won) { snapshot(); if (!sim.uncouple(rakeId, index)) undoStack.pop(); } },
-        });
+        }, { level: level.n, reducedMotion });
+        if (quality !== 'high') renderer.setQuality(quality);
         progress.level = level.n;
         ui.setLevel(level, progress.best[level.n]?.stars ?? 0);
         ui.setMoves(0, level.par);
         ui.setCommand('stop');
         ui.setMuted(muted);
         save();
-        renderer.update(sim);
+        renderer.update(sim, 0);
     }
 
     function drive(cmd) {
@@ -96,6 +107,7 @@ export function mount(container, options = {}) {
         const snap = undoStack.pop();
         if (!snap || won) return;
         sim.restore(snap);
+        renderer.reset();
         ui.setCommand('stop');
     }
 
@@ -115,7 +127,8 @@ export function mount(container, options = {}) {
     function handleEvents() {
         for (const e of sim.drainEvents()) {
             for (const l of listeners) l(e);
-            audio.play(e.type);
+            audio.play(e.type, e);
+            renderer.onEvent(e);
             if (e.type === 'uncoupleBlocked') ui.toast(e.reason === 'moving' ? 'Stop the loco before uncoupling.' : 'Move the wagons clear of the points before uncoupling.');
             else if (MESSAGES[e.type]) ui.toast(MESSAGES[e.type]);
             if (e.type === 'coupled' || e.type === 'buffer' || e.type === 'bumped') ui.setCommand('stop');
@@ -125,6 +138,8 @@ export function mount(container, options = {}) {
     function frame(now) {
         raf = requestAnimationFrame(frame);
         const dt = Math.min(0.05, (now - last) / 1000 || 0);
+        if (!paused) monitor.sample(now - last);
+        if (monitor.level === 'low') applyQuality('low'); // only ever steps down
         last = now;
         if (!paused && !won) {
             acc += dt;
@@ -136,7 +151,7 @@ export function mount(container, options = {}) {
             ui.setGoalMet(met);
             if (met && sim.speed === 0) finish();
         }
-        renderer.update(sim);
+        renderer.update(sim, dt);
     }
 
     function onKey(e) {
@@ -168,13 +183,15 @@ export function mount(container, options = {}) {
             get level() { return level; },
             get won() { return won; },
             progress,
+            get quality() { return quality; },
+            setQuality: q => applyQuality(q),
             start: n => startLevel(n),
             onEvent: fn => { listeners.push(fn); },
             // run the solver's moves through the real simulation (fast-forwarded), as a player would
             async solve() {
                 const { playOps } = await import('./autoplay.js');
                 playOps(sim, level.solution);
-                renderer.update(sim);
+                renderer.update(sim, 0);
                 return level.solution;
             },
         };
