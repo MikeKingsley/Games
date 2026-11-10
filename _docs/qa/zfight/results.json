@@ -1,0 +1,842 @@
+[
+ {
+  "terrain": "flat",
+  "piece": "straight",
+  "view": "top",
+  "pct": 0.0002797202797202797,
+  "changed": 2
+ },
+ {
+  "terrain": "flat",
+  "piece": "straight",
+  "view": "aerial",
+  "pct": 0.0004195804195804196,
+  "changed": 3
+ },
+ {
+  "terrain": "flat",
+  "piece": "straight",
+  "view": "eye-south",
+  "pct": 0,
+  "changed": 0
+ },
+ {
+  "terrain": "flat",
+  "piece": "curve",
+  "view": "top",
+  "pct": 0.03258741258741259,
+  "changed": 233
+ },
+ {
+  "terrain": "flat",
+  "piece": "curve",
+  "view": "aerial",
+  "pct": 0.04083916083916084,
+  "changed": 292
+ },
+ {
+  "terrain": "flat",
+  "piece": "curve",
+  "view": "eye-south",
+  "pct": 0.008671328671328672,
+  "changed": 62
+ },
+ {
+  "terrain": "flat",
+  "piece": "crossroads",
+  "view": "top",
+  "pct": 0.02825174825174825,
+  "changed": 202
+ },
+ {
+  "terrain": "flat",
+  "piece": "crossroads",
+  "view": "aerial",
+  "pct": 0.05006993006993007,
+  "changed": 358
+ },
+ {
+  "terrain": "flat",
+  "piece": "crossroads",
+  "view": "eye-south",
+  "pct": 0.38153846153846155,
+  "changed": 2728
+ },
+ {
+  "terrain": "flat",
+  "piece": "tee",
+  "view": "top",
+  "pct": 0.008811188811188812,
+  "changed": 63
+ },
+ {
+  "terrain": "flat",
+  "piece": "tee",
+  "view": "aerial",
+  "pct": 0.04153846153846154,
+  "changed": 297
+ },
+ {
+  "terrain": "flat",
+  "piece": "tee",
+  "view": "eye-south",
+  "pct": 0.38181818181818183,
+  "changed": 2730
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout",
+  "view": "top",
+  "pct": 0.026153846153846153,
+  "changed": 187
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout",
+  "view": "aerial",
+  "pct": 0.04825174825174825,
+  "changed": 345
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout",
+  "view": "eye-south",
+  "pct": 0.3316083916083916,
+  "changed": 2371
+ },
+ {
+  "terrain": "flat",
+  "piece": "overbridge",
+  "view": "top",
+  "pct": 0.05048951048951049,
+  "changed": 361
+ },
+ {
+  "terrain": "flat",
+  "piece": "overbridge",
+  "view": "aerial",
+  "pct": 0.0606993006993007,
+  "changed": 434
+ },
+ {
+  "terrain": "flat",
+  "piece": "overbridge",
+  "view": "eye-south",
+  "pct": 0.03496503496503497,
+  "changed": 250
+ },
+ {
+  "terrain": "flat",
+  "piece": "single-track",
+  "view": "top",
+  "pct": 0.00013986013986013986,
+  "changed": 1
+ },
+ {
+  "terrain": "flat",
+  "piece": "single-track",
+  "view": "aerial",
+  "pct": 0.003076923076923077,
+  "changed": 22
+ },
+ {
+  "terrain": "flat",
+  "piece": "single-track",
+  "view": "eye-south",
+  "pct": 0,
+  "changed": 0
+ },
+ {
+  "terrain": "flat",
+  "piece": "one-way-lane",
+  "view": "top",
+  "pct": 0.00013986013986013986,
+  "changed": 1
+ },
+ {
+  "terrain": "flat",
+  "piece": "one-way-lane",
+  "view": "aerial",
+  "pct": 0.008111888111888113,
+  "changed": 58
+ },
+ {
+  "terrain": "flat",
+  "piece": "one-way-lane",
+  "view": "eye-south",
+  "pct": 0.0006993006993006993,
+  "changed": 5
+ },
+ {
+  "terrain": "flat",
+  "piece": "two-way",
+  "view": "top",
+  "pct": 0.0004195804195804196,
+  "changed": 3
+ },
+ {
+  "terrain": "flat",
+  "piece": "two-way",
+  "view": "aerial",
+  "pct": 0.005314685314685315,
+  "changed": 38
+ },
+ {
+  "terrain": "flat",
+  "piece": "two-way",
+  "view": "eye-south",
+  "pct": 0.0006993006993006993,
+  "changed": 5
+ },
+ {
+  "terrain": "flat",
+  "piece": "multi-one-way",
+  "view": "top",
+  "pct": 0.0015384615384615385,
+  "changed": 11
+ },
+ {
+  "terrain": "flat",
+  "piece": "multi-one-way",
+  "view": "aerial",
+  "pct": 0.000979020979020979,
+  "changed": 7
+ },
+ {
+  "terrain": "flat",
+  "piece": "multi-one-way",
+  "view": "eye-south",
+  "pct": 0.00013986013986013986,
+  "changed": 1
+ },
+ {
+  "terrain": "flat",
+  "piece": "asymmetric",
+  "view": "top",
+  "pct": 0.0004195804195804196,
+  "changed": 3
+ },
+ {
+  "terrain": "flat",
+  "piece": "asymmetric",
+  "view": "aerial",
+  "pct": 0.0002797202797202797,
+  "changed": 2
+ },
+ {
+  "terrain": "flat",
+  "piece": "asymmetric",
+  "view": "eye-south",
+  "pct": 0.0008391608391608392,
+  "changed": 6
+ },
+ {
+  "terrain": "flat",
+  "piece": "no-pavement",
+  "view": "top",
+  "pct": 0.0004195804195804196,
+  "changed": 3
+ },
+ {
+  "terrain": "flat",
+  "piece": "no-pavement",
+  "view": "aerial",
+  "pct": 0.0004195804195804196,
+  "changed": 3
+ },
+ {
+  "terrain": "flat",
+  "piece": "no-pavement",
+  "view": "eye-south",
+  "pct": 0,
+  "changed": 0
+ },
+ {
+  "terrain": "flat",
+  "piece": "signals-cross",
+  "view": "top",
+  "pct": 0.02825174825174825,
+  "changed": 202
+ },
+ {
+  "terrain": "flat",
+  "piece": "signals-cross",
+  "view": "aerial",
+  "pct": 0.05048951048951049,
+  "changed": 361
+ },
+ {
+  "terrain": "flat",
+  "piece": "signals-cross",
+  "view": "eye-south",
+  "pct": 0.3848951048951049,
+  "changed": 2752
+ },
+ {
+  "terrain": "flat",
+  "piece": "tee-give-way",
+  "view": "top",
+  "pct": 0.00965034965034965,
+  "changed": 69
+ },
+ {
+  "terrain": "flat",
+  "piece": "tee-give-way",
+  "view": "aerial",
+  "pct": 0.04097902097902098,
+  "changed": 293
+ },
+ {
+  "terrain": "flat",
+  "piece": "tee-give-way",
+  "view": "eye-south",
+  "pct": 0.3836363636363636,
+  "changed": 2743
+ },
+ {
+  "terrain": "flat",
+  "piece": "give-way-cross",
+  "view": "top",
+  "pct": 0.02979020979020979,
+  "changed": 213
+ },
+ {
+  "terrain": "flat",
+  "piece": "give-way-cross",
+  "view": "aerial",
+  "pct": 0.05048951048951049,
+  "changed": 361
+ },
+ {
+  "terrain": "flat",
+  "piece": "give-way-cross",
+  "view": "eye-south",
+  "pct": 0.3836363636363636,
+  "changed": 2743
+ },
+ {
+  "terrain": "flat",
+  "piece": "crossroads-plain",
+  "view": "top",
+  "pct": 0.02825174825174825,
+  "changed": 202
+ },
+ {
+  "terrain": "flat",
+  "piece": "crossroads-plain",
+  "view": "aerial",
+  "pct": 0.05006993006993007,
+  "changed": 358
+ },
+ {
+  "terrain": "flat",
+  "piece": "crossroads-plain",
+  "view": "eye-south",
+  "pct": 0.386013986013986,
+  "changed": 2760
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-small",
+  "view": "top",
+  "pct": 0.023916083916083915,
+  "changed": 171
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-small",
+  "view": "aerial",
+  "pct": 0.05020979020979021,
+  "changed": 359
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-small",
+  "view": "eye-south",
+  "pct": 0.3888111888111888,
+  "changed": 2780
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-medium",
+  "view": "top",
+  "pct": 0.023076923076923078,
+  "changed": 165
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-medium",
+  "view": "aerial",
+  "pct": 0.05216783216783217,
+  "changed": 373
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-medium",
+  "view": "eye-south",
+  "pct": 0.4103496503496504,
+  "changed": 2934
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-large",
+  "view": "top",
+  "pct": 0.04629370629370629,
+  "changed": 331
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-large",
+  "view": "aerial",
+  "pct": 0.05188811188811189,
+  "changed": 371
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-large",
+  "view": "eye-south",
+  "pct": 0.17552447552447553,
+  "changed": 1255
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-double",
+  "view": "top",
+  "pct": 0.07496503496503497,
+  "changed": 536
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-double",
+  "view": "aerial",
+  "pct": 0.08405594405594406,
+  "changed": 601
+ },
+ {
+  "terrain": "flat",
+  "piece": "roundabout-double",
+  "view": "eye-south",
+  "pct": 0.012867132867132867,
+  "changed": 92
+ },
+ {
+  "terrain": "rolling",
+  "piece": "straight",
+  "view": "top",
+  "pct": 0.0002797202797202797,
+  "changed": 2
+ },
+ {
+  "terrain": "rolling",
+  "piece": "straight",
+  "view": "aerial",
+  "pct": 0.002937062937062937,
+  "changed": 21
+ },
+ {
+  "terrain": "rolling",
+  "piece": "straight",
+  "view": "eye-south",
+  "pct": 0.013426573426573427,
+  "changed": 96
+ },
+ {
+  "terrain": "rolling",
+  "piece": "curve",
+  "view": "top",
+  "pct": 0.03034965034965035,
+  "changed": 217
+ },
+ {
+  "terrain": "rolling",
+  "piece": "curve",
+  "view": "aerial",
+  "pct": 0.046433566433566435,
+  "changed": 332
+ },
+ {
+  "terrain": "rolling",
+  "piece": "curve",
+  "view": "eye-south",
+  "pct": 0.017062937062937062,
+  "changed": 122
+ },
+ {
+  "terrain": "rolling",
+  "piece": "crossroads",
+  "view": "top",
+  "pct": 0.03888111888111888,
+  "changed": 278
+ },
+ {
+  "terrain": "rolling",
+  "piece": "crossroads",
+  "view": "aerial",
+  "pct": 0.052307692307692305,
+  "changed": 374
+ },
+ {
+  "terrain": "rolling",
+  "piece": "crossroads",
+  "view": "eye-south",
+  "pct": 0.39622377622377625,
+  "changed": 2833
+ },
+ {
+  "terrain": "rolling",
+  "piece": "tee",
+  "view": "top",
+  "pct": 0.025594405594405595,
+  "changed": 183
+ },
+ {
+  "terrain": "rolling",
+  "piece": "tee",
+  "view": "aerial",
+  "pct": 0.04,
+  "changed": 286
+ },
+ {
+  "terrain": "rolling",
+  "piece": "tee",
+  "view": "eye-south",
+  "pct": 0.38755244755244755,
+  "changed": 2771
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout",
+  "view": "top",
+  "pct": 0.04153846153846154,
+  "changed": 297
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout",
+  "view": "aerial",
+  "pct": 0.05174825174825175,
+  "changed": 370
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout",
+  "view": "eye-south",
+  "pct": 0.30979020979020977,
+  "changed": 2215
+ },
+ {
+  "terrain": "rolling",
+  "piece": "overbridge",
+  "view": "top",
+  "pct": 0.028671328671328673,
+  "changed": 205
+ },
+ {
+  "terrain": "rolling",
+  "piece": "overbridge",
+  "view": "aerial",
+  "pct": 0.06195804195804196,
+  "changed": 443
+ },
+ {
+  "terrain": "rolling",
+  "piece": "overbridge",
+  "view": "eye-south",
+  "pct": 0.4381818181818182,
+  "changed": 3133
+ },
+ {
+  "terrain": "rolling",
+  "piece": "single-track",
+  "view": "top",
+  "pct": 0.0002797202797202797,
+  "changed": 2
+ },
+ {
+  "terrain": "rolling",
+  "piece": "single-track",
+  "view": "aerial",
+  "pct": 0.004755244755244755,
+  "changed": 34
+ },
+ {
+  "terrain": "rolling",
+  "piece": "single-track",
+  "view": "eye-south",
+  "pct": 0.0015384615384615385,
+  "changed": 11
+ },
+ {
+  "terrain": "rolling",
+  "piece": "one-way-lane",
+  "view": "top",
+  "pct": 0.00013986013986013986,
+  "changed": 1
+ },
+ {
+  "terrain": "rolling",
+  "piece": "one-way-lane",
+  "view": "aerial",
+  "pct": 0.008951048951048951,
+  "changed": 64
+ },
+ {
+  "terrain": "rolling",
+  "piece": "one-way-lane",
+  "view": "eye-south",
+  "pct": 0.0022377622377622378,
+  "changed": 16
+ },
+ {
+  "terrain": "rolling",
+  "piece": "two-way",
+  "view": "top",
+  "pct": 0.0002797202797202797,
+  "changed": 2
+ },
+ {
+  "terrain": "rolling",
+  "piece": "two-way",
+  "view": "aerial",
+  "pct": 0.008951048951048951,
+  "changed": 64
+ },
+ {
+  "terrain": "rolling",
+  "piece": "two-way",
+  "view": "eye-south",
+  "pct": 0.004195804195804196,
+  "changed": 30
+ },
+ {
+  "terrain": "rolling",
+  "piece": "multi-one-way",
+  "view": "top",
+  "pct": 0.0015384615384615385,
+  "changed": 11
+ },
+ {
+  "terrain": "rolling",
+  "piece": "multi-one-way",
+  "view": "aerial",
+  "pct": 0.0015384615384615385,
+  "changed": 11
+ },
+ {
+  "terrain": "rolling",
+  "piece": "multi-one-way",
+  "view": "eye-south",
+  "pct": 0.002097902097902098,
+  "changed": 15
+ },
+ {
+  "terrain": "rolling",
+  "piece": "asymmetric",
+  "view": "top",
+  "pct": 0.000979020979020979,
+  "changed": 7
+ },
+ {
+  "terrain": "rolling",
+  "piece": "asymmetric",
+  "view": "aerial",
+  "pct": 0.0026573426573426573,
+  "changed": 19
+ },
+ {
+  "terrain": "rolling",
+  "piece": "asymmetric",
+  "view": "eye-south",
+  "pct": 0.01090909090909091,
+  "changed": 78
+ },
+ {
+  "terrain": "rolling",
+  "piece": "no-pavement",
+  "view": "top",
+  "pct": 0.0002797202797202797,
+  "changed": 2
+ },
+ {
+  "terrain": "rolling",
+  "piece": "no-pavement",
+  "view": "aerial",
+  "pct": 0.002797202797202797,
+  "changed": 20
+ },
+ {
+  "terrain": "rolling",
+  "piece": "no-pavement",
+  "view": "eye-south",
+  "pct": 0.006713286713286713,
+  "changed": 48
+ },
+ {
+  "terrain": "rolling",
+  "piece": "signals-cross",
+  "view": "top",
+  "pct": 0.03762237762237762,
+  "changed": 269
+ },
+ {
+  "terrain": "rolling",
+  "piece": "signals-cross",
+  "view": "aerial",
+  "pct": 0.05272727272727273,
+  "changed": 377
+ },
+ {
+  "terrain": "rolling",
+  "piece": "signals-cross",
+  "view": "eye-south",
+  "pct": 0.393006993006993,
+  "changed": 2810
+ },
+ {
+  "terrain": "rolling",
+  "piece": "tee-give-way",
+  "view": "top",
+  "pct": 0.016223776223776225,
+  "changed": 116
+ },
+ {
+  "terrain": "rolling",
+  "piece": "tee-give-way",
+  "view": "aerial",
+  "pct": 0.042377622377622375,
+  "changed": 303
+ },
+ {
+  "terrain": "rolling",
+  "piece": "tee-give-way",
+  "view": "eye-south",
+  "pct": 0.44447552447552446,
+  "changed": 3178
+ },
+ {
+  "terrain": "rolling",
+  "piece": "give-way-cross",
+  "view": "top",
+  "pct": 0.026853146853146853,
+  "changed": 192
+ },
+ {
+  "terrain": "rolling",
+  "piece": "give-way-cross",
+  "view": "aerial",
+  "pct": 0.05034965034965035,
+  "changed": 360
+ },
+ {
+  "terrain": "rolling",
+  "piece": "give-way-cross",
+  "view": "eye-south",
+  "pct": 0.4509090909090909,
+  "changed": 3224
+ },
+ {
+  "terrain": "rolling",
+  "piece": "crossroads-plain",
+  "view": "top",
+  "pct": 0.04195804195804196,
+  "changed": 300
+ },
+ {
+  "terrain": "rolling",
+  "piece": "crossroads-plain",
+  "view": "aerial",
+  "pct": 0.04951048951048951,
+  "changed": 354
+ },
+ {
+  "terrain": "rolling",
+  "piece": "crossroads-plain",
+  "view": "eye-south",
+  "pct": 0.46265734265734265,
+  "changed": 3308
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-small",
+  "view": "top",
+  "pct": 0.013846153846153847,
+  "changed": 99
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-small",
+  "view": "aerial",
+  "pct": 0.05006993006993007,
+  "changed": 358
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-small",
+  "view": "eye-south",
+  "pct": 0.3974825174825175,
+  "changed": 2842
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-medium",
+  "view": "top",
+  "pct": 0.042097902097902096,
+  "changed": 301
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-medium",
+  "view": "aerial",
+  "pct": 0.05244755244755245,
+  "changed": 375
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-medium",
+  "view": "eye-south",
+  "pct": 0.3025174825174825,
+  "changed": 2163
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-large",
+  "view": "top",
+  "pct": 0.047132867132867136,
+  "changed": 337
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-large",
+  "view": "aerial",
+  "pct": 0.054965034965034965,
+  "changed": 393
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-large",
+  "view": "eye-south",
+  "pct": 0.09160839160839161,
+  "changed": 655
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-double",
+  "view": "top",
+  "pct": 0.0765034965034965,
+  "changed": 547
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-double",
+  "view": "aerial",
+  "pct": 0.09664335664335665,
+  "changed": 691
+ },
+ {
+  "terrain": "rolling",
+  "piece": "roundabout-double",
+  "view": "eye-south",
+  "pct": 0.007132867132867133,
+  "changed": 51
+ }
+]
