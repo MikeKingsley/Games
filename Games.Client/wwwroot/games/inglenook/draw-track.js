@@ -1,5 +1,5 @@
 // Track drawing: ballast, sleepers, rails, buffer stops, point blades and the tappable point levers.
-import { pointAt } from './track.js';
+import { pointAt, LEGS } from './track.js';
 import { el, polyline } from './svg.js';
 
 /** Points along a track every `step`, with the heading there (for sleepers). */
@@ -56,9 +56,20 @@ export function drawTrack(layers, layout, ctx) {
     const pointEls = {};
     layout.pointIds.forEach((id, i) => {
         const p = layout.points[id];
-        const div = layout.tracks[p.legs.diverging.track];
-        const q = p.legs.diverging.end === 'a' ? div.pts[1] : div.pts[div.pts.length - 2];
-        const side = q[1] < p.y ? 1 : -1; // lever on the opposite side to the diverging leg
+        const q = pointAt(layout, p.legs.diverging.track, p.legs.diverging.end === 'a' ? 1 : layout.tracks[p.legs.diverging.track].length - 1);
+        let side = q.y < p.y ? 1 : -1; // lever on the opposite side to the diverging leg ...
+        const spot = s => [p.x - 0.6, p.y + s * 0.95];
+        const own = new Set(LEGS.map(leg => p.legs[leg].track));
+        const crowding = s => { // ... unless a curving track of another point runs through that spot
+            const [lx, ly] = spot(s);
+            let best = Infinity;
+            for (const t of Object.values(layout.tracks)) {
+                if (own.has(t.id)) continue;
+                for (let i = 0; i < t.pts.length; i += 4) best = Math.min(best, Math.hypot(t.pts[i][0] - lx, t.pts[i][1] - ly));
+            }
+            return best;
+        };
+        if (crowding(side) < 1.2 && crowding(-side) > crowding(side)) side = -side;
         const g = el('g', { class: 'ig-point', 'data-point': id, transform: `translate(${p.x - 0.6} ${p.y + side * 0.95})` }, layers.points);
         el('circle', { r: 0.95, fill: 'transparent' }, g); // generous hit area
         el('circle', { r: 0.38, fill: '#2a2a2a', stroke: '#e8e0c8', 'stroke-width': 0.05 }, g);
