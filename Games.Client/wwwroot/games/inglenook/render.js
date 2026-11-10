@@ -46,7 +46,7 @@ export function createRenderer(svg, layout, handlers = {}, opts = {}) {
     applyTurn();
 
     const ctx = { defs, textures: createTextures(defs), quality: 'high', seed: opts.level ?? 0, reducedMotion: !!opts.reducedMotion, labelEls, isTurned: () => turned };
-    drawScenery(layers, layout, [], ctx);
+    const scenery = drawScenery(layers, layout, [], ctx); // plans the yard from the level seed
     const trackArt = drawTrack(layers, layout, ctx);
 
     const vehicleEls = {};
@@ -97,7 +97,7 @@ export function createRenderer(svg, layout, handlers = {}, opts = {}) {
         },
         onEvent(e) { trackArt.onEvent(e); },
         reset() {},
-        setQuality(q) { ctx.quality = q; },
+        setQuality(q) { ctx.quality = q; scenery.setQuality(q); },
         destroy() {
             svg.removeEventListener('pointerdown', onPointerDown);
             resizeObserver?.disconnect();

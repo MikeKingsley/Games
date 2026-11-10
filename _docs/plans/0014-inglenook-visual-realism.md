@@ -204,18 +204,22 @@ Loco-local coordinates (before the facing flip, chimney towards +x): chimney (0.
 Checks: `npm test` 125 pass (3 new stock tests), `inglenook.spec` 10 pass, `inglenook.shots` 11 pass; ID panel min height 10.4 px at 844x390 and 10.0 px at 390x844 (tight, do not shrink the panel); level 61 renders 847 `.ig-board` elements (budget 2500).
 
 ## Phase 5: Scenery and lighting
-Status: Not started
+Status: Complete
 Depends on: 2, 3
 Files: Games.Client/wwwroot/games/inglenook/scenery-plan.js, draw-scenery.js; tests/js/inglenook.scenery.test.mjs
 Model: sonnet
 Effort: medium
 
-- [ ] Add `scenery-plan.js` (DOM-free): `planScenery(layout, seed)` returns placed items `{ type, x, y, rot, w, h }` for one composed yard per layout. Fixed anchors per layout: a goods shed with a loading platform and `setts` apron beside the goal siding, a signal box near the first point, coal staithes beside a short siding, a water crane and water tower by the headshunt, a yard office or lamp hut, a boundary fence along one long edge with a gate, yard lamps at intervals, and trees outside the fence. Seeded clutter (sleeper stacks, oil drums, barrows, coal heaps, a parked lorry on the apron) varies with `seed` = level number.
-- [ ] Placement rules, enforced in the planner: every item lies inside `layout.bounds`; no item's footprint comes within 0.9 of any track centre-line (the shed platform edge may come to 0.6 of its own siding); no item covers a point lever position (use the same lever position rule as `draw-track.js`, exported from there or duplicated as a small pure function); items do not overlap each other.
-- [ ] Tests in `tests/js/inglenook.scenery.test.mjs`: for all four generated layouts and seeds 1-50 the rules above hold, the plan is deterministic for a given seed, and the fixed anchors are identical across seeds.
-- [ ] Draw each item type in `draw-scenery.js` in plan view with roof detail (slate courses, ridge, chimney stacks, skylights), using the Phase 3 textures; low items go in `sceneryLow`, lamp heads and tree canopies in `sceneryHigh` so vehicles pass beneath them where they overhang.
-- [ ] Static daylight shadows: each item casts an offset soft shadow (taller items longer) drawn once into `sceneryLow`; use a single shared blur filter on the static shadow group only, and plain offset shapes with no filter when quality is `low`.
-- [ ] Remove the old placeholder scenery (the flat shed, box, tower, trees and fence).
+- ✅ Add `scenery-plan.js` (DOM-free): `planScenery(layout, seed)` returns placed items `{ type, x, y, rot, w, h }` for one composed yard per layout. Fixed anchors per layout: a goods shed with a loading platform and `setts` apron beside the goal siding, a signal box near the first point, coal staithes beside a short siding, a water crane and water tower by the headshunt, a yard office or lamp hut, a boundary fence along one long edge with a gate, yard lamps at intervals, and trees outside the fence. Seeded clutter (sleeper stacks, oil drums, barrows, coal heaps, a parked lorry on the apron) varies with `seed` = level number.
+  - Footprints are axis-aligned rectangles (`x, y` = centre, `rot` 0 or 180 turns a platform side towards the track). The planner scans the board for the best-scoring fitting spot per anchor and caches the fixed anchors per layout. The `ITEM_HEIGHT`, `SUN` and `shadowOffset(h)` constants are exported from `scenery-plan.js` for Phase 6. The boundary fence runs along the bottom edge at `bounds bottom - 1.05` (cut round levers and other items, one fixed gate) with a row of trees beyond it.
+  - **Assumption:** the shed, its apron and the lorry parked on the apron may come to 0.6 of the goal siding (the plan only allows the shed platform 0.6); on ladders the goal siding is the bottom row so the apron could not otherwise sit beside the shed.
+- ✅ Placement rules, enforced in the planner: every item lies inside `layout.bounds`; no item's footprint comes within 0.9 of any track centre-line (the shed platform edge may come to 0.6 of its own siding); no item covers a point lever position (use the same lever position rule as `draw-track.js`, exported from there or duplicated as a small pure function); items do not overlap each other.
+- ✅ Tests in `tests/js/inglenook.scenery.test.mjs`: for all four generated layouts and seeds 1-50 the rules above hold, the plan is deterministic for a given seed, and the fixed anchors are identical across seeds.
+- ✅ Draw each item type in `draw-scenery.js` in plan view with roof detail (slate courses, ridge, chimney stacks, skylights), using the Phase 3 textures; low items go in `sceneryLow`, lamp heads and tree canopies in `sceneryHigh` so vehicles pass beneath them where they overhang.
+  - `drawScenery` plans the yard itself when `items` is empty (`render.js` already passed `ctx.seed` = level), pattern `ig-pat-slate` gives slate courses, and it returns `{ setQuality(q) }`. Outside the Files line, `render.js` got a two-line change: it keeps that return value and calls `scenery.setQuality(q)` from its own `setQuality`. Pointer events are off on `sceneryLow` and `sceneryHigh`.
+- ✅ Static daylight shadows: each item casts an offset soft shadow (taller items longer) drawn once into `sceneryLow`; use a single shared blur filter on the static shadow group only, and plain offset shapes with no filter when quality is `low`.
+  - Sun direction `SUN = { dx: 0.78, dy: 0.62 }` (shadows fall down and right in yard coordinates; they turn with the yard in portrait). Offset = `shadowOffset(h)` = `h * 0.36 * SUN`, with `ITEM_HEIGHT` (shed 1.0, signal box 1.1, tower 2.0, tree 1.4, lamp 1.2, lorry 0.5 ...) in `scenery-plan.js`. One group at opacity 0.3 carries the single blur filter `ig-shadow-blur` (stdDeviation 0.06); `setQuality('low')` removes the filter and leaves plain offset shapes.
+- ✅ Remove the old placeholder scenery (the flat shed, box, tower, trees and fence).
 
 ### Verification Plan
 - `npm test` passes (scenery tests included).
@@ -224,7 +228,9 @@ Effort: medium
 - Assert `document.querySelectorAll('.ig-board *').length < 4500` on level 61.
 
 ### Phase Summary
-_(write when phase completes)_
+Added `scenery-plan.js` (`planScenery`, `leverKeepout`, `SUN`, `shadowOffset`, `ITEM_HEIGHT`; 5 tests, `npm test` 130 pass), a full `draw-scenery.js` (shed + platform, apron, signal box, staithe, tower, crane, office, lamps, trees, fence/gate, clutter, lorry) and removed the placeholders. Per layout the fixed anchors are cached; only clutter and the lorry use the level seed; fence runs along the bottom edge (cut round levers and items) with trees beyond it.
+Sun/shadows: `SUN` = (0.78, 0.62), so shadows fall down-right in yard coordinates (they turn with the yard in portrait); a shadow offset is `shadowOffset(h)` = `h * 0.36 * SUN` (shed 1.0, signal box 1.1, tower 2.0, tree 1.4, lamp 1.2); Phase 6 vehicle shadows should use `shadowOffset(0.3)` and the same black at opacity 0.3. Static shadows share one blur filter (`ig-shadow-blur`); `drawScenery` returns `setQuality(q)` (wired from `render.js` `setQuality`) which removes the filter at `low` and leaves plain offset shapes.
+`layout.bounds` and the yard size are unchanged (scenery fits inside; the shed, apron and lorry may come to 0.6 of the goal siding). Level 61 now renders 1043 `.ig-board` elements (budget 4500, assertion updated in the shots spec). Checks: `npm test` 130, `inglenook.spec` 10, `inglenook.shots` 11 pass; all six full-board PNGs read and meet the criteria.
 
 ## Phase 6: Motion, effects and quality fallback
 Status: Not started
