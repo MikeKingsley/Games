@@ -142,19 +142,21 @@ Constants (`layouts.js`): `ROW` 1.8, `TURNOUT_RADIUS` 3.5, `FAN_ANGLE` 42.02 deg
 Checks: `npm test` 119 pass (level snapshots and par test unchanged), Playwright inglenook.spec 10 pass, inglenook.shots 8 pass, PNGs show smooth curves, parallel sidings and a clearly longer loco. `tests/e2e/inglenook.shots.spec.mjs` line 51 still divides the loco box by 1.1 (to get a wagon length): change to 1.7 in a later phase.
 
 ## Phase 3: Textures, ground and trackwork
-Status: Not started
+Status: Complete
 Depends on: 1, 2
 Files: Games.Client/wwwroot/games/inglenook/noise.js, textures.js, draw-track.js, render.js; tests/js/inglenook.noise.test.mjs
 Model: sonnet
 Effort: medium
 
-- [ ] Add `noise.js` (DOM-free): `hash(str)`, `rng(seed)` and `tileNoise(size, seed, octaves)` returning a `Float32Array` of values 0..1 that tiles seamlessly. Test determinism, range and that opposite edges match.
-- [ ] Add `textures.js`: paint tileable 256 px textures to a canvas from `tileNoise` and register each as an SVG `<pattern>` with an `<image>` (PNG data URL) in the board's `<defs>`: `ballast` (grey-brown stone speckle), `cinder` (dark ash yard surface), `grass` (mottled green), `setts` (stone setts for the shed apron), `timber` (sleeper and plank grain), `coal`, `grime` (transparent dark streaks for weathering). Cache the data URLs at module level so a level restart does not regenerate them; if a 2D canvas is unavailable fall back to flat fills.
-- [ ] Ground in `draw-track.js`: a `cinder` yard surface under and around the tracks (a wide rounded band following each track, so the yard reads as trodden ash), `grass` beyond it, and a `ballast` shoulder with a slightly darker oily strip between the rails.
-- [ ] Sleepers and rails: timber sleepers drawn cheaply along the curves (one wide dashed stroke per track with `stroke-dasharray`, using the `timber` pattern, not one element per sleeper); two rails per track as offset polylines with a dark web and a thin bright running-surface highlight; rail joints every 2 wagon lengths.
-- [ ] Pointwork for every point: closure rails and a crossing vee (frog) where the branch rails cross, check rails opposite the frog, long timbers under the point, and two switch blades that sit against the stock rail for the set route. Blades tween between positions over 150 ms on `pointThrown` (instant when quality is `low` or reduced motion).
-- [ ] Buffer stops as rail-built stops with a red beam and a lamp, replacing the current blocks.
-- [ ] Ground levers: a weighted point lever on a timber base beside each point (same position rule as today), whose arm flips sides with the point, inside the existing `.ig-point[data-point]` group with its transparent 0.95-radius hit circle. Keep a high-visibility marker: a yellow ring round the lever, a yellow arrow showing the set route and the point number (upright via `labelEls`), and a subtle yellow highlight along the set route's blade.
+- ✅ Add `noise.js` (DOM-free): `hash(str)`, `rng(seed)` and `tileNoise(size, seed, octaves)` returning a `Float32Array` of values 0..1 that tiles seamlessly. Test determinism, range and that opposite edges match.
+- ✅ Add `textures.js`: paint tileable 256 px textures to a canvas from `tileNoise` and register each as an SVG `<pattern>` with an `<image>` (PNG data URL) in the board's `<defs>`: `ballast` (grey-brown stone speckle), `cinder` (dark ash yard surface), `grass` (mottled green), `setts` (stone setts for the shed apron), `timber` (sleeper and plank grain), `coal`, `grime` (transparent dark streaks for weathering). Cache the data URLs at module level so a level restart does not regenerate them; if a 2D canvas is unavailable fall back to flat fills.
+- ✅ Ground in `draw-track.js`: a `cinder` yard surface under and around the tracks (a wide rounded band following each track, so the yard reads as trodden ash), `grass` beyond it, and a `ballast` shoulder with a slightly darker oily strip between the rails.
+  - `render.js` now builds `ctx.textures = createTextures(defs)` and adds `ctx.reducedMotion`.
+- ✅ Sleepers and rails: timber sleepers drawn cheaply along the curves (one wide dashed stroke per track with `stroke-dasharray`, using the `timber` pattern, not one element per sleeper); two rails per track as offset polylines with a dark web and a thin bright running-surface highlight; rail joints every 2 wagon lengths.
+- ✅ Pointwork for every point: closure rails and a crossing vee (frog) where the branch rails cross, check rails opposite the frog, long timbers under the point, and two switch blades that sit against the stock rail for the set route. Blades tween between positions over 150 ms on `pointThrown` (instant when quality is `low` or reduced motion).
+- ✅ Buffer stops as rail-built stops with a red beam and a lamp, replacing the current blocks.
+  - **Assumption:** closure rails are the two inner rails between blade heel and frog, which are already part of each leg's full-length rails (they cross at the frog); pointwork adds the frog vee, check rails, long timbers and blades on top. Outside the Files line, `tests/e2e/inglenook.shots.spec.mjs` got the loco divisor changed from 1.1 to 1.7 (loco-close clip) and a level 61 DOM-count test (`.ig-board *` < 2500).
+- ✅ Ground levers: a weighted point lever on a timber base beside each point (same position rule as today), whose arm flips sides with the point, inside the existing `.ig-point[data-point]` group with its transparent 0.95-radius hit circle. Keep a high-visibility marker: a yellow ring round the lever, a yellow arrow showing the set route and the point number (upright via `labelEls`), and a subtle yellow highlight along the set route's blade.
 
 ### Verification Plan
 - `npm test` passes (noise tests included).
@@ -163,7 +165,9 @@ Effort: medium
 - In a Playwright one-off (or the shots spec) assert `document.querySelectorAll('.ig-board *').length < 2500` on level 61.
 
 ### Phase Summary
-_(write when phase completes)_
+Added `noise.js` (`hash`, `rng`, `tileNoise`; 3 tests, `npm test` now 122), `textures.js` and a full `draw-track.js` rewrite (cinder/grass ground, ballast, dashed timber sleepers, two-path rails with joints, blades tweened over 150 ms, frog vee, check rails, long timbers, rail-built buffer stops, ringed levers with arrow and upright number).
+Texture pattern ids are on `ctx.textures` (built in `render.js` via `createTextures(defs)`): `ballast`, `cinder`, `grass`, `setts`, `timber`, `coal`, `grime` -> use `fill="url(#${ctx.textures[name]})"` (ids are `ig-tex-<name>`); `ctx.reducedMotion` was added. `draw-track.js` exports pure helpers `leverPosition(layout, id)` -> `{ x, y, side }` (the lever rule, for Phase 5's scenery planner) and `offsetPolyline(pts, hdg, off)`.
+Level 61 renders 574 `.ig-board` elements (budget 2500); `inglenook.shots.spec.mjs` now asserts it and uses the 1.7 loco divisor. Blade/lever tween state is driven from `sim.points` each frame (instant when quality is `low` or reduced motion), so `onEvent` is still a no-op.
 
 ## Phase 4: Rolling stock
 Status: Not started

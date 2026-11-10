@@ -4,6 +4,7 @@ import { el } from './svg.js';
 import { drawTrack } from './draw-track.js';
 import { drawWagon, drawLoco, drawCoupling } from './draw-stock.js';
 import { drawScenery } from './draw-scenery.js';
+import { createTextures } from './textures.js';
 
 export { BODY_W } from './draw-stock.js';
 
@@ -44,7 +45,7 @@ export function createRenderer(svg, layout, handlers = {}, opts = {}) {
     resizeObserver?.observe(svg);
     applyTurn();
 
-    const ctx = { defs, textures: null, quality: 'high', seed: opts.level ?? 0, labelEls, isTurned: () => turned };
+    const ctx = { defs, textures: createTextures(defs), quality: 'high', seed: opts.level ?? 0, reducedMotion: !!opts.reducedMotion, labelEls, isTurned: () => turned };
     drawScenery(layers, layout, [], ctx);
     const trackArt = drawTrack(layers, layout, ctx);
 

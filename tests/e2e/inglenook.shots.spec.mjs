@@ -47,8 +47,8 @@ for (const [name, level, size] of SHOTS) {
 test('shot loco-close.png', async ({ page }) => {
     const errors = await open(page, 1, [1600, 900]);
     const b = await page.locator('.ig-vehicle.loco').boundingBox();
-    // the loco is about 1.1 wagon lengths long; clip about 6 wagon lengths around it
-    const wagon = Math.max(b.width, b.height) / 1.1;
+    // the loco is about 1.7 wagon lengths long; clip about 6 wagon lengths around it
+    const wagon = Math.max(b.width, b.height) / 1.7;
     const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
     const w = Math.min(6 * wagon, 1600), h = Math.min(3 * wagon, 900);
     const clip = { x: Math.max(0, cx - w / 2), y: Math.max(0, cy - h / 2), width: w, height: h };
@@ -62,5 +62,13 @@ test('shot moving.png', async ({ page }) => {
     await page.getByRole('button', { name: 'Forward' }).click();
     await page.waitForTimeout(1500);
     await shot(page, 'moving.png');
+    expect(errors).toEqual([]);
+});
+
+test('level 61 stays under the DOM budget', async ({ page }) => {
+    const errors = await open(page, 61, [1024, 768]);
+    const count = await page.evaluate(() => document.querySelectorAll('.ig-board *').length);
+    console.log(`IG_DOM_COUNT level 61: ${count}`);
+    expect(count).toBeLessThan(2500);
     expect(errors).toEqual([]);
 });
