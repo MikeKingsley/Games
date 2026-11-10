@@ -65,6 +65,19 @@ test('shot moving.png', async ({ page }) => {
     expect(errors).toEqual([]);
 });
 
+for (const [label, size] of [['844x390', [844, 390]], ['390x844', [390, 844]]]) {
+    test(`ID panels are legible at ${label}`, async ({ page }) => {
+        const errors = await open(page, 1, size);
+        const heights = await page.evaluate(() => [...document.querySelectorAll('.ig-wagon .ig-label')]
+            .map(g => g.querySelector('rect').getBoundingClientRect())
+            .map(r => Math.min(r.width, r.height)));
+        console.log(`IG_PANEL_HEIGHT ${size.join('x')}: min ${Math.min(...heights).toFixed(1)}px over ${heights.length} wagons`);
+        expect(heights.length).toBeGreaterThan(0);
+        for (const h of heights) expect(h).toBeGreaterThanOrEqual(10);
+        expect(errors).toEqual([]);
+    });
+}
+
 test('level 61 stays under the DOM budget', async ({ page }) => {
     const errors = await open(page, 61, [1024, 768]);
     const count = await page.evaluate(() => document.querySelectorAll('.ig-board *').length);

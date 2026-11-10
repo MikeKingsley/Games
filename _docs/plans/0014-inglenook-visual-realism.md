@@ -170,19 +170,27 @@ Texture pattern ids are on `ctx.textures` (built in `render.js` via `createTextu
 Level 61 renders 574 `.ig-board` elements (budget 2500); `inglenook.shots.spec.mjs` now asserts it and uses the 1.7 loco divisor. Blade/lever tween state is driven from `sim.points` each frame (instant when quality is `low` or reduced motion), so `onEvent` is still a no-op.
 
 ## Phase 4: Rolling stock
-Status: Not started
+Status: Complete
 Depends on: 2, 3
 Files: Games.Client/wwwroot/games/inglenook/draw-stock.js; tests/js/inglenook.stock.test.mjs
 Model: sonnet
 Effort: medium
 
-- [ ] Export a DOM-free `wagonSpec(w)` from `draw-stock.js` (or a small `stock-spec.js` beside it) returning `{ type, livery, weathering }` from the wagon number and a hash of its id; test that it is deterministic, covers all four types across numbers 1-12 and never returns an ID-panel colour as the body colour.
-- [ ] Draw the four wagon types in plan view, 1 unit long and `BODY_W` wide, with buffers and a drawhook in the coupling gap: 16-ton steel mineral (grey sides seen as a rim, `coal` load heaped inside, top-flap door outline), 12-ton van (bauxite, ribbed curved roof with a highlight along the ridge and roof vents), 5-plank open (planked `timber` floor or a roped tarpaulin sheet, chosen from the hash), 14-ton tank (black barrel with end straps, filler dome, walkway and ladder).
-- [ ] Weathering: a `grime` overlay clipped to each body, rust patches and brake-dust tone from the hash, lighter on some wagons than others. Skip the overlay when quality is `low`.
-- [ ] ID panel: a bold panel at least 0.6 x 0.4 in the wagon's `color` with a dark outline, the white number and the white shape marker, in the existing `.ig-label` group so it stays upright exactly as now. Check the six colours against each body livery for contrast.
-- [ ] Stuck wagons: rusty grey body, scotches at the wheels, a red target and the red cross, no ID panel.
-- [ ] Draw the 64xx pannier tank, 1.7 long, chimney towards +x, per the Loco identity assumption: red buffer beams, black running plate with steps, smokebox and copper-capped chimney, green boiler top with dome and brass safety-valve bonnet, two green pannier tanks with filler lids and orange-black-orange lining, cab roof with rain strips, bunker with `coal`. Keep the root class `ig-loco` under `.ig-vehicle.loco` and the `scale(-1 1)` flip.
-- [ ] Three-link couplings: draw a chain between coupled vehicles in the `.ig-hook` group (keep `data-hook`, `data-rake`, `data-index` and the 0.4-radius transparent hit circle) with a small high-visibility ring so it is clearly tappable; uncoupled ends show a hanging hook on each headstock.
+- ✅ Export a DOM-free `wagonSpec(w)` from `draw-stock.js` (or a small `stock-spec.js` beside it) returning `{ type, livery, weathering }` from the wagon number and a hash of its id; test that it is deterministic, covers all four types across numbers 1-12 and never returns an ID-panel colour as the body colour.
+- ✅ Draw the four wagon types in plan view, 1 unit long and `BODY_W` wide, with buffers and a drawhook in the coupling gap: 16-ton steel mineral (grey sides seen as a rim, `coal` load heaped inside, top-flap door outline), 12-ton van (bauxite, ribbed curved roof with a highlight along the ridge and roof vents), 5-plank open (planked `timber` floor or a roped tarpaulin sheet, chosen from the hash), 14-ton tank (black barrel with end straps, filler dome, walkway and ladder).
+- ✅ Weathering: a `grime` overlay clipped to each body, rust patches and brake-dust tone from the hash, lighter on some wagons than others. Skip the overlay when quality is `low`.
+- ✅ ID panel: a bold panel at least 0.6 x 0.4 in the wagon's `color` with a dark outline, the white number and the white shape marker, in the existing `.ig-label` group so it stays upright exactly as now. Check the six colours against each body livery for contrast.
+- ✅ Stuck wagons: rusty grey body, scotches at the wheels, a red target and the red cross, no ID panel.
+- ✅ Draw the 64xx pannier tank, 1.7 long, chimney towards +x, per the Loco identity assumption: red buffer beams, black running plate with steps, smokebox and copper-capped chimney, green boiler top with dome and brass safety-valve bonnet, two green pannier tanks with filler lids and orange-black-orange lining, cab roof with rain strips, bunker with `coal`. Keep the root class `ig-loco` under `.ig-vehicle.loco` and the `scale(-1 1)` flip.
+- ✅ Three-link couplings: draw a chain between coupled vehicles in the `.ig-hook` group (keep `data-hook`, `data-rake`, `data-index` and the 0.4-radius transparent hit circle) with a small high-visibility ring so it is clearly tappable; uncoupled ends show a hanging hook on each headstock.
+  - Outside the Files line: `render.js` now rotates each hook group onto the line between its two coupled vehicles (smallest change; `couplings()` gives no angle), and `tests/e2e/inglenook.shots.spec.mjs` got the ID-panel height assertions (844x390 and 390x844). `wagonSpec` lives in `draw-stock.js` (no `stock-spec.js`).
+  - The hanging hook/link on each headstock is drawn in every wagon and loco (the chain covers them when coupled).
+- ✅ Make each wagon type recognisable at yard scale from the silhouette and top surface around the ID panel (not only body colour): mineral black coal load in a thin rim with corner stanchions; van pale grey-white roof with dark ribs; open tan planked floor or dark roped sheet; tank narrower black barrel with rounded ends so the underframe shows at the corners. Panel stays at least 0.6 x 0.4 and 10 CSS px tall.
+  - Done: mineral black coal in a thin grey rim with stanchions; van pale ribbed roof; open tan planks or a khaki roped sheet; tank mid-grey barrel with rounded ends on a pale underframe. At 1024 the van and open are clearly different, but mineral and tank are both dark and only differ by square stanchions versus rounded ends, which is marginal at about 45 px per wagon.
+  - **Assumption (orchestrator review):** accepted as meeting the criterion. In a 3x crop of `ladder5-1024.png` the four types read as four different top surfaces: black coal (mineral), pale ribbed roof (van), khaki sheet or tan planks (open), mid-grey round-ended barrel (tank). The difference is modest at phone scale because the mandated 0.6 x 0.4 ID panel covers most of each wagon; flagged to the user in the final report.
+- ✅ Loco overall width matches the wagons (running plate about `BODY_W`), still 1.7 long.
+- ✅ Check the 0.62 wide bodies do not touch on adjacent tracks or foul through the points.
+  - `validateLayout` (run by `npm test`) already guarantees centre-lines at least 0.9 apart outside foul zones, so 0.62 bodies leave at least 0.28 clear; the shots show no overlap.
 
 ### Verification Plan
 - `npm test` passes (stock tests included).
@@ -191,7 +199,9 @@ Effort: medium
 - In the shots spec assert the ID panel is at least 10 CSS px tall at 844x390 and at 390x844 (`.ig-label` `getBoundingClientRect()`).
 
 ### Phase Summary
-_(write when phase completes)_
+`draw-stock.js` now has `wagonSpec` (type from number: mineral/van/open/tank; livery grey, bauxite or black, never an ID colour; weathering 0.25-0.9 from `hash(id)`), the four wagon types, a 0.62 x 0.4 ID panel in `.ig-label` (white number + shape, cream inner border), a rusty stuck wagon with scotches and a red target, the 64xx pannier tank and three-link couplings with a yellow ring (rotated onto the track in `render.js`). `BODY_W` is now 0.62 (was 0.5); the loco plate matches it. Van (pale ribbed roof) and open (tan/khaki) read clearly at yard scale; mineral vs tank (both dark) is still only marginal, which is why the phase is left In progress.
+Loco-local coordinates (before the facing flip, chimney towards +x): chimney (0.64, 0), dome (0.14, 0), safety-valve bonnet (-0.1, 0), front buffer beam x = 0.85, coal bunker at the rear (x -0.85 to -0.6). Weathering (`grime` overlay, rust patches, brake dust) is applied only when `ctx.quality !== 'low'` and is read when a vehicle is first drawn, so a later `setQuality('low')` (Phase 6) must redraw or hide `.ig-wagon` weathering itself if it wants it dropped mid-level.
+Checks: `npm test` 125 pass (3 new stock tests), `inglenook.spec` 10 pass, `inglenook.shots` 11 pass; ID panel min height 10.4 px at 844x390 and 10.0 px at 390x844 (tight, do not shrink the panel); level 61 renders 847 `.ig-board` elements (budget 2500).
 
 ## Phase 5: Scenery and lighting
 Status: Not started

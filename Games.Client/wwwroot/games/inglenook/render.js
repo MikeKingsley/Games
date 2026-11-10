@@ -87,7 +87,13 @@ export function createRenderer(svg, layout, handlers = {}, opts = {}) {
                 hookEls.length = 0;
                 for (const h of hooks) hookEls.push(drawCoupling(layers.hooks, h, ctx));
             }
-            hooks.forEach((h, i) => hookEls[i].setAttribute('transform', `translate(${h.x} ${h.y})`));
+            const byId = {};
+            for (const v of poses) byId[v.id] = v;
+            hooks.forEach((h, i) => { // lay the chain along the line between the two coupled vehicles
+                const a = byId[h.between[0]], c = byId[h.between[1]];
+                const deg = a && c ? Math.atan2(c.y - a.y, c.x - a.x) * 180 / Math.PI : 0;
+                hookEls[i].setAttribute('transform', `translate(${h.x} ${h.y}) rotate(${deg})`);
+            });
         },
         onEvent(e) { trackArt.onEvent(e); },
         reset() {},
