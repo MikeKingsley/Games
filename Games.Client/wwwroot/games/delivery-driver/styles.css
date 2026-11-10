@@ -121,6 +121,7 @@
     border: 0; border-radius: 10px; padding: 8px 14px; background: #3a4450; color: #fff; font: inherit; cursor: pointer; min-height: 40px;
 }
 .dd-btn:hover { background: #4a5664; }
+a.dd-btn { display: inline-block; text-decoration: none; color: inherit; }
 .dd-btn.primary { background: var(--dd-accent); color: #222; }
 .dd-btn.danger { background: #a33; }
 .dd-btn.on { outline: 2px solid var(--dd-accent); }

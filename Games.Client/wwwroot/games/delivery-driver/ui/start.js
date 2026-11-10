@@ -103,6 +103,7 @@ export function registerStartScreens(menus, ctx) {
                 + '<button class="dd-btn" data-act="slots">Save slots</button>'
                 + '<button class="dd-btn" data-act="settings">Settings</button>'
                 + '<button class="dd-btn" data-act="help">Controls</button>'
+                + '<a class="dd-btn" href="/games/delivery-driver/greybox/greybox.html" target="_blank" rel="noopener">Greybox test page</a>'
                 + '</p><h3>Pass time</h3><p class="dd-tabs">'
                 + '<button class="dd-btn" data-act="wait" data-h="1">Wait 1 hour</button>'
                 + '<button class="dd-btn" data-act="wait" data-h="3">Wait 3 hours</button>'
