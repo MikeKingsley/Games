@@ -60,7 +60,7 @@ test('levels 1..200 are valid, unsolved at the start, and their solutions are le
         assert.ok(replay, `solution legal level ${n}`);
         assert.equal(replay.cost, l.par, `cost = par level ${n}`);
         const goalSiding = replay.state.tracks[layout.goal].replace(/#/g, '');
-        assert.ok(goalSiding.startsWith('abcdefghijklmnopqrstuvwxyz'.slice(0, l.goal.length)), `goal reached level ${n}`);
+        assert.equal(goalSiding, 'abcdefghijklmnopqrstuvwxyz'.slice(0, l.goal.length), `goal reached level ${n}`);
     }
     assert.ok(Date.now() - started < 30000, 'generating 200 levels stays fast');
 });
@@ -74,7 +74,7 @@ test('the real simulation solves levels with exactly par uncouplings', () => {
         assert.equal(checkWin(sim, l), true, `won level ${n}`);
         assert.equal(movesOf(sim), l.par, `moves = par level ${n}`);
         const abs = abstractFromSim(sim, l);
-        assert.ok(abs.tracks[getLayout(l.template).goal].replace(/#/g, '').startsWith('abcdefghijklmnopqrstuvwxyz'.slice(0, l.goal.length)));
+        assert.equal(abs.tracks[getLayout(l.template).goal].replace(/#/g, ''), 'abcdefghijklmnopqrstuvwxyz'.slice(0, l.goal.length));
     }
 });
 
@@ -86,7 +86,7 @@ test('stars: par or better is three, within 1.5x is two, anything else one', () 
     assert.equal(starsFor(7, 4), 1);
 });
 
-test('win detection ignores wagons elsewhere and needs the exact order', () => {
+test('win detection needs exactly the goal train on the siding: right order, no extra wagons', () => {
     const layout = getLayout('classic');
     const level = { template: 'classic', goal: ['w1', 'w2'], wagons: [{ id: 'w1' }, { id: 'w2' }, { id: 'w3' }] };
     const make = order => createSim(layout, {
@@ -94,7 +94,9 @@ test('win detection ignores wagons elsewhere and needs the exact order', () => {
         rakes: [{ track: 'A', flush: 'b', vehicles: order }],
     });
     // A's buffer is at its b end; vehicles are listed by increasing d, so the last is the bottom
-    assert.equal(checkWin(make(['w3', 'w2', 'w1']), level), true); // bottom w1, then w2, then w3 above
+    assert.equal(checkWin(make(['w3', 'w2', 'w1']), level), false); // bottom w1, w2, then an extra w3 above: not finished
+    assert.equal(checkWin(make(['w2', 'w3', 'w1']), level), false); // extra wagon in the middle
     assert.equal(checkWin(make(['w3', 'w1', 'w2']), level), false);
     assert.equal(checkWin(make(['w2', 'w1']), level), true);
+    assert.equal(checkWin(make(['w1', 'w2']), level), false); // right wagons, wrong way round
 });

@@ -56,6 +56,11 @@ test('solving a level shows the result, Next level loads level 2, Reset restores
     await page.locator('.ig-next').click();
     await expect(page.locator('.ig-level')).toHaveText('Level 2');
     expect(await page.evaluate(() => window.__ig.sim.stats.uncouplings)).toBe(0);
+    // tapping a point lever must throw it exactly once, even after a level change (no stacked listeners)
+    await page.locator('.ig-point[data-point="P2"]').click();
+    expect(await page.evaluate(() => window.__ig.sim.points.P2)).toBe('diverging');
+    await page.locator('.ig-point[data-point="P2"]').click();
+    expect(await page.evaluate(() => window.__ig.sim.points.P2)).toBe('straight');
     // move something, then Reset puts the level back
     await page.keyboard.press('2');
     expect(await page.evaluate(() => window.__ig.sim.points.P2)).toBe('diverging');

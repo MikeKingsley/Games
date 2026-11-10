@@ -126,12 +126,34 @@ export function drawLoco(parent) {
 export function createRenderer(svg, layout, handlers = {}) {
     while (svg.firstChild) svg.removeChild(svg.firstChild);
     const b = layout.bounds;
-    svg.setAttribute('viewBox', `${b.x} ${b.y} ${b.w} ${b.h}`);
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
-    el('rect', { x: b.x, y: b.y, width: b.w, height: b.h, fill: '#3d6b3a' }, svg);
-    drawScenery(svg, b);
-    const track = el('g', { class: 'ig-track' }, svg);
+    // Everything lives in one group so the whole yard can be turned a quarter turn on a tall (portrait) screen.
+    const world = el('g', { class: 'ig-world' }, svg);
+    let turned = false;
+    const labelEls = []; // upright text that must counter-rotate when the yard is turned
+    const applyTurn = () => {
+        // rotate(90) sends (x, y) to (-y, x), so the yard's viewBox becomes x: [-(y+h), -y], y: [x, x+w]
+        svg.setAttribute('viewBox', turned ? `${-(b.y + b.h)} ${b.x} ${b.h} ${b.w}` : `${b.x} ${b.y} ${b.w} ${b.h}`);
+        world.setAttribute('transform', turned ? 'rotate(90)' : '');
+        for (const fn of labelEls) fn();
+    };
+    /** Turn the yard when that makes it fill the board area better (a wide yard on a tall screen). */
+    const fit = () => {
+        const cw = svg.clientWidth, ch = svg.clientHeight;
+        if (!cw || !ch) return;
+        const plain = Math.min(cw / b.w, ch / b.h);
+        const quarter = Math.min(cw / b.h, ch / b.w);
+        const next = turned ? quarter > plain / 1.1 : quarter > plain * 1.1; // a little hysteresis so it never flickers
+        if (next !== turned) { turned = next; applyTurn(); }
+    };
+    const resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
+    resizeObserver?.observe(svg);
+    applyTurn();
+
+    el('rect', { x: b.x, y: b.y, width: b.w, height: b.h, fill: '#3d6b3a' }, world);
+    drawScenery(world, b);
+    const track = el('g', { class: 'ig-track' }, world);
     for (const t of Object.values(layout.tracks)) {
         el('polyline', { points: polyline(t.pts), fill: 'none', stroke: '#8d7f6a', 'stroke-width': 1.0, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, track); // ballast
     }
@@ -155,12 +177,12 @@ export function createRenderer(svg, layout, handlers = {}) {
             if (t.ends[end].type !== 'buffer') continue;
             const p = end === 'a' ? t.pts[0] : t.pts[t.pts.length - 1];
             const q = end === 'a' ? t.pts[1] : t.pts[t.pts.length - 2];
-            drawBuffer(svg, p[0], p[1], Math.atan2(p[1] - q[1], p[0] - q[0]) * 180 / Math.PI + 180);
+            drawBuffer(world, p[0], p[1], Math.atan2(p[1] - q[1], p[0] - q[0]) * 180 / Math.PI + 180);
         }
     }
 
     // points: a bright blade on the active leg and a tappable lever beside the point
-    const pointLayer = el('g', { class: 'ig-points' }, svg);
+    const pointLayer = el('g', { class: 'ig-points' }, world);
     const pointEls = {};
     layout.pointIds.forEach((id, i) => {
         const p = layout.points[id];
@@ -173,12 +195,14 @@ export function createRenderer(svg, layout, handlers = {}) {
         const arrow = el('path', { d: 'M-0.2,0 H0.2 M0.06,-0.12 L0.2,0 L0.06,0.12', stroke: '#ffdf50', 'stroke-width': 0.07, fill: 'none', 'stroke-linecap': 'round' }, g);
         const label = el('text', { y: side > 0 ? 0.78 : -0.55, 'text-anchor': 'middle', 'font-size': 0.34, fill: '#fff', 'font-weight': 700, 'font-family': 'system-ui, sans-serif' }, g);
         label.textContent = i < 9 ? String(i + 1) : '';
+        const labelY = side > 0 ? 0.78 : -0.55;
+        labelEls.push(() => label.setAttribute('transform', turned ? `rotate(-90 0 ${labelY - 0.12})` : '')); // keep the lever number upright
         const blade = el('polyline', { fill: 'none', stroke: '#ffdf50', 'stroke-width': 0.1, 'stroke-linecap': 'round', opacity: 0.9 }, pointLayer);
         pointEls[id] = { g, arrow, blade, side };
     });
 
-    const vehicleLayer = el('g', { class: 'ig-vehicles' }, svg);
-    const hookLayer = el('g', { class: 'ig-hooks' }, svg); // above the wagons so the hooks can be tapped
+    const vehicleLayer = el('g', { class: 'ig-vehicles' }, world);
+    const hookLayer = el('g', { class: 'ig-hooks' }, world); // above the wagons so the hooks can be tapped
     const vehicleEls = {};
 
     function legBlade(p, leg) {
@@ -197,12 +221,14 @@ export function createRenderer(svg, layout, handlers = {}) {
     let hookKey = '';
     const hookEls = [];
 
-    svg.addEventListener('pointerdown', ev => {
+    // The same <svg> is reused for every level, so this listener must be removed in destroy() or taps would fire once per level played.
+    const onPointerDown = ev => {
         const point = ev.target.closest?.('[data-point]');
         if (point) { ev.preventDefault(); handlers.onPoint?.(point.getAttribute('data-point')); return; }
         const hook = ev.target.closest?.('[data-hook]');
         if (hook) { ev.preventDefault(); handlers.onCoupling?.(hook.getAttribute('data-rake'), Number(hook.getAttribute('data-index'))); }
-    });
+    };
+    svg.addEventListener('pointerdown', onPointerDown);
 
     return {
         update(sim) {
@@ -226,10 +252,8 @@ export function createRenderer(svg, layout, handlers = {}) {
                 const deg = v.angle * 180 / Math.PI;
                 ve.root.setAttribute('transform', `translate(${v.x} ${v.y}) rotate(${deg})`);
                 if (v.kind === 'loco') ve.art.setAttribute('transform', v.flip ? 'scale(-1 1)' : '');
-                if (ve.label) {
-                    const upright = ((deg % 360) + 540) % 360 - 180; // keep numbers readable
-                    ve.label.setAttribute('transform', `rotate(${-deg + (Math.abs(upright) > 90 ? 180 : 0)})`);
-                }
+                // always upright on screen, whichever way the wagon faces (reversing must not flip the number) and however the yard is turned
+                if (ve.label) ve.label.setAttribute('transform', `rotate(${-deg - (turned ? 90 : 0)})`);
             }
             const hooks = sim.couplings();
             const key = hooks.map(h => `${h.rake}:${h.index}`).join(',');
@@ -246,6 +270,10 @@ export function createRenderer(svg, layout, handlers = {}) {
             }
             hooks.forEach((h, i) => hookEls[i].setAttribute('transform', `translate(${h.x} ${h.y})`));
         },
-        destroy() { while (svg.firstChild) svg.removeChild(svg.firstChild); },
+        destroy() {
+            svg.removeEventListener('pointerdown', onPointerDown);
+            resizeObserver?.disconnect();
+            while (svg.firstChild) svg.removeChild(svg.firstChild);
+        },
     };
 }

@@ -49,7 +49,7 @@ export function createUi(container, cb, signal) {
     hud.append(title, levelEl, movesEl, starsEl, button('Back', 'ig-small', () => cb.onExit(), signal));
 
     const goalBar = h('div', 'ig-goalbar');
-    const goalLabel = h('span', 'ig-goallabel', 'Make up this train on the long siding, nearest the points first:');
+    const goalLabel = h('span', 'ig-goallabel', 'Make up exactly this train on the long siding, nearest the points first:');
     const goalStrip = h('span', 'ig-goalstrip');
     const goalOk = h('span', 'ig-goalok', '');
     goalBar.append(goalLabel, goalStrip, goalOk);
